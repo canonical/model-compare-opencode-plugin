@@ -7,3 +7,6 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
+
+# Local test config: points plugins at ./src for in-repo test sessions
+/opencode.json

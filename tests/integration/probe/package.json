@@ -1,0 +1,11 @@
+{
+  "name": "model-compare-integration-probe",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.16"
+  }
+}

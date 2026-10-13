@@ -1,0 +1,189 @@
+// src/core/catalog.ts
+// Catalog document validation (design §5). Accepts schema v2 documents (only) from
+// either source (vendored script or remote catalog) and projects them onto
+// the plugin's Catalog type. Validation only — ranking lives elsewhere.
+
+import type { Catalog, ModelEntry, Priority, Weights } from "./types"
+
+const PRIORITIES: readonly Priority[] = ["balanced", "price", "quality"]
+const SCORE_KEYS = ["quality", "price", "context", "age"] as const
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function validateCatalog(
+  raw: unknown,
+): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
+  if (!isObject(raw)) return { ok: false, reason: "catalog must be a JSON object" }
+
+  // Supported schema: v2 only — upstream's current contract (0.3.0: pricing
+  // scalars are effective-tier values; pricing.base/tiers/schedule and a
+  // top-level schedules index were added — ignored here, see the roadmap
+  // for consumer ideas). The plugin has never been released, so no stored
+  // v1 documents exist anywhere; the published catalog has served v2 since
+  // 2026-10-10.
+  if (raw.schema_version !== 2) {
+    return { ok: false, reason: `schema_version must be 2, got ${JSON.stringify(raw.schema_version)}` }
+  }
+  if (typeof raw.generated_at !== "string") {
+    return { ok: false, reason: "generated_at must be a string" }
+  }
+
+  // parameters.weights: optional; kept as published (possibly partial, keys
+  // absent upstream stay absent), except that every value must survive a
+  // sanity check: only the four WEIGHT_KEYS with a finite, non-negative
+  // number are kept (a string, NaN/±Infinity or negative weight is dropped
+  // like an unknown key — a hostile catalogURL serves arbitrary JSON here).
+  // An all-dropped map behaves as absent: with every priority map dropped,
+  // weights stays {} and consumers fall back to DEFAULT_WEIGHTS (design §5);
+  // when at least one map survives, a dropped priority reads as a missing
+  // one — weight 0 per the documented no-data semantics.
+  const weights: Partial<Record<Priority, Partial<Weights>>> = {}
+  const weightsRaw = isObject(raw.parameters) ? raw.parameters.weights : undefined
+  if (weightsRaw !== undefined) {
+    if (!isObject(weightsRaw)) return { ok: false, reason: "parameters.weights must be an object" }
+    for (const priority of PRIORITIES) {
+      const entry = weightsRaw[priority]
+      if (entry === undefined) continue
+      if (!isObject(entry)) {
+        return { ok: false, reason: `parameters.weights.${priority} must be an object` }
+      }
+      // The weight keys are the same four names as the score components.
+      const filtered: Partial<Weights> = {}
+      for (const key of SCORE_KEYS) {
+        const value = entry[key]
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) filtered[key] = value
+      }
+      if (Object.keys(filtered).length === 0) continue
+      weights[priority] = filtered
+    }
+  }
+
+  // models: required. Each entry needs an id and full scores (components and
+  // overall), plus the fields the ModelEntry type promises: a string name, an
+  // object pricing with a numeric blended_per_1m (the price tie-break reads
+  // it), and a numeric context — matching upstream, where models without
+  // parseable pricing land in filtered, never in models (design §5). Every
+  // numeric must be a FINITE number: JSON.parse("1e999") and hand-edited
+  // storage records can carry Infinity/NaN, and either poisons the ranking
+  // comparators (Infinity - Infinity is NaN) — a non-finite value rejects the
+  // document in the same reason style as a non-number. The optional pricing
+  // split (input_per_1m/output_per_1m) survives only as finite numbers — the
+  // values fmtPrice reads — while every other listed field is optional and
+  // passes through as published.
+  if (!Array.isArray(raw.models)) return { ok: false, reason: "models must be an array" }
+  const models: ModelEntry[] = []
+  for (let i = 0; i < raw.models.length; i++) {
+    const entry = raw.models[i]
+    if (!isObject(entry)) return { ok: false, reason: `models[${i}] must be an object` }
+    if (typeof entry.id !== "string") return { ok: false, reason: `models[${i}].id must be a string` }
+    if (!isObject(entry.scores)) return { ok: false, reason: `models[${i}].scores must be an object` }
+
+    const components = {} as Record<(typeof SCORE_KEYS)[number], number>
+    for (const key of SCORE_KEYS) {
+      const value = entry.scores[key]
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return { ok: false, reason: `models[${i}].scores.${key} must be a number` }
+      }
+      components[key] = value
+    }
+    if (!isObject(entry.scores.overall)) {
+      return { ok: false, reason: `models[${i}].scores.overall must be an object` }
+    }
+    const overall = {} as Record<Priority, number>
+    for (const priority of PRIORITIES) {
+      const value = entry.scores.overall[priority]
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return { ok: false, reason: `models[${i}].scores.overall.${priority} must be a number` }
+      }
+      overall[priority] = value
+    }
+
+    if (typeof entry.name !== "string") {
+      return { ok: false, reason: `models[${i}].name must be a string` }
+    }
+    const pricing = entry.pricing
+    if (!isObject(pricing)) {
+      return { ok: false, reason: `models[${i}].pricing must be an object` }
+    }
+    const blended = pricing.blended_per_1m
+    if (typeof blended !== "number" || !Number.isFinite(blended)) {
+      return { ok: false, reason: `models[${i}].pricing.blended_per_1m must be a number` }
+    }
+    if (typeof entry.context !== "number" || !Number.isFinite(entry.context)) {
+      return { ok: false, reason: `models[${i}].context must be a number` }
+    }
+
+    // quality is optional (number | null): a non-number is coerced to null as
+    // before, but a NUMBER must be finite — NaN/Infinity would poison the
+    // quality tie-break in byRankingKey.
+    if (typeof entry.quality === "number" && !Number.isFinite(entry.quality)) {
+      return { ok: false, reason: `models[${i}].quality must be a finite number` }
+    }
+    const quality = typeof entry.quality === "number" ? entry.quality : null
+    // The optional pricing split: kept only when finite numbers. A hostile
+    // catalogURL can serve any JSON here and fmtPrice reads these as numbers
+    // — a non-numeric or non-finite value is dropped to undefined (absent
+    // stays absent, present-but-invalid behaves as absent).
+    const input = pricing.input_per_1m
+    const output = pricing.output_per_1m
+    models.push({
+      ...entry,
+      id: entry.id,
+      name: entry.name,
+      pricing: {
+        ...pricing,
+        blended_per_1m: blended,
+        input_per_1m: typeof input === "number" && Number.isFinite(input) ? input : undefined,
+        output_per_1m: typeof output === "number" && Number.isFinite(output) ? output : undefined,
+      },
+      context: entry.context,
+      scores: { ...components, overall },
+      quality,
+    })
+  }
+
+  // rankings: optional; when present, each known priority must map to an
+  // ordered list of model ids. Unknown priority keys are ignored.
+  const rankings: Partial<Record<Priority, string[]>> = {}
+  if (raw.rankings !== undefined) {
+    if (!isObject(raw.rankings)) return { ok: false, reason: "rankings must be an object" }
+    for (const priority of PRIORITIES) {
+      const list = raw.rankings[priority]
+      if (list === undefined) continue
+      if (!Array.isArray(list) || !list.every((id) => typeof id === "string")) {
+        return { ok: false, reason: `rankings.${priority} must be an array of strings` }
+      }
+      rankings[priority] = [...(list as string[])]
+    }
+  }
+
+  return {
+    ok: true,
+    catalog: {
+      generatedAt: raw.generated_at,
+      weights,
+      rankings,
+      models,
+    },
+  }
+}
+
+// Re-validates a catalog read back from plugin storage (the projected
+// `Catalog`, not the raw upstream document) by rebuilding the raw shape and
+// running it through validateCatalog: a corrupt or hand-edited record is
+// rejected instead of reaching ranking code. The round trip is lossless for a
+// catalog validateCatalog produced.
+export function validateStoredCatalog(
+  stored: unknown,
+): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
+  if (!isObject(stored)) return { ok: false, reason: "stored catalog must be an object" }
+  return validateCatalog({
+    schema_version: 2,
+    generated_at: stored.generatedAt,
+    parameters: { weights: stored.weights },
+    models: stored.models,
+    rankings: stored.rankings,
+  })
+}

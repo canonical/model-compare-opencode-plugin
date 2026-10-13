@@ -1,0 +1,33 @@
+# Unit and conformance suites on PRs and pushes to main (plan Task 15, Step 1).
+# Integration tests stay manual/optional (they need MC_INTEGRATION=1 and a real
+# opencode binary), so CI runs only the unit and conformance suites. Python
+# 3.10 is pinned because the unit tests exercise a real python3:
+# tests/unit/local-source.test.ts probes the interpreter (probePython) and
+# executes python fixtures via runLocalScript.
+name: test
+
+on:
+  workflow_dispatch: # fired by upgrade-pr.yml on its vendor/<tag> branch
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run tests/unit tests/conformance
+      - run: npx tsc --noEmit
+      - run: node scripts/pack-smoke.mjs
