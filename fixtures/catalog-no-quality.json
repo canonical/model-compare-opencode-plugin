@@ -1,0 +1,6476 @@
+{
+  "schedules": [
+    {
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "context": 1048576,
+      "quality": null,
+      "score": 0.5347,
+      "max_discount": 0.5,
+      "sched_note": "-50%",
+      "sched_detail": "weekdays 00:00-01:00, 04:00-06:00, 10:00-00:00; weekends all day UTC",
+      "peak": {
+        "input_per_1m": 1.32,
+        "output_per_1m": 3.96,
+        "blended_per_1m": 1.98
+      },
+      "offpeak": {
+        "input_per_1m": 0.66,
+        "output_per_1m": 1.98,
+        "blended_per_1m": 0.99
+      },
+      "schedule": [
+        {
+          "utc_days": [
+            "saturday",
+            "sunday"
+          ],
+          "utc_start": 0,
+          "utc_end": 0,
+          "coverage": 0.2857,
+          "input_per_1m": 0.66,
+          "output_per_1m": 1.98,
+          "blended_per_1m": 0.99
+        },
+        {
+          "utc_days": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday"
+          ],
+          "utc_start": 0,
+          "utc_end": 100,
+          "coverage": 0.0298,
+          "input_per_1m": 0.66,
+          "output_per_1m": 1.98,
+          "blended_per_1m": 0.99
+        },
+        {
+          "utc_days": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday"
+          ],
+          "utc_start": 100,
+          "utc_end": 400,
+          "coverage": 0.0893,
+          "input_per_1m": 1.32,
+          "output_per_1m": 3.96,
+          "blended_per_1m": 1.98
+        },
+        {
+          "utc_days": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday"
+          ],
+          "utc_start": 400,
+          "utc_end": 600,
+          "coverage": 0.0595,
+          "input_per_1m": 0.66,
+          "output_per_1m": 1.98,
+          "blended_per_1m": 0.99
+        },
+        {
+          "utc_days": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday"
+          ],
+          "utc_start": 600,
+          "utc_end": 1000,
+          "coverage": 0.119,
+          "input_per_1m": 1.32,
+          "output_per_1m": 3.96,
+          "blended_per_1m": 1.98
+        },
+        {
+          "utc_days": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday"
+          ],
+          "utc_start": 1000,
+          "utc_end": 0,
+          "coverage": 0.4167,
+          "input_per_1m": 0.66,
+          "output_per_1m": 1.98,
+          "blended_per_1m": 0.99
+        }
+      ]
+    },
+    {
+      "id": "tencent/hy3",
+      "name": "Hy3",
+      "context": 262144,
+      "quality": null,
+      "score": null,
+      "max_discount": 0.375,
+      "sched_note": "-38%",
+      "sched_detail": "daily 16:00-00:00 UTC",
+      "peak": {
+        "input_per_1m": 0.132,
+        "output_per_1m": 0.528,
+        "blended_per_1m": 0.231
+      },
+      "offpeak": {
+        "input_per_1m": 0.0825,
+        "output_per_1m": 0.33,
+        "blended_per_1m": 0.144375
+      },
+      "schedule": [
+        {
+          "utc_days": null,
+          "utc_start": 0,
+          "utc_end": 1600,
+          "coverage": 0.6667,
+          "input_per_1m": 0.132,
+          "output_per_1m": 0.528,
+          "blended_per_1m": 0.231
+        },
+        {
+          "utc_days": null,
+          "utc_start": 1600,
+          "utc_end": 0,
+          "coverage": 0.3333,
+          "input_per_1m": 0.0825,
+          "output_per_1m": 0.33,
+          "blended_per_1m": 0.144375
+        }
+      ]
+    },
+    {
+      "id": "tencent/hy4-preview",
+      "name": "Hy4 preview",
+      "context": 1048576,
+      "quality": null,
+      "score": 0.5923,
+      "max_discount": 0.1,
+      "sched_note": "-10%",
+      "sched_detail": "daily 16:00-00:00 UTC",
+      "peak": {
+        "input_per_1m": 0.834,
+        "output_per_1m": 2.501,
+        "blended_per_1m": 1.25075
+      },
+      "offpeak": {
+        "input_per_1m": 0.7506,
+        "output_per_1m": 2.2509,
+        "blended_per_1m": 1.125675
+      },
+      "schedule": [
+        {
+          "utc_days": null,
+          "utc_start": 0,
+          "utc_end": 1600,
+          "coverage": 0.6667,
+          "input_per_1m": 0.834,
+          "output_per_1m": 2.501,
+          "blended_per_1m": 1.25075
+        },
+        {
+          "utc_days": null,
+          "utc_start": 1600,
+          "utc_end": 0,
+          "coverage": 0.3333,
+          "input_per_1m": 0.7506,
+          "output_per_1m": 2.2509,
+          "blended_per_1m": 1.125675
+        }
+      ]
+    }
+  ],
+  "schema_version": 2,
+  "tool": "model-compare",
+  "generated_at": "2026-10-10T09:19:06+00:00",
+  "parameters": {
+    "input_share": 0.75,
+    "quality_ref": 70.0,
+    "min_context": 1000000,
+    "recency_half_life": 120.0,
+    "max_age_days": 0.0,
+    "zdr_required": true,
+    "require_tools": true,
+    "exclude_free": false,
+    "include_batch": false,
+    "weights": {
+      "balanced": {
+        "price": 0.6666666666666666,
+        "context": 0.16666666666666666,
+        "age": 0.16666666666666666
+      },
+      "price": {
+        "price": 0.7499999999999999,
+        "context": 0.125,
+        "age": 0.125
+      },
+      "quality": {
+        "price": 0.5,
+        "context": 0.25,
+        "age": 0.25
+      }
+    }
+  },
+  "sources": {
+    "openrouter": "ok",
+    "aa": {
+      "mode": "none",
+      "fallback": "none",
+      "matched": 0,
+      "matched_openrouter": 0
+    },
+    "zdr": "ok",
+    "discounts": "ok"
+  },
+  "pool": {
+    "listed": 458,
+    "candidates": 70,
+    "dropped": {
+      "malformed id": 0,
+      "context": 274,
+      "pricing": 6,
+      "schedule": 0,
+      "free": 0,
+      "batch": 49,
+      "no discount": 0,
+      "not ZDR": 56,
+      "modality": 0,
+      "tool calling": 3,
+      "expired": 0,
+      "age": 0
+    }
+  },
+  "models": [
+    {
+      "id": "xiaomi/mimo-v2.6-flash",
+      "name": "MiMo-V2.6-Flash",
+      "provider": "xiaomi",
+      "family": "mimo",
+      "pricing": {
+        "input_per_1m": 0.14,
+        "output_per_1m": 0.28,
+        "blended_per_1m": 0.175,
+        "base": {
+          "input_per_1m": 0.14,
+          "output_per_1m": 0.28,
+          "blended_per_1m": 0.175
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-21",
+      "age_days": 19,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.9779,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.8984,
+        "overall": {
+          "balanced": 0.8075,
+          "price": 0.8501,
+          "quality": 0.7223
+        }
+      }
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "provider": "z-ai",
+      "family": "glm",
+      "pricing": {
+        "input_per_1m": 0.15,
+        "output_per_1m": 0.5,
+        "blended_per_1m": 0.2375,
+        "base": {
+          "input_per_1m": 0.15,
+          "output_per_1m": 0.5,
+          "blended_per_1m": 0.2375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-26",
+      "age_days": 45,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.9335,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.772,
+        "overall": {
+          "balanced": 0.7567,
+          "price": 0.8009,
+          "quality": 0.6683
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-luna",
+      "name": "GPT-6 Luna",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.75,
+        "blended_per_1m": 0.3375,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.5,
+          "blended_per_1m": 0.2
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 0.2,
+            "output_per_1m": 0.75,
+            "blended_per_1m": 0.3375
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-22",
+      "age_days": 18,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8817,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9032,
+        "overall": {
+          "balanced": 0.7442,
+          "price": 0.7786,
+          "quality": 0.6754
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-luna-pro",
+      "name": "GPT-6 Luna Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.2,
+        "output_per_1m": 0.75,
+        "blended_per_1m": 0.3375,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.5,
+          "blended_per_1m": 0.2
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 0.2,
+            "output_per_1m": 0.75,
+            "blended_per_1m": 0.3375
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-22",
+      "age_days": 18,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8817,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9032,
+        "overall": {
+          "balanced": 0.7442,
+          "price": 0.7786,
+          "quality": 0.6754
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "name": "DeepSeek V4 Flash Vision Exp",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 0.2156,
+        "output_per_1m": 0.6468,
+        "blended_per_1m": 0.3234,
+        "base": {
+          "input_per_1m": 0.2156,
+          "output_per_1m": 0.6468,
+          "blended_per_1m": 0.3234
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-21",
+      "age_days": 50,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.51,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.888,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7495,
+        "overall": {
+          "balanced": 0.7226,
+          "price": 0.764,
+          "quality": 0.6399
+        }
+      }
+    },
+    {
+      "id": "xiaomi/mimo-v2.5",
+      "name": "MiMo-V2.5",
+      "provider": "xiaomi",
+      "family": "mimo",
+      "pricing": {
+        "input_per_1m": 0.14,
+        "output_per_1m": 0.28,
+        "blended_per_1m": 0.175,
+        "base": {
+          "input_per_1m": 0.14,
+          "output_per_1m": 0.28,
+          "blended_per_1m": 0.175
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-04-22",
+      "age_days": 171,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.15,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.9779,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.373,
+        "overall": {
+          "balanced": 0.72,
+          "price": 0.7844,
+          "quality": 0.591
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 0.0079,
+        "output_per_1m": 1.28,
+        "blended_per_1m": 0.325925,
+        "base": {
+          "input_per_1m": 0.0079,
+          "output_per_1m": 1.28,
+          "blended_per_1m": 0.325925
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-07-31",
+      "age_days": 71,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8869,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.6631,
+        "overall": {
+          "balanced": 0.7075,
+          "price": 0.7523,
+          "quality": 0.6178
+        }
+      }
+    },
+    {
+      "id": "meta-llama/llama-4-scout",
+      "name": "Llama 4 Scout",
+      "provider": "meta-llama",
+      "family": "llama",
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.3,
+        "blended_per_1m": 0.15,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.3,
+          "blended_per_1m": 0.15
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1310720,
+      "listed_at": "2025-04-05",
+      "age_days": 553,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 1.0,
+        "quality": 0,
+        "context": 0.1952,
+        "age": 0.0411,
+        "overall": {
+          "balanced": 0.706,
+          "price": 0.7795,
+          "quality": 0.5591
+        }
+      }
+    },
+    {
+      "id": "xiaomi/mimo-v2.6-pro",
+      "name": "MiMo-V2.6-Pro",
+      "provider": "xiaomi",
+      "family": "mimo",
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "blended_per_1m": 0.54375,
+        "base": {
+          "input_per_1m": 0.435,
+          "output_per_1m": 0.87,
+          "blended_per_1m": 0.54375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-21",
+      "age_days": 19,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8106,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.8984,
+        "overall": {
+          "balanced": 0.696,
+          "price": 0.7246,
+          "quality": 0.6387
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "blended_per_1m": 0.525,
+        "base": {
+          "input_per_1m": 0.3,
+          "output_per_1m": 1.2,
+          "blended_per_1m": 0.525
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-09-10",
+      "age_days": 30,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8159,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.8403,
+        "overall": {
+          "balanced": 0.6897,
+          "price": 0.7212,
+          "quality": 0.6266
+        }
+      }
+    },
+    {
+      "id": "z-ai/glm-5.3-flashx",
+      "name": "GLM 5.3 FlashX",
+      "provider": "z-ai",
+      "family": "glm",
+      "pricing": {
+        "input_per_1m": 0.37,
+        "output_per_1m": 1.25,
+        "blended_per_1m": 0.59,
+        "base": {
+          "input_per_1m": 0.37,
+          "output_per_1m": 1.25,
+          "blended_per_1m": 0.59
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-09-18",
+      "age_days": 22,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7984,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.8819,
+        "overall": {
+          "balanced": 0.685,
+          "price": 0.7133,
+          "quality": 0.6282
+        }
+      }
+    },
+    {
+      "id": "google/gemini-2.5-flash-lite",
+      "name": "Gemini 2.5 Flash Lite",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.4,
+        "blended_per_1m": 0.175,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.4,
+          "blended_per_1m": 0.175
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-07-22",
+      "age_days": 445,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.9779,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.0766,
+        "overall": {
+          "balanced": 0.6704,
+          "price": 0.7473,
+          "quality": 0.5167
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-4.1-nano",
+      "name": "GPT-4.1 Nano",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.1,
+        "output_per_1m": 0.4,
+        "blended_per_1m": 0.175,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.4,
+          "blended_per_1m": 0.175
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1047576,
+      "listed_at": "2025-04-14",
+      "age_days": 544,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.9779,
+        "quality": 0,
+        "context": 0.0335,
+        "age": 0.0433,
+        "overall": {
+          "balanced": 0.6647,
+          "price": 0.743,
+          "quality": 0.5081
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash 0423",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 0.0142,
+        "output_per_1m": 1.28,
+        "blended_per_1m": 0.33065,
+        "base": {
+          "input_per_1m": 0.0142,
+          "output_per_1m": 1.28,
+          "blended_per_1m": 0.33065
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-04-24",
+      "age_days": 169,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8847,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.3762,
+        "overall": {
+          "balanced": 0.6582,
+          "price": 0.7148,
+          "quality": 0.545
+        }
+      }
+    },
+    {
+      "id": "mistralai/mistral-large-4-0",
+      "name": "Mistral Large 4",
+      "provider": "mistralai",
+      "family": "mistral",
+      "pricing": {
+        "input_per_1m": 0.68,
+        "output_per_1m": 2.09,
+        "blended_per_1m": 1.0325,
+        "base": {
+          "input_per_1m": 0.68,
+          "output_per_1m": 2.09,
+          "blended_per_1m": 1.0325
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-10-06",
+      "age_days": 4,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.5,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7141,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.9782,
+        "overall": {
+          "balanced": 0.6448,
+          "price": 0.6621,
+          "quality": 0.6101
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-haiku-5.5",
+      "name": "Claude Haiku 5.5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 2.5,
+        "blended_per_1m": 1.0,
+        "base": {
+          "input_per_1m": 0.1,
+          "output_per_1m": 0.5,
+          "blended_per_1m": 0.2
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 100000,
+            "input_per_1m": 0.5,
+            "output_per_1m": 2.5,
+            "blended_per_1m": 1.0
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-10-07",
+      "age_days": 3,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7189,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.985,
+        "overall": {
+          "balanced": 0.6434,
+          "price": 0.6623,
+          "quality": 0.6057
+        }
+      }
+    },
+    {
+      "id": "minimax/minimax-m3",
+      "name": "MiniMax M3",
+      "provider": "minimax",
+      "family": "minimax",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "blended_per_1m": 0.525,
+        "base": {
+          "input_per_1m": 0.3,
+          "output_per_1m": 1.2,
+          "blended_per_1m": 0.525
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-05-31",
+      "age_days": 132,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8159,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.4673,
+        "overall": {
+          "balanced": 0.6275,
+          "price": 0.6746,
+          "quality": 0.5333
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.8,
+        "blended_per_1m": 0.75,
+        "base": {
+          "input_per_1m": 0.2,
+          "output_per_1m": 1.2,
+          "blended_per_1m": 0.45
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 0.4,
+            "output_per_1m": 1.8,
+            "blended_per_1m": 0.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7623,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.6115,
+          "price": 0.6492,
+          "quality": 0.5361
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-luna-pro",
+      "name": "GPT-5.6 Luna Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.8,
+        "blended_per_1m": 0.75,
+        "base": {
+          "input_per_1m": 0.2,
+          "output_per_1m": 1.2,
+          "blended_per_1m": 0.45
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 0.4,
+            "output_per_1m": 1.8,
+            "blended_per_1m": 0.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7623,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.6115,
+          "price": 0.6492,
+          "quality": 0.5361
+        }
+      }
+    },
+    {
+      "id": "meta-llama/llama-4-maverick",
+      "name": "Llama 4 Maverick",
+      "provider": "meta-llama",
+      "family": "llama",
+      "pricing": {
+        "input_per_1m": 0.1875,
+        "output_per_1m": 0.6525,
+        "blended_per_1m": 0.30375,
+        "base": {
+          "input_per_1m": 0.1875,
+          "output_per_1m": 0.6525,
+          "blended_per_1m": 0.30375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-04-05",
+      "age_days": 553,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8973,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.0411,
+        "overall": {
+          "balanced": 0.6108,
+          "price": 0.6824,
+          "quality": 0.4675
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite",
+      "name": "Gemini 3.1 Flash Lite",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.25,
+        "output_per_1m": 1.5,
+        "blended_per_1m": 0.5625,
+        "base": {
+          "input_per_1m": 0.25,
+          "output_per_1m": 1.5,
+          "blended_per_1m": 0.5625
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-05-07",
+      "age_days": 156,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8055,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.4068,
+        "overall": {
+          "balanced": 0.6105,
+          "price": 0.6592,
+          "quality": 0.513
+        }
+      }
+    },
+    {
+      "id": "unbiased/pareto-26.10-preview",
+      "name": "Pareto 26.10 Preview",
+      "provider": "unbiased",
+      "family": "pareto",
+      "pricing": {
+        "input_per_1m": 0.8,
+        "output_per_1m": 3.2,
+        "blended_per_1m": 1.4,
+        "base": {
+          "input_per_1m": 0.8,
+          "output_per_1m": 3.2,
+          "blended_per_1m": 1.4
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-10-01",
+      "age_days": 9,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.668,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.9504,
+        "overall": {
+          "balanced": 0.6094,
+          "price": 0.6241,
+          "quality": 0.5802
+        }
+      }
+    },
+    {
+      "id": "xiaomi/mimo-v2.5-pro",
+      "name": "MiMo-V2.5-Pro",
+      "provider": "xiaomi",
+      "family": "mimo",
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "blended_per_1m": 0.54375,
+        "base": {
+          "input_per_1m": 0.435,
+          "output_per_1m": 0.87,
+          "blended_per_1m": 0.54375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-04-22",
+      "age_days": 171,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.3,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.8106,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.373,
+        "overall": {
+          "balanced": 0.6084,
+          "price": 0.659,
+          "quality": 0.5073
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.5-flash-lite",
+      "name": "Gemini 3.5 Flash Lite",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 2.5,
+        "blended_per_1m": 0.85,
+        "base": {
+          "input_per_1m": 0.3,
+          "output_per_1m": 2.5,
+          "blended_per_1m": 0.85
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-07-21",
+      "age_days": 81,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7435,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.6272,
+        "overall": {
+          "balanced": 0.6059,
+          "price": 0.6403,
+          "quality": 0.5371
+        }
+      }
+    },
+    {
+      "id": "qwen/qwen3.8-27b",
+      "name": "Qwen3.8 27B",
+      "provider": "qwen",
+      "family": "qwen",
+      "pricing": {
+        "input_per_1m": 0.425,
+        "output_per_1m": 2.55,
+        "blended_per_1m": 0.95625,
+        "base": {
+          "input_per_1m": 0.425,
+          "output_per_1m": 2.55,
+          "blended_per_1m": 0.95625
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-08-14",
+      "age_days": 57,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7257,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.7206,
+        "overall": {
+          "balanced": 0.6039,
+          "price": 0.6343,
+          "quality": 0.543
+        }
+      }
+    },
+    {
+      "id": "tencent/hy4-preview",
+      "name": "Hy4 preview",
+      "provider": "tencent",
+      "family": "hy",
+      "pricing": {
+        "input_per_1m": 0.834,
+        "output_per_1m": 2.501,
+        "blended_per_1m": 1.25075,
+        "base": {
+          "input_per_1m": 0.834,
+          "output_per_1m": 2.501,
+          "blended_per_1m": 1.25075
+        },
+        "tiers": [],
+        "schedule": [
+          {
+            "utc_days": null,
+            "utc_start": 0,
+            "utc_end": 1600,
+            "coverage": 0.6667,
+            "input_per_1m": 0.834,
+            "output_per_1m": 2.501,
+            "blended_per_1m": 1.25075
+          },
+          {
+            "utc_days": null,
+            "utc_start": 1600,
+            "utc_end": 0,
+            "coverage": 0.3333,
+            "input_per_1m": 0.7506,
+            "output_per_1m": 2.2509,
+            "blended_per_1m": 1.125675
+          }
+        ]
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-28",
+      "age_days": 43,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6851,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7795,
+        "overall": {
+          "balanced": 0.5923,
+          "price": 0.6155,
+          "quality": 0.546
+        }
+      }
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "name": "GLM 5.3",
+      "provider": "z-ai",
+      "family": "glm",
+      "pricing": {
+        "input_per_1m": 0.039,
+        "output_per_1m": 4.8,
+        "blended_per_1m": 1.22925,
+        "base": {
+          "input_per_1m": 0.039,
+          "output_per_1m": 4.8,
+          "blended_per_1m": 1.22925
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-18",
+      "age_days": 53,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6877,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7383,
+        "overall": {
+          "balanced": 0.5872,
+          "price": 0.6123,
+          "quality": 0.537
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.75,
+        "output_per_1m": 3.75,
+        "blended_per_1m": 1.5,
+        "base": {
+          "input_per_1m": 0.75,
+          "output_per_1m": 3.75,
+          "blended_per_1m": 1.5
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-09-02",
+      "age_days": 38,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.5,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6576,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.8041,
+        "overall": {
+          "balanced": 0.5781,
+          "price": 0.598,
+          "quality": 0.5384
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.75,
+        "output_per_1m": 3.75,
+        "blended_per_1m": 1.5,
+        "base": {
+          "input_per_1m": 0.75,
+          "output_per_1m": 3.75,
+          "blended_per_1m": 1.5
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-13",
+      "age_days": 58,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.5,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6576,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7167,
+        "overall": {
+          "balanced": 0.5635,
+          "price": 0.5871,
+          "quality": 0.5165
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.75,
+        "output_per_1m": 3.75,
+        "blended_per_1m": 1.5,
+        "base": {
+          "input_per_1m": 0.75,
+          "output_per_1m": 3.75,
+          "blended_per_1m": 1.5
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-07-21",
+      "age_days": 81,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6576,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.6272,
+        "overall": {
+          "balanced": 0.5486,
+          "price": 0.5759,
+          "quality": 0.4941
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 1.32,
+        "output_per_1m": 3.96,
+        "blended_per_1m": 1.98,
+        "base": {
+          "input_per_1m": 1.32,
+          "output_per_1m": 3.96,
+          "blended_per_1m": 1.98
+        },
+        "tiers": [],
+        "schedule": [
+          {
+            "utc_days": [
+              "saturday",
+              "sunday"
+            ],
+            "utc_start": 0,
+            "utc_end": 0,
+            "coverage": 0.2857,
+            "input_per_1m": 0.66,
+            "output_per_1m": 1.98,
+            "blended_per_1m": 0.99
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 0,
+            "utc_end": 100,
+            "coverage": 0.0298,
+            "input_per_1m": 0.66,
+            "output_per_1m": 1.98,
+            "blended_per_1m": 0.99
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 100,
+            "utc_end": 400,
+            "coverage": 0.0893,
+            "input_per_1m": 1.32,
+            "output_per_1m": 3.96,
+            "blended_per_1m": 1.98
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 400,
+            "utc_end": 600,
+            "coverage": 0.0595,
+            "input_per_1m": 0.66,
+            "output_per_1m": 1.98,
+            "blended_per_1m": 0.99
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 600,
+            "utc_end": 1000,
+            "coverage": 0.119,
+            "input_per_1m": 1.32,
+            "output_per_1m": 3.96,
+            "blended_per_1m": 1.98
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 1000,
+            "utc_end": 0,
+            "coverage": 0.4167,
+            "input_per_1m": 0.66,
+            "output_per_1m": 1.98,
+            "blended_per_1m": 0.99
+          }
+        ]
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-12",
+      "age_days": 59,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6155,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7123,
+        "overall": {
+          "balanced": 0.5347,
+          "price": 0.5549,
+          "quality": 0.4944
+        }
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro 0423",
+      "provider": "deepseek",
+      "family": "deepseek",
+      "pricing": {
+        "input_per_1m": 0.9483,
+        "output_per_1m": 1.8966,
+        "blended_per_1m": 1.185375,
+        "base": {
+          "input_per_1m": 0.9483,
+          "output_per_1m": 1.8966,
+          "blended_per_1m": 1.185375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-04-24",
+      "age_days": 169,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6932,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.3762,
+        "overall": {
+          "balanced": 0.5305,
+          "price": 0.5712,
+          "quality": 0.4492
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-4.1-mini",
+      "name": "GPT-4.1 Mini",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.6,
+        "blended_per_1m": 0.7,
+        "base": {
+          "input_per_1m": 0.4,
+          "output_per_1m": 1.6,
+          "blended_per_1m": 0.7
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1047576,
+      "listed_at": "2025-04-14",
+      "age_days": 544,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7727,
+        "quality": 0,
+        "context": 0.0335,
+        "age": 0.0433,
+        "overall": {
+          "balanced": 0.5279,
+          "price": 0.5891,
+          "quality": 0.4056
+        }
+      }
+    },
+    {
+      "id": "amazon/nova-2-lite-v1",
+      "name": "Nova 2 Lite",
+      "provider": "amazon",
+      "family": "nova",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 2.5,
+        "blended_per_1m": 0.85,
+        "base": {
+          "input_per_1m": 0.3,
+          "output_per_1m": 2.5,
+          "blended_per_1m": 0.85
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2025-12-02",
+      "age_days": 312,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7435,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.1653,
+        "overall": {
+          "balanced": 0.5232,
+          "price": 0.5783,
+          "quality": 0.4131
+        }
+      }
+    },
+    {
+      "id": "google/gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 2.5,
+        "blended_per_1m": 0.85,
+        "base": {
+          "input_per_1m": 0.3,
+          "output_per_1m": 2.5,
+          "blended_per_1m": 0.85
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-06-17",
+      "age_days": 480,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7435,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.0626,
+        "overall": {
+          "balanced": 0.5118,
+          "price": 0.5697,
+          "quality": 0.396
+        }
+      }
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "name": "GLM 5.2",
+      "provider": "z-ai",
+      "family": "glm",
+      "pricing": {
+        "input_per_1m": 0.06,
+        "output_per_1m": 7.0,
+        "blended_per_1m": 1.795,
+        "base": {
+          "input_per_1m": 0.06,
+          "output_per_1m": 7.0,
+          "blended_per_1m": 1.795
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-06-16",
+      "age_days": 116,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.6304,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.5127,
+        "overall": {
+          "balanced": 0.5114,
+          "price": 0.5412,
+          "quality": 0.4519
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3-flash-preview",
+      "name": "Gemini 3 Flash Preview",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 3.0,
+        "blended_per_1m": 1.125,
+        "base": {
+          "input_per_1m": 0.5,
+          "output_per_1m": 3.0,
+          "blended_per_1m": 1.125
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-12-17",
+      "age_days": 297,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7011,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.1802,
+        "overall": {
+          "balanced": 0.5031,
+          "price": 0.5526,
+          "quality": 0.4041
+        }
+      }
+    },
+    {
+      "id": "x-ai/grok-4.20",
+      "name": "Grok 4.20",
+      "provider": "x-ai",
+      "family": "grok",
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 5.0,
+        "blended_per_1m": 3.125,
+        "base": {
+          "input_per_1m": 1.25,
+          "output_per_1m": 2.5,
+          "blended_per_1m": 1.5625
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 2.5,
+            "output_per_1m": 5.0,
+            "blended_per_1m": 3.125
+          }
+        ],
+        "schedule": null
+      },
+      "context": 2000000,
+      "listed_at": "2026-03-31",
+      "age_days": 193,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5462,
+        "quality": 0,
+        "context": 0.5,
+        "age": 0.3286,
+        "overall": {
+          "balanced": 0.5022,
+          "price": 0.5132,
+          "quality": 0.4803
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 10.0,
+        "blended_per_1m": 4.0,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-09-28",
+      "age_days": 12,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5086,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.935,
+        "overall": {
+          "balanced": 0.4949,
+          "price": 0.4983,
+          "quality": 0.4881
+        }
+      }
+    },
+    {
+      "id": "minimax/minimax-m1",
+      "name": "MiniMax M1",
+      "provider": "minimax",
+      "family": "minimax",
+      "pricing": {
+        "input_per_1m": 0.55,
+        "output_per_1m": 2.2,
+        "blended_per_1m": 0.9625,
+        "base": {
+          "input_per_1m": 0.55,
+          "output_per_1m": 2.2,
+          "blended_per_1m": 0.9625
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2025-06-17",
+      "age_days": 480,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.7247,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.0627,
+        "overall": {
+          "balanced": 0.4936,
+          "price": 0.5514,
+          "quality": 0.378
+        }
+      }
+    },
+    {
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "name": "Qwen3.8 2.4T A95B",
+      "provider": "qwen",
+      "family": "qwen",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "blended_per_1m": 3.0,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 6.0,
+          "blended_per_1m": 3.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-08-12",
+      "age_days": 59,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5524,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.7124,
+        "overall": {
+          "balanced": 0.4927,
+          "price": 0.5076,
+          "quality": 0.4628
+        }
+      }
+    },
+    {
+      "id": "fireworks/ember-1",
+      "name": "Ember-1",
+      "provider": "fireworks",
+      "family": "ember",
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.0,
+        "base": {
+          "input_per_1m": 3.0,
+          "output_per_1m": 15.0,
+          "blended_per_1m": 6.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-09-24",
+      "age_days": 16,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4469,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.9097,
+        "overall": {
+          "balanced": 0.4552,
+          "price": 0.4532,
+          "quality": 0.4594
+        }
+      }
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "name": "Kimi K3",
+      "provider": "moonshotai",
+      "family": "kimi",
+      "pricing": {
+        "input_per_1m": 0.64,
+        "output_per_1m": 13.5,
+        "blended_per_1m": 3.855,
+        "base": {
+          "input_per_1m": 0.64,
+          "output_per_1m": 13.5,
+          "blended_per_1m": 3.855
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-07-16",
+      "age_days": 86,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5142,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.6094,
+        "overall": {
+          "balanced": 0.4501,
+          "price": 0.4661,
+          "quality": 0.418
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-29",
+      "age_days": 11,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9403,
+        "overall": {
+          "balanced": 0.4485,
+          "price": 0.4436,
+          "quality": 0.4583
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6.1-sol-pro",
+      "name": "GPT-6.1 Sol Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-29",
+      "age_days": 11,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9403,
+        "overall": {
+          "balanced": 0.4485,
+          "price": 0.4436,
+          "quality": 0.4583
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-sol",
+      "name": "GPT-6 Sol",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-22",
+      "age_days": 18,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9032,
+        "overall": {
+          "balanced": 0.4423,
+          "price": 0.439,
+          "quality": 0.4491
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-sol-pro",
+      "name": "GPT-6 Sol Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-22",
+      "age_days": 18,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.9032,
+        "overall": {
+          "balanced": 0.4423,
+          "price": 0.439,
+          "quality": 0.4491
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 1.5,
+        "output_per_1m": 9.0,
+        "blended_per_1m": 3.375,
+        "base": {
+          "input_per_1m": 1.5,
+          "output_per_1m": 9.0,
+          "blended_per_1m": 3.375
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-05-19",
+      "age_days": 144,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5345,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.4356,
+        "overall": {
+          "balanced": 0.4346,
+          "price": 0.4596,
+          "quality": 0.3847
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 10.0,
+        "blended_per_1m": 4.0,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-06-30",
+      "age_days": 102,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5086,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.556,
+        "overall": {
+          "balanced": 0.4317,
+          "price": 0.4509,
+          "quality": 0.3933
+        }
+      }
+    },
+    {
+      "id": "x-ai/grok-4.3",
+      "name": "Grok 4.3",
+      "provider": "x-ai",
+      "family": "grok",
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 5.0,
+        "blended_per_1m": 3.125,
+        "base": {
+          "input_per_1m": 1.25,
+          "output_per_1m": 2.5,
+          "blended_per_1m": 1.5625
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 2.5,
+            "output_per_1m": 5.0,
+            "blended_per_1m": 3.125
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-04-30",
+      "age_days": 163,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5462,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.3914,
+        "overall": {
+          "balanced": 0.4294,
+          "price": 0.4586,
+          "quality": 0.371
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5.5",
+      "name": "Claude Opus 5.5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 20.0,
+        "blended_per_1m": 8.0,
+        "base": {
+          "input_per_1m": 4.0,
+          "output_per_1m": 20.0,
+          "blended_per_1m": 8.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-09-22",
+      "age_days": 18,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4031,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.9028,
+        "overall": {
+          "balanced": 0.4192,
+          "price": 0.4152,
+          "quality": 0.4273
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.5,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.3892,
+          "price": 0.3991,
+          "quality": 0.3694
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-sol-pro",
+      "name": "GPT-5.6 Sol Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.75,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 4.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 6.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": 0.5,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4289,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.3892,
+          "price": 0.3991,
+          "quality": 0.3694
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 18.0,
+        "blended_per_1m": 7.5,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 12.0,
+          "blended_per_1m": 4.5
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 18.0,
+            "blended_per_1m": 7.5
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4129,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.3785,
+          "price": 0.3871,
+          "quality": 0.3614
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-terra-pro",
+      "name": "GPT-5.6 Terra Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 18.0,
+        "blended_per_1m": 7.5,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 12.0,
+          "blended_per_1m": 4.5
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 18.0,
+            "blended_per_1m": 7.5
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-07-09",
+      "age_days": 93,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4129,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.5845,
+        "overall": {
+          "balanced": 0.3785,
+          "price": 0.3871,
+          "quality": 0.3614
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-4.1",
+      "name": "GPT-4.1",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 2.0,
+        "output_per_1m": 8.0,
+        "blended_per_1m": 3.5,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 8.0,
+          "blended_per_1m": 3.5
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1047576,
+      "listed_at": "2025-04-14",
+      "age_days": 544,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.5289,
+        "quality": 0,
+        "context": 0.0335,
+        "age": 0.0433,
+        "overall": {
+          "balanced": 0.3654,
+          "price": 0.4063,
+          "quality": 0.2837
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5",
+      "name": "Claude Opus 5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "blended_per_1m": 10.0,
+        "base": {
+          "input_per_1m": 5.0,
+          "output_per_1m": 25.0,
+          "blended_per_1m": 10.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-07-24",
+      "age_days": 78,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3691,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.6385,
+        "overall": {
+          "balanced": 0.3525,
+          "price": 0.3566,
+          "quality": 0.3442
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "name": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 6.0,
+        "base": {
+          "input_per_1m": 3.0,
+          "output_per_1m": 15.0,
+          "blended_per_1m": 6.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-02-17",
+      "age_days": 235,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4469,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.2577,
+        "overall": {
+          "balanced": 0.3409,
+          "price": 0.3674,
+          "quality": 0.2879
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.1-pro-preview",
+      "name": "Gemini 3.1 Pro Preview",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 4.0,
+        "output_per_1m": 18.0,
+        "blended_per_1m": 7.5,
+        "base": {
+          "input_per_1m": 2.0,
+          "output_per_1m": 12.0,
+          "blended_per_1m": 4.5
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 4.0,
+            "output_per_1m": 18.0,
+            "blended_per_1m": 7.5
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2026-02-19",
+      "age_days": 233,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4129,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.2606,
+        "overall": {
+          "balanced": 0.3244,
+          "price": 0.3465,
+          "quality": 0.2802
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.8",
+      "name": "Claude Opus 4.8",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "blended_per_1m": 10.0,
+        "base": {
+          "input_per_1m": 5.0,
+          "output_per_1m": 25.0,
+          "blended_per_1m": 10.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-05-27",
+      "age_days": 136,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3691,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.4568,
+        "overall": {
+          "balanced": 0.3222,
+          "price": 0.3339,
+          "quality": 0.2987
+        }
+      }
+    },
+    {
+      "id": "google/gemini-2.5-pro",
+      "name": "Gemini 2.5 Pro",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 5.625,
+        "base": {
+          "input_per_1m": 1.25,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 3.4375
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 2.5,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 5.625
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-06-17",
+      "age_days": 480,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4567,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.0626,
+        "overall": {
+          "balanced": 0.3206,
+          "price": 0.3546,
+          "quality": 0.2525
+        }
+      }
+    },
+    {
+      "id": "google/gemini-2.5-pro-preview",
+      "name": "Gemini 2.5 Pro Preview 06-05",
+      "provider": "google",
+      "family": "gemini",
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "blended_per_1m": 5.625,
+        "base": {
+          "input_per_1m": 1.25,
+          "output_per_1m": 10.0,
+          "blended_per_1m": 3.4375
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 2.5,
+            "output_per_1m": 15.0,
+            "blended_per_1m": 5.625
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1048576,
+      "listed_at": "2025-06-05",
+      "age_days": 492,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.4567,
+        "quality": 0,
+        "context": 0.0342,
+        "age": 0.0584,
+        "overall": {
+          "balanced": 0.3199,
+          "price": 0.3541,
+          "quality": 0.2515
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "name": "Claude Opus 4.7",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "blended_per_1m": 10.0,
+        "base": {
+          "input_per_1m": 5.0,
+          "output_per_1m": 25.0,
+          "blended_per_1m": 10.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-04-16",
+      "age_days": 177,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3691,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.3602,
+        "overall": {
+          "balanced": 0.3061,
+          "price": 0.3218,
+          "quality": 0.2746
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.4",
+      "name": "GPT-5.4",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 22.5,
+        "blended_per_1m": 9.375,
+        "base": {
+          "input_per_1m": 2.5,
+          "output_per_1m": 15.0,
+          "blended_per_1m": 5.625
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 5.0,
+            "output_per_1m": 22.5,
+            "blended_per_1m": 9.375
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-03-05",
+      "age_days": 219,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3789,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.2828,
+        "overall": {
+          "balanced": 0.3056,
+          "price": 0.3239,
+          "quality": 0.269
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.6",
+      "name": "Claude Opus 4.6",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 25.0,
+        "blended_per_1m": 10.0,
+        "base": {
+          "input_per_1m": 5.0,
+          "output_per_1m": 25.0,
+          "blended_per_1m": 10.0
+        },
+        "tiers": [],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2026-02-04",
+      "age_days": 248,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3691,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.2391,
+        "overall": {
+          "balanced": 0.2859,
+          "price": 0.3067,
+          "quality": 0.2443
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-astra",
+      "name": "GPT-6 Astra",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 20.0,
+        "output_per_1m": 75.0,
+        "blended_per_1m": 33.75,
+        "base": {
+          "input_per_1m": 10.0,
+          "output_per_1m": 50.0,
+          "blended_per_1m": 20.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 20.0,
+            "output_per_1m": 75.0,
+            "blended_per_1m": 33.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-04",
+      "age_days": 36,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.1836,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.8144,
+        "overall": {
+          "balanced": 0.264,
+          "price": 0.2439,
+          "quality": 0.3042
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-6-astra-pro",
+      "name": "GPT-6 Astra Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 20.0,
+        "output_per_1m": 75.0,
+        "blended_per_1m": 33.75,
+        "base": {
+          "input_per_1m": 10.0,
+          "output_per_1m": 50.0,
+          "blended_per_1m": 20.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 20.0,
+            "output_per_1m": 75.0,
+            "blended_per_1m": 33.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-09-04",
+      "age_days": 36,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.1836,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.8144,
+        "overall": {
+          "balanced": 0.264,
+          "price": 0.2439,
+          "quality": 0.3042
+        }
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.5",
+      "name": "Claude Sonnet 4.5",
+      "provider": "anthropic",
+      "family": "claude",
+      "pricing": {
+        "input_per_1m": 6.0,
+        "output_per_1m": 22.5,
+        "blended_per_1m": 10.125,
+        "base": {
+          "input_per_1m": 3.0,
+          "output_per_1m": 15.0,
+          "blended_per_1m": 6.0
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 200000,
+            "input_per_1m": 6.0,
+            "output_per_1m": 22.5,
+            "blended_per_1m": 10.125
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1000000,
+      "listed_at": "2025-09-29",
+      "age_days": 376,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.3672,
+        "quality": 0,
+        "context": 0.0,
+        "age": 0.1141,
+        "overall": {
+          "balanced": 0.2638,
+          "price": 0.2897,
+          "quality": 0.2121
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.5",
+      "name": "GPT-5.5",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 10.0,
+        "output_per_1m": 45.0,
+        "blended_per_1m": 18.75,
+        "base": {
+          "input_per_1m": 5.0,
+          "output_per_1m": 30.0,
+          "blended_per_1m": 11.25
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 10.0,
+            "output_per_1m": 45.0,
+            "blended_per_1m": 18.75
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-04-24",
+      "age_days": 169,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.2732,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.3775,
+        "overall": {
+          "balanced": 0.2509,
+          "price": 0.2565,
+          "quality": 0.2398
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-5.4-pro",
+      "name": "GPT-5.4 Pro",
+      "provider": "openai",
+      "family": "gpt",
+      "pricing": {
+        "input_per_1m": 60.0,
+        "output_per_1m": 270.0,
+        "blended_per_1m": 112.5,
+        "base": {
+          "input_per_1m": 30.0,
+          "output_per_1m": 180.0,
+          "blended_per_1m": 67.5
+        },
+        "tiers": [
+          {
+            "min_prompt_tokens": 272000,
+            "input_per_1m": 60.0,
+            "output_per_1m": 270.0,
+            "blended_per_1m": 112.5
+          }
+        ],
+        "schedule": null
+      },
+      "context": 1050000,
+      "listed_at": "2026-03-05",
+      "age_days": 219,
+      "tool_calling": true,
+      "zdr": true,
+      "discount": null,
+      "expired": false,
+      "aa": {
+        "intelligence_index": null,
+        "coding_index": null,
+        "agentic_index": null
+      },
+      "quality": null,
+      "quality_match": null,
+      "scores": {
+        "price": 0.0,
+        "quality": 0,
+        "context": 0.0352,
+        "age": 0.2828,
+        "overall": {
+          "balanced": 0.053,
+          "price": 0.0398,
+          "quality": 0.0795
+        }
+      }
+    }
+  ],
+  "rankings": {
+    "balanced": [
+      "xiaomi/mimo-v2.6-flash",
+      "z-ai/glm-5.3-flash",
+      "openai/gpt-6-luna",
+      "openai/gpt-6-luna-pro",
+      "deepseek/deepseek-v4-flash-vision-exp",
+      "xiaomi/mimo-v2.5",
+      "deepseek/deepseek-v4-flash-0731",
+      "meta-llama/llama-4-scout",
+      "xiaomi/mimo-v2.6-pro",
+      "deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx",
+      "google/gemini-2.5-flash-lite",
+      "openai/gpt-4.1-nano",
+      "deepseek/deepseek-v4-flash",
+      "mistralai/mistral-large-4-0",
+      "anthropic/claude-haiku-5.5",
+      "minimax/minimax-m3",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-luna-pro",
+      "meta-llama/llama-4-maverick",
+      "google/gemini-3.1-flash-lite",
+      "unbiased/pareto-26.10-preview",
+      "xiaomi/mimo-v2.5-pro",
+      "google/gemini-3.5-flash-lite",
+      "qwen/qwen3.8-27b",
+      "tencent/hy4-preview",
+      "z-ai/glm-5.3",
+      "google/gemini-3.8-flash",
+      "google/gemini-3.7-flash",
+      "google/gemini-3.6-flash",
+      "deepseek/deepseek-v4-pro-0813",
+      "deepseek/deepseek-v4-pro",
+      "openai/gpt-4.1-mini",
+      "amazon/nova-2-lite-v1",
+      "google/gemini-2.5-flash",
+      "z-ai/glm-5.2",
+      "google/gemini-3-flash-preview",
+      "x-ai/grok-4.20",
+      "anthropic/claude-sonnet-5.5",
+      "minimax/minimax-m1",
+      "qwen/qwen3.8-2.4t-a95b",
+      "fireworks/ember-1",
+      "moonshotai/kimi-k3",
+      "openai/gpt-6.1-sol",
+      "openai/gpt-6.1-sol-pro",
+      "openai/gpt-6-sol",
+      "openai/gpt-6-sol-pro",
+      "google/gemini-3.5-flash",
+      "anthropic/claude-sonnet-5",
+      "x-ai/grok-4.3",
+      "anthropic/claude-opus-5.5",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-sol-pro",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-terra-pro",
+      "openai/gpt-4.1",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-4.6",
+      "google/gemini-3.1-pro-preview",
+      "anthropic/claude-opus-4.8",
+      "google/gemini-2.5-pro",
+      "google/gemini-2.5-pro-preview",
+      "anthropic/claude-opus-4.7",
+      "openai/gpt-5.4",
+      "anthropic/claude-opus-4.6",
+      "openai/gpt-6-astra",
+      "openai/gpt-6-astra-pro",
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5.5",
+      "openai/gpt-5.4-pro"
+    ],
+    "price": [
+      "xiaomi/mimo-v2.6-flash",
+      "z-ai/glm-5.3-flash",
+      "xiaomi/mimo-v2.5",
+      "meta-llama/llama-4-scout",
+      "openai/gpt-6-luna",
+      "openai/gpt-6-luna-pro",
+      "deepseek/deepseek-v4-flash-vision-exp",
+      "deepseek/deepseek-v4-flash-0731",
+      "google/gemini-2.5-flash-lite",
+      "openai/gpt-4.1-nano",
+      "xiaomi/mimo-v2.6-pro",
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4-flash",
+      "z-ai/glm-5.3-flashx",
+      "meta-llama/llama-4-maverick",
+      "minimax/minimax-m3",
+      "anthropic/claude-haiku-5.5",
+      "mistralai/mistral-large-4-0",
+      "google/gemini-3.1-flash-lite",
+      "xiaomi/mimo-v2.5-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-luna-pro",
+      "google/gemini-3.5-flash-lite",
+      "qwen/qwen3.8-27b",
+      "unbiased/pareto-26.10-preview",
+      "tencent/hy4-preview",
+      "z-ai/glm-5.3",
+      "google/gemini-3.8-flash",
+      "openai/gpt-4.1-mini",
+      "google/gemini-3.7-flash",
+      "amazon/nova-2-lite-v1",
+      "google/gemini-3.6-flash",
+      "deepseek/deepseek-v4-pro",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-v4-pro-0813",
+      "google/gemini-3-flash-preview",
+      "minimax/minimax-m1",
+      "z-ai/glm-5.2",
+      "x-ai/grok-4.20",
+      "qwen/qwen3.8-2.4t-a95b",
+      "anthropic/claude-sonnet-5.5",
+      "moonshotai/kimi-k3",
+      "google/gemini-3.5-flash",
+      "x-ai/grok-4.3",
+      "fireworks/ember-1",
+      "anthropic/claude-sonnet-5",
+      "openai/gpt-6.1-sol",
+      "openai/gpt-6.1-sol-pro",
+      "openai/gpt-6-sol",
+      "openai/gpt-6-sol-pro",
+      "anthropic/claude-opus-5.5",
+      "openai/gpt-4.1",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-sol-pro",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-terra-pro",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-opus-5",
+      "google/gemini-2.5-pro",
+      "google/gemini-2.5-pro-preview",
+      "google/gemini-3.1-pro-preview",
+      "anthropic/claude-opus-4.8",
+      "openai/gpt-5.4",
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5.5",
+      "openai/gpt-6-astra",
+      "openai/gpt-6-astra-pro",
+      "openai/gpt-5.4-pro"
+    ],
+    "quality": [
+      "xiaomi/mimo-v2.6-flash",
+      "openai/gpt-6-luna",
+      "openai/gpt-6-luna-pro",
+      "z-ai/glm-5.3-flash",
+      "deepseek/deepseek-v4-flash-vision-exp",
+      "xiaomi/mimo-v2.6-pro",
+      "z-ai/glm-5.3-flashx",
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4-flash-0731",
+      "mistralai/mistral-large-4-0",
+      "anthropic/claude-haiku-5.5",
+      "xiaomi/mimo-v2.5",
+      "unbiased/pareto-26.10-preview",
+      "meta-llama/llama-4-scout",
+      "tencent/hy4-preview",
+      "deepseek/deepseek-v4-flash",
+      "qwen/qwen3.8-27b",
+      "google/gemini-3.8-flash",
+      "google/gemini-3.5-flash-lite",
+      "z-ai/glm-5.3",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-luna-pro",
+      "minimax/minimax-m3",
+      "google/gemini-2.5-flash-lite",
+      "google/gemini-3.7-flash",
+      "google/gemini-3.1-flash-lite",
+      "openai/gpt-4.1-nano",
+      "xiaomi/mimo-v2.5-pro",
+      "deepseek/deepseek-v4-pro-0813",
+      "google/gemini-3.6-flash",
+      "anthropic/claude-sonnet-5.5",
+      "x-ai/grok-4.20",
+      "meta-llama/llama-4-maverick",
+      "qwen/qwen3.8-2.4t-a95b",
+      "fireworks/ember-1",
+      "openai/gpt-6.1-sol",
+      "openai/gpt-6.1-sol-pro",
+      "z-ai/glm-5.2",
+      "deepseek/deepseek-v4-pro",
+      "openai/gpt-6-sol",
+      "openai/gpt-6-sol-pro",
+      "anthropic/claude-opus-5.5",
+      "moonshotai/kimi-k3",
+      "amazon/nova-2-lite-v1",
+      "openai/gpt-4.1-mini",
+      "google/gemini-3-flash-preview",
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-5",
+      "google/gemini-3.5-flash",
+      "minimax/minimax-m1",
+      "x-ai/grok-4.3",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-sol-pro",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-terra-pro",
+      "anthropic/claude-opus-5",
+      "openai/gpt-6-astra",
+      "openai/gpt-6-astra-pro",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-4.6",
+      "openai/gpt-4.1",
+      "google/gemini-3.1-pro-preview",
+      "anthropic/claude-opus-4.7",
+      "openai/gpt-5.4",
+      "google/gemini-2.5-pro",
+      "google/gemini-2.5-pro-preview",
+      "anthropic/claude-opus-4.6",
+      "openai/gpt-5.5",
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5.4-pro"
+    ]
+  },
+  "filtered": [
+    {
+      "id": "aion-labs/aion-2.0",
+      "name": "AionLabs: Aion-2.0",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "aion-labs/aion-3.0",
+      "name": "AionLabs: Aion-3.0",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "aion-labs/aion-3.0-mini",
+      "name": "AionLabs: Aion-3.0-Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "aion-labs/aion-3.5",
+      "name": "AionLabs: Aion 3.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "aion-labs/aion-3.5-mini",
+      "name": "AionLabs: Aion 3.5 Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "aion-labs/aion-rp-llama-3.1-8b",
+      "name": "AionLabs: Aion-RP 1.0 (8B)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "amazon/nova-lite-v1",
+      "name": "Amazon: Nova Lite 1.0",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "amazon/nova-micro-v1",
+      "name": "Amazon: Nova Micro 1.0",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "amazon/nova-premier-v1",
+      "name": "Amazon: Nova Premier 1.0",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "amazon/nova-pro-v1",
+      "name": "Amazon: Nova Pro 1.0",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthracite-org/magnum-v4-72b",
+      "name": "Magnum v4 72B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-fable-5",
+      "name": "Anthropic: Claude Fable 5",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "anthropic/claude-fable-5.1",
+      "name": "Anthropic: Claude Fable 5.1",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "anthropic/claude-fable-5.1:batch",
+      "name": "Anthropic: Claude Fable 5.1 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-fable-5:batch",
+      "name": "Anthropic: Claude Fable 5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "name": "Anthropic: Claude Haiku 4.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5:batch",
+      "name": "Anthropic: Claude Haiku 4.5 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-haiku-5.5:batch",
+      "name": "Anthropic: Claude Haiku 5.5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.1",
+      "name": "Anthropic: Claude Opus 4.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.1:batch",
+      "name": "Anthropic: Claude Opus 4.1 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.5",
+      "name": "Anthropic: Claude Opus 4.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.5:batch",
+      "name": "Anthropic: Claude Opus 4.5 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.6:batch",
+      "name": "Anthropic: Claude Opus 4.6 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.7:batch",
+      "name": "Anthropic: Claude Opus 4.7 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-4.8:batch",
+      "name": "Anthropic: Claude Opus 4.8 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-5.5:batch",
+      "name": "Anthropic: Claude Opus 5.5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-opus-5:batch",
+      "name": "Anthropic: Claude Opus 5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Anthropic: Claude Sonnet 4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.5:batch",
+      "name": "Anthropic: Claude Sonnet 4.5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.6:batch",
+      "name": "Anthropic: Claude Sonnet 4.6 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-sonnet-5.5:batch",
+      "name": "Anthropic: Claude Sonnet 5.5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "anthropic/claude-sonnet-5:batch",
+      "name": "Anthropic: Claude Sonnet 5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "apodex/apodex-1.1-mini:free",
+      "name": "Apodex: Apodex 1.1 Mini (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "arcee-ai/trinity-large-thinking",
+      "name": "Arcee AI: Trinity Large Thinking",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-1.6",
+      "name": "ByteDance Seed: Seed 1.6",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-1.6-flash",
+      "name": "ByteDance Seed: Seed 1.6 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-2-1-turbo",
+      "name": "ByteDance Seed: Seed 2.1 Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-2.0-code",
+      "name": "ByteDance Seed: Seed-2.0-Code",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-2.0-lite",
+      "name": "ByteDance Seed: Seed-2.0-Lite",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance-seed/seed-2.0-mini",
+      "name": "ByteDance Seed: Seed-2.0-Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "bytedance/ui-tars-1.5-7b",
+      "name": "ByteDance: UI-TARS 7B ",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+      "name": "Venice: Uncensored",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/command-a",
+      "name": "Cohere: Command A",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/command-a-plus",
+      "name": "Cohere: Command A+",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/command-r-08-2024",
+      "name": "Cohere: Command R (08-2024)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/command-r-plus-08-2024",
+      "name": "Cohere: Command R+ (08-2024)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/command-r7b-12-2024",
+      "name": "Cohere: Command R7B (12-2024)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "cohere/north-mini-code:free",
+      "name": "Cohere: North Mini Code (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-chat",
+      "name": "DeepSeek: DeepSeek V3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-chat-v3-0324",
+      "name": "DeepSeek: DeepSeek V3 0324",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-chat-v3.1",
+      "name": "DeepSeek: DeepSeek V3.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-r1",
+      "name": "DeepSeek: R1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-r1-0528",
+      "name": "DeepSeek: R1 0528",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v3.1-terminus",
+      "name": "DeepSeek: DeepSeek V3.1 Terminus",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v3.2",
+      "name": "DeepSeek: DeepSeek V3.2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v3.2-exp",
+      "name": "DeepSeek: DeepSeek V3.2 Exp",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash:batch",
+      "name": "DeepSeek: DeepSeek V4.1 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots3-Note Preview (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-2.5-flash-image",
+      "name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-2.5-flash-lite:batch",
+      "name": "Google: Gemini 2.5 Flash Lite (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-2.5-flash:batch",
+      "name": "Google: Gemini 2.5 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-2.5-pro:batch",
+      "name": "Google: Gemini 2.5 Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3-flash-preview:batch",
+      "name": "Google: Gemini 3 Flash Preview (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3-pro-image",
+      "name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-3-pro-image-preview",
+      "name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-image",
+      "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-image-preview",
+      "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite-image",
+      "name": "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite-preview",
+      "name": "Google: Gemini 3.1 Flash Lite Preview",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite:batch",
+      "name": "Google: Gemini 3.1 Flash Lite (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-pro-preview-customtools",
+      "name": "Google: Gemini 3.1 Pro Preview Custom Tools",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-pro-preview:batch",
+      "name": "Google: Gemini 3.1 Pro Preview (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.5-flash-lite:batch",
+      "name": "Google: Gemini 3.5 Flash Lite (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.5-flash:batch",
+      "name": "Google: Gemini 3.5 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.6-flash:batch",
+      "name": "Google: Gemini 3.6 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.7-flash:batch",
+      "name": "Google: Gemini 3.7 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-3.8-flash:batch",
+      "name": "Google: Gemini 3.8 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "google/gemini-nano-banana-2.1",
+      "name": "Google: Nano Banana 2.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-2-27b-it",
+      "name": "Google: Gemma 2 27B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-3-12b-it",
+      "name": "Google: Gemma 3 12B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-3-27b-it",
+      "name": "Google: Gemma 3 27B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-3-4b-it",
+      "name": "Google: Gemma 3 4B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it",
+      "name": "Google: Gemma 4 26B A4B ",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it:free",
+      "name": "Google: Gemma 4 26B A4B  (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "name": "Google: Gemma 4 31B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/gemma-4-31b-it:free",
+      "name": "Google: Gemma 4 31B (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "google/lyria-3-clip-preview",
+      "name": "Google: Lyria 3 Clip Preview",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "google/lyria-3-pro-preview",
+      "name": "Google: Lyria 3 Pro Preview",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "gryphe/mythomax-l2-13b",
+      "name": "MythoMax 13B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "ibm-granite/granite-4.0-h-micro",
+      "name": "IBM: Granite 4.0 Micro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "ibm-granite/granite-4.2-8b",
+      "name": "IBM: Granite 4.2 8B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inception/mercury-2",
+      "name": "Inception: Mercury 2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inception/mercury-2.5",
+      "name": "Inception: Mercury 2.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash",
+      "name": "inclusionAI: Ling 3.0 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-fin",
+      "name": "inclusionAI: Ling 3.0 Flash Fin",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-sante",
+      "name": "inclusionAI: Ling 3.0 Flash Sante",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-vl",
+      "name": "inclusionAI: Ling 3.0 Flash VL",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inclusionai/ling-3.1-flash",
+      "name": "inclusionAI: Ling 3.1 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inference-net/schematron-v2-small",
+      "name": "Inference.net: Schematron V2 Small",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "inference-net/schematron-v2-turbo",
+      "name": "Inference.net: Schematron V2 Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "name": "LiquidAI: LFM2.5-2.6B (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mancer/weaver",
+      "name": "Mancer: Weaver (alpha)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meituan/longcat-2.0",
+      "name": "Meituan: LongCat 2.0",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "name": "Meta: Llama 3.1 70B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.1-8b-instruct",
+      "name": "Meta: Llama 3.1 8B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.2-1b-instruct",
+      "name": "Meta: Llama 3.2 1B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.2-3b-instruct",
+      "name": "Meta: Llama 3.2 3B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "name": "Meta: Llama 3.3 70B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta-llama/llama-guard-4-12b",
+      "name": "Meta: Llama Guard 4 12B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta/muse-glimmer-30b",
+      "name": "Meta: Muse Glimmer 30B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "meta/muse-spark-1.1",
+      "name": "Meta: Muse Spark 1.1",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "meta/muse-spark-1.2",
+      "name": "Meta: Muse Spark 1.2",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "meta/muse-spark-1.2-contributor",
+      "name": "Meta: Muse Spark 1.2 Contributor",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "meta/muse-spark-1.3",
+      "name": "Meta: Muse Spark 1.3",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "meta/muse-spark-1.3-contributor",
+      "name": "Meta: Muse Spark 1.3 Contributor",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "microsoft/phi-4",
+      "name": "Microsoft: Phi 4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "microsoft/wizardlm-2-8x22b",
+      "name": "WizardLM-2 8x22B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "minimax/minimax-01",
+      "name": "MiniMax: MiniMax-01",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2",
+      "name": "MiniMax: MiniMax M2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2-her",
+      "name": "MiniMax: MiniMax M2-her",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2.1",
+      "name": "MiniMax: MiniMax M2.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2.5",
+      "name": "MiniMax: MiniMax M2.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2.7",
+      "name": "MiniMax: MiniMax M2.7",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/codestral-2508",
+      "name": "Mistral: Codestral 2508",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/codestral-2508:batch",
+      "name": "Mistral: Codestral 2508 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/devstral-2512",
+      "name": "Mistral: Devstral 2 2512",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/ministral-14b-2512",
+      "name": "Mistral: Ministral 3 14B 2512",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/ministral-3b-2512",
+      "name": "Mistral: Ministral 3 3B 2512",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/ministral-8b-2512",
+      "name": "Mistral: Ministral 3 8B 2512",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/ministral-8b-2512:batch",
+      "name": "Mistral: Ministral 3 8B 2512 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-large",
+      "name": "Mistral Large",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-large-2407",
+      "name": "Mistral Large 2407",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-large-2512",
+      "name": "Mistral: Mistral Large 3 2512",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-large-2512:batch",
+      "name": "Mistral: Mistral Large 3 2512 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-medium-3",
+      "name": "Mistral: Mistral Medium 3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-medium-3-5",
+      "name": "Mistral: Mistral Medium 3.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-medium-3-5:batch",
+      "name": "Mistral: Mistral Medium 3.5 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-medium-3.1",
+      "name": "Mistral: Mistral Medium 3.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-medium-3.1:batch",
+      "name": "Mistral: Mistral Medium 3.1 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-nemo",
+      "name": "Mistral: Mistral Nemo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-saba",
+      "name": "Mistral: Saba",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small-24b-instruct-2501",
+      "name": "Mistral: Mistral Small 3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small-2603",
+      "name": "Mistral: Mistral Small 4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small-2603:batch",
+      "name": "Mistral: Mistral Small 4 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small-3.1-24b-instruct",
+      "name": "Mistral: Mistral Small 3.1 24B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small-3.2-24b-instruct",
+      "name": "Mistral: Mistral Small 3.2 24B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/mixtral-8x22b-instruct",
+      "name": "Mistral: Mixtral 8x22B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "mistralai/voxtral-small-24b-2507",
+      "name": "Mistral: Voxtral Small 24B 2507",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2",
+      "name": "MoonshotAI: Kimi K2 0711",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2-0905",
+      "name": "MoonshotAI: Kimi K2 0905",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2-thinking",
+      "name": "MoonshotAI: Kimi K2 Thinking",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "name": "MoonshotAI: Kimi K2.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.6",
+      "name": "MoonshotAI: Kimi K2.6",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "name": "MoonshotAI: Kimi K2.7 Code",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k3:batch",
+      "name": "MoonshotAI: Kimi K3 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "morph/morph-v3-fast",
+      "name": "Morph: Morph V3 Fast",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "morph/morph-v3-large",
+      "name": "Morph: Morph V3 Large",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nex-agi/nex-n2.5-mini",
+      "name": "Nex AGI: Nex-N2.5-Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nex-agi/nex-n2.5-pro",
+      "name": "Nex AGI: Nex-N2.5-Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nousresearch/hermes-3-llama-3.1-405b",
+      "name": "Nous: Hermes 3 405B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nousresearch/hermes-3-llama-3.1-70b",
+      "name": "Nous: Hermes 3 70B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nousresearch/hermes-4-405b",
+      "name": "Nous: Hermes 4 405B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-nano-30b-a3b",
+      "name": "NVIDIA: Nemotron 3 Nano 30B A3B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "name": "NVIDIA: Nemotron 3 Nano Omni (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b",
+      "name": "NVIDIA: Nemotron 3 Super",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "name": "NVIDIA: Nemotron 3 Super (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "name": "NVIDIA: Nemotron 3 Ultra",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "name": "NVIDIA: Nemotron 3 Ultra (free)",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3.5-content-safety",
+      "name": "NVIDIA: Nemotron 3.5 Content Safety",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3.5-content-safety:free",
+      "name": "NVIDIA: Nemotron 3.5 Content Safety (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3.5-lightning",
+      "name": "NVIDIA: Nemotron 3.5 Lightning",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "nvidia/nemotron-3.5-lightning:free",
+      "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "nvidia/switchyard",
+      "name": "NVIDIA: Switchyard",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "openai/gpt-3.5-turbo",
+      "name": "OpenAI: GPT-3.5 Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-3.5-turbo-0613",
+      "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-3.5-turbo-16k",
+      "name": "OpenAI: GPT-3.5 Turbo 16k",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-3.5-turbo-instruct",
+      "name": "OpenAI: GPT-3.5 Turbo Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-3.5-turbo:batch",
+      "name": "OpenAI: GPT-3.5 Turbo (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4",
+      "name": "OpenAI: GPT-4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4-turbo",
+      "name": "OpenAI: GPT-4 Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4-turbo:batch",
+      "name": "OpenAI: GPT-4 Turbo (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4.1-mini:batch",
+      "name": "OpenAI: GPT-4.1 Mini (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-4.1-nano:batch",
+      "name": "OpenAI: GPT-4.1 Nano (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-4.1:batch",
+      "name": "OpenAI: GPT-4.1 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "OpenAI: GPT-4o",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-2024-05-13",
+      "name": "OpenAI: GPT-4o (2024-05-13)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-2024-08-06",
+      "name": "OpenAI: GPT-4o (2024-08-06)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-2024-11-20",
+      "name": "OpenAI: GPT-4o (2024-11-20)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "OpenAI: GPT-4o-mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-mini-2024-07-18",
+      "name": "OpenAI: GPT-4o-mini (2024-07-18)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-mini:batch",
+      "name": "OpenAI: GPT-4o-mini (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-4o:batch",
+      "name": "OpenAI: GPT-4o (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5",
+      "name": "OpenAI: GPT-5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-image",
+      "name": "OpenAI: GPT-5 Image",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-image-mini",
+      "name": "OpenAI: GPT-5 Image Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-mini",
+      "name": "OpenAI: GPT-5 Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-mini:batch",
+      "name": "OpenAI: GPT-5 Mini (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-nano",
+      "name": "OpenAI: GPT-5 Nano",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-nano:batch",
+      "name": "OpenAI: GPT-5 Nano (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-pro",
+      "name": "OpenAI: GPT-5 Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5-pro:batch",
+      "name": "OpenAI: GPT-5 Pro (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.1",
+      "name": "OpenAI: GPT-5.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.1-codex",
+      "name": "OpenAI: GPT-5.1-Codex",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.1-codex-max",
+      "name": "OpenAI: GPT-5.1-Codex-Max",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.1-codex-mini",
+      "name": "OpenAI: GPT-5.1-Codex-Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.1:batch",
+      "name": "OpenAI: GPT-5.1 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2",
+      "name": "OpenAI: GPT-5.2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2-chat",
+      "name": "OpenAI: GPT-5.2 Chat",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2-codex",
+      "name": "OpenAI: GPT-5.2-Codex",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2-pro",
+      "name": "OpenAI: GPT-5.2 Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2-pro:batch",
+      "name": "OpenAI: GPT-5.2 Pro (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.2:batch",
+      "name": "OpenAI: GPT-5.2 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.3-codex",
+      "name": "OpenAI: GPT-5.3-Codex",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-image-2",
+      "name": "OpenAI: GPT-5.4 Image 2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-mini",
+      "name": "OpenAI: GPT-5.4 Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-mini:batch",
+      "name": "OpenAI: GPT-5.4 Mini (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-nano",
+      "name": "OpenAI: GPT-5.4 Nano",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-nano:batch",
+      "name": "OpenAI: GPT-5.4 Nano (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4-pro:batch",
+      "name": "OpenAI: GPT-5.4 Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.4:batch",
+      "name": "OpenAI: GPT-5.4 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.5-pro",
+      "name": "OpenAI: GPT-5.5 Pro",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.5-pro:batch",
+      "name": "OpenAI: GPT-5.5 Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.5:batch",
+      "name": "OpenAI: GPT-5.5 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-luna-pro:batch",
+      "name": "OpenAI: GPT-5.6 Luna Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-luna:batch",
+      "name": "OpenAI: GPT-5.6 Luna (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-sol-pro:batch",
+      "name": "OpenAI: GPT-5.6 Sol Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-sol:batch",
+      "name": "OpenAI: GPT-5.6 Sol (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-terra-pro:batch",
+      "name": "OpenAI: GPT-5.6 Terra Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5.6-terra:batch",
+      "name": "OpenAI: GPT-5.6 Terra (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-5:batch",
+      "name": "OpenAI: GPT-5 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-astra-pro:batch",
+      "name": "OpenAI: GPT-6 Astra Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-astra:batch",
+      "name": "OpenAI: GPT-6 Astra (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-luna-pro:batch",
+      "name": "OpenAI: GPT-6 Luna Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-luna:batch",
+      "name": "OpenAI: GPT-6 Luna (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-sol-pro:batch",
+      "name": "OpenAI: GPT-6 Sol Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6-sol:batch",
+      "name": "OpenAI: GPT-6 Sol (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6.1-sol-pro:batch",
+      "name": "OpenAI: GPT-6.1 Sol Pro (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-6.1-sol:batch",
+      "name": "OpenAI: GPT-6.1 Sol (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "openai/gpt-audio",
+      "name": "OpenAI: GPT Audio",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-audio-mini",
+      "name": "OpenAI: GPT Audio Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-chat-latest",
+      "name": "OpenAI: GPT Chat Latest",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "name": "OpenAI: gpt-oss-120b",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-120b:batch",
+      "name": "OpenAI: gpt-oss-120b (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-20b",
+      "name": "OpenAI: gpt-oss-20b",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-20b:batch",
+      "name": "OpenAI: gpt-oss-20b (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-safeguard-20b",
+      "name": "OpenAI: gpt-oss-safeguard-20b",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o1",
+      "name": "OpenAI: o1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o1-pro",
+      "name": "OpenAI: o1-pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3",
+      "name": "OpenAI: o3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3-mini",
+      "name": "OpenAI: o3 Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3-mini-high",
+      "name": "OpenAI: o3 Mini High",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3-mini:batch",
+      "name": "OpenAI: o3 Mini (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3-pro",
+      "name": "OpenAI: o3 Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o3:batch",
+      "name": "OpenAI: o3 (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o4-mini",
+      "name": "OpenAI: o4 Mini",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o4-mini-high",
+      "name": "OpenAI: o4 Mini High",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openai/o4-mini:batch",
+      "name": "OpenAI: o4 Mini (batch)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openrouter/auto",
+      "name": "Auto Router",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "openrouter/auto-beta",
+      "name": "Auto Router (Beta)",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "openrouter/bodybuilder",
+      "name": "Body Builder (beta)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openrouter/free",
+      "name": "Free Models Router",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "openrouter/fusion",
+      "name": "OpenRouter: Fusion",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "openrouter/pareto-code",
+      "name": "Pareto Code Router",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "perceptron/perceptron-mk1",
+      "name": "Perceptron: Perceptron Mk1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perceptron/perceptron-mk1.5",
+      "name": "Perceptron: Perceptron Mk1.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perplexity/sonar",
+      "name": "Perplexity: Sonar",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perplexity/sonar-deep-research",
+      "name": "Perplexity: Sonar Deep Research",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perplexity/sonar-pro",
+      "name": "Perplexity: Sonar Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perplexity/sonar-pro-search",
+      "name": "Perplexity: Sonar Pro Search",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "perplexity/sonar-reasoning-pro",
+      "name": "Perplexity: Sonar Reasoning Pro",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "poolside/laguna-s-2.1",
+      "name": "Poolside: Laguna S 2.1",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "poolside/laguna-s-2.1:free",
+      "name": "Poolside: Laguna S 2.1 (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "poolside/laguna-xs-2.1",
+      "name": "Poolside: Laguna XS 2.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "poolside/laguna-xs-2.1:free",
+      "name": "Poolside: Laguna XS 2.1 (free)",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "prism-ml/ternary-bonsai-2-27b",
+      "name": "PrismML: Ternary Bonsai 2 27B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "name": "Qwen2.5 72B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen-2.5-7b-instruct",
+      "name": "Qwen: Qwen2.5 7B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen-2.5-coder-32b-instruct",
+      "name": "Qwen2.5 Coder 32B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus",
+      "name": "Qwen: Qwen-Plus",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen2.5-vl-72b-instruct",
+      "name": "Qwen: Qwen2.5 VL 72B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-14b",
+      "name": "Qwen: Qwen3 14B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "name": "Qwen: Qwen3 235B A22B Instruct 2507",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-thinking-2507",
+      "name": "Qwen: Qwen3 235B A22B Thinking 2507",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b",
+      "name": "Qwen: Qwen3 30B A3B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "name": "Qwen: Qwen3 30B A3B Instruct 2507",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-32b",
+      "name": "Qwen: Qwen3 32B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder",
+      "name": "Qwen: Qwen3 Coder 480B A35B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-flash",
+      "name": "Qwen: Qwen3 Coder Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "name": "Qwen: Qwen3 Coder Next",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-instruct",
+      "name": "Qwen: Qwen3 Next 80B A3B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "name": "Qwen: Qwen3 Next 80B A3B Thinking",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-235b-a22b-instruct",
+      "name": "Qwen: Qwen3 VL 235B A22B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "name": "Qwen: Qwen3 VL 30B A3B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-thinking",
+      "name": "Qwen: Qwen3 VL 30B A3B Thinking",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "name": "Qwen: Qwen3 VL 8B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-122b-a10b",
+      "name": "Qwen: Qwen3.5-122B-A10B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-27b",
+      "name": "Qwen: Qwen3.5-27B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-35b-a3b",
+      "name": "Qwen: Qwen3.5-35B-A3B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "name": "Qwen: Qwen3.5 397B A17B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-9b",
+      "name": "Qwen: Qwen3.5-9B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-flash-02-23",
+      "name": "Qwen: Qwen3.5-Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-plus-02-15",
+      "name": "Qwen: Qwen3.5 Plus 2026-02-15",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-plus-20260420",
+      "name": "Qwen: Qwen3.5 Plus 2026-04-20",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-27b",
+      "name": "Qwen: Qwen3.6 27B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-35b-a3b",
+      "name": "Qwen: Qwen3.6 35B A3B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-flash",
+      "name": "Qwen: Qwen3.6 Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-plus",
+      "name": "Qwen: Qwen3.6 Plus",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "name": "Qwen: Qwen3.7 Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-max",
+      "name": "Qwen: Qwen3.7 Max",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-plus",
+      "name": "Qwen: Qwen3.7 Plus",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.8-flash",
+      "name": "Qwen: Qwen3.8 Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.8-max-0902",
+      "name": "Qwen: Qwen3.8 Max (0902)",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.8-max-prime",
+      "name": "Qwen: Qwen3.8 Max Prime",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.8-omni-flash",
+      "name": "Qwen: Qwen3.8 Omni Flash",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "rekaai/reka-edge",
+      "name": "Reka Edge",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "rekaai/reka-flash-3",
+      "name": "Reka Flash 3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "relace/relace-apply-3",
+      "name": "Relace: Relace Apply 3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "relace/relace-search",
+      "name": "Relace: Relace Search",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "sakana/fugu-max",
+      "name": "Sakana: Fugu Max",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "sakana/fugu-ultra",
+      "name": "Sakana: Fugu Ultra",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "sakana/fugu-ultra-v2",
+      "name": "Sakana: Fugu Ultra v2",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "sakana/sakana-namazu",
+      "name": "Sakana: Sakana Namazu",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "sao10k/l3-lunaris-8b",
+      "name": "Sao10K: Llama 3 8B Lunaris",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "sao10k/l3.1-euryale-70b",
+      "name": "Sao10K: Llama 3.1 Euryale 70B v2.2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "sao10k/l3.3-euryale-70b",
+      "name": "Sao10K: Llama 3.3 Euryale 70B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "stepfun/step-3.5-flash",
+      "name": "StepFun: Step 3.5 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "stepfun/step-3.7-flash",
+      "name": "StepFun: Step 3.7 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "stepfun/step-5-preview",
+      "name": "StepFun: Step 5 Preview",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "tencent/hunyuan-a13b-instruct",
+      "name": "Tencent: Hunyuan A13B Instruct",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "tencent/hy-mt2-1.8b",
+      "name": "Tencent: Hy-MT2-1.8B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "tencent/hy-mt2-30b-a3b",
+      "name": "Tencent: Hy-MT2-30B-A3B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "tencent/hy-mt2-7b",
+      "name": "Tencent: Hy-MT2-7B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "tencent/hy3",
+      "name": "Tencent: Hy3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "tencent/hy3-preview",
+      "name": "Tencent: Hy3 preview",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "thedrummer/cydonia-24b-v4.1",
+      "name": "TheDrummer: Cydonia 24B V4.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "thedrummer/skyfall-36b-v2",
+      "name": "TheDrummer: Skyfall 36B V2",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "thedrummer/unslopnemo-12b",
+      "name": "TheDrummer: UnslopNemo 12B",
+      "reasons": [
+        "tool calling"
+      ]
+    },
+    {
+      "id": "thinkingmachines/inkling",
+      "name": "Thinking Machines: Inkling",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "thinkingmachines/inkling-small",
+      "name": "Thinking Machines: Inkling Small",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "thinkingmachines/inkling-small:free",
+      "name": "Thinking Machines: Inkling Small (free)",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "thinkingmachines/inkling:free",
+      "name": "Thinking Machines: Inkling (free)",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "typesafe/jev-router",
+      "name": "TypeSafe: Jev Router",
+      "reasons": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "unbiased/pareto",
+      "name": "Pareto",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "undi95/remm-slerp-l2-13b",
+      "name": "ReMM SLERP 13B",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "upstage/solar-mini4",
+      "name": "Upstage: Solar Mini 4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "upstage/solar-pro-3",
+      "name": "Upstage: Solar Pro 3",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "upstage/solar-pro4",
+      "name": "Upstage: Solar Pro 4",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "writer/palmyra-x5",
+      "name": "Writer: Palmyra X5",
+      "reasons": [
+        "tool calling"
+      ]
+    },
+    {
+      "id": "x-ai/grok-4.20-multi-agent",
+      "name": "SpaceXAI: Grok 4.20 Multi-Agent",
+      "reasons": [
+        "tool calling"
+      ]
+    },
+    {
+      "id": "x-ai/grok-4.3:batch",
+      "name": "SpaceXAI: Grok 4.3 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "x-ai/grok-4.5",
+      "name": "SpaceXAI: Grok 4.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "x-ai/grok-4.6",
+      "name": "SpaceXAI: Grok 4.6",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "x-ai/grok-4.7",
+      "name": "SpaceXAI: Grok 4.7",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "x-ai/grok-build-0.1",
+      "name": "SpaceXAI: Grok Build 0.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+      "name": "Xiaomi: MiMo-V2.6-Pro-UltraSpeed",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.5",
+      "name": "Z.ai: GLM 4.5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.5-air",
+      "name": "Z.ai: GLM 4.5 Air",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.5v",
+      "name": "Z.ai: GLM 4.5V",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.6",
+      "name": "Z.ai: GLM 4.6",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.6v",
+      "name": "Z.ai: GLM 4.6V",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.7",
+      "name": "Z.ai: GLM 4.7",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-4.7-flash",
+      "name": "Z.ai: GLM 4.7 Flash",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5",
+      "name": "Z.ai: GLM 5",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5-turbo",
+      "name": "Z.ai: GLM 5 Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.1",
+      "name": "Z.ai: GLM 5.1",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.3-flash:batch",
+      "name": "Z.ai: GLM 5.3 Flash (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.3-prime",
+      "name": "Z.ai: GLM 5.3 Prime",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.3:batch",
+      "name": "Z.ai: GLM 5.3 (batch)",
+      "reasons": [
+        "batch"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5v-turbo",
+      "name": "Z.ai: GLM 5V Turbo",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "~anthropic/claude-fable-latest",
+      "name": "Anthropic: Claude Fable Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~anthropic/claude-haiku-latest",
+      "name": "Anthropic: Claude Haiku Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~anthropic/claude-opus-latest",
+      "name": "Anthropic: Claude Opus Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~anthropic/claude-sonnet-latest",
+      "name": "Anthropic: Claude Sonnet Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~deepseek/deepseek-flash-latest",
+      "name": "DeepSeek: DeepSeek Flash Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~deepseek/deepseek-pro-latest",
+      "name": "DeepSeek: DeepSeek Pro Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~deepseek/deepseek-v4-flash-latest",
+      "name": "DeepSeek: DeepSeek V4 Flash Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~google/gemini-flash-latest",
+      "name": "Google: Gemini Flash Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~google/gemini-pro-latest",
+      "name": "Google: Gemini Pro Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~moonshotai/kimi-latest",
+      "name": "MoonshotAI: Kimi Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~openai/gpt-astra-latest",
+      "name": "OpenAI: GPT Astra Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~openai/gpt-luna-latest",
+      "name": "OpenAI: GPT Luna Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~openai/gpt-mini-latest",
+      "name": "OpenAI: GPT Mini Latest",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "~openai/gpt-sol-latest",
+      "name": "OpenAI: GPT Sol Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~openai/gpt-terra-latest",
+      "name": "OpenAI: GPT Terra Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~x-ai/grok-latest",
+      "name": "xAI: Grok Latest",
+      "reasons": [
+        "context"
+      ]
+    },
+    {
+      "id": "~z-ai/glm-flash-latest",
+      "name": "Z.ai: GLM Flash Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    },
+    {
+      "id": "~z-ai/glm-latest",
+      "name": "Z.ai: GLM Latest",
+      "reasons": [
+        "not ZDR"
+      ]
+    }
+  ]
+}

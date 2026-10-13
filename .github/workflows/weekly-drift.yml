@@ -1,0 +1,32 @@
+# Weekly drift check (plan Task 15, Step 3): compare the published catalog's
+# rankings with the order derived from its own scores. scripts/drift-check.mjs
+# prints the report (near-ties <= 0.005 tolerated, exit 1 only at >= 3 real
+# position differences); shell: bash adds -eo pipefail so the step fails when
+# the script does, and the report is always uploaded as an artifact.
+name: weekly-drift
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # weekly, Monday 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Compare published rankings with the score-derived order
+        shell: bash
+        run: node scripts/drift-check.mjs | tee drift-report.txt
+      - name: Upload the drift report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: drift-report
+          path: drift-report.txt

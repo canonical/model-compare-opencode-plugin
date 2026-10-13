@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openrouter/model-compare/balanced",
+  "plugins": [
+    {
+      "package": "../../src",
+      "options": {
+        "source": "auto",
+        "defaultPriority": "balanced",
+        "fallback": "openrouter/z-ai/glm-5.3-flash"
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# Nightly canary (plan Task 15, Step 2): run the vendored script against live
+# upstream data and assert the catalog contract the plugin depends on. On
+# failure the catalog snapshot is uploaded so the broken shape can be inspected
+# after the fact (live data changes daily and is not reproducible later).
+name: nightly-canary
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Generate the catalog from live upstream data
+        run: python3 vendor/model_compare.py --catalog > catalog.json
+      - name: Assert the catalog contract
+        run: node scripts/canary-check.mjs catalog.json
+      - name: Upload the catalog snapshot
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canary-catalog
+          path: catalog.json
+          if-no-files-found: ignore

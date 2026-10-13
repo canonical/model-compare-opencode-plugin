@@ -1,0 +1,91 @@
+# Daily vendor upgrade check (plan Task 15, Step 4): when upstream tags a
+# release NEWER than vendor/UPSTREAM.json pins (never a downgrade), run
+# scripts/sync-vendor.mjs on a vendor/<tag> branch and open a draft PR titled
+# `vendor: model_compare.py <tag>`. The PR is never merged automatically; a
+# maintainer reviews the diff and merges by hand.
+#
+# Idempotent: nothing happens when the vendor/<tag> branch already exists (an
+# open PR, or one a maintainer closed on purpose) or an open PR exists.
+#
+# A PR opened with GITHUB_TOKEN does not trigger `pull_request` workflows, so
+# the conformance suite would never run on it. The workflow therefore
+# dispatches test.yml on the branch itself (workflow_dispatch events created
+# with GITHUB_TOKEN do run); its check runs attach to the PR's head commit.
+name: upgrade-pr
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # dispatch test.yml on the vendor branch
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Open a draft vendor PR when upstream tags a newer release
+        # shell: bash adds -eo pipefail, so a sync-vendor failure is not masked
+        # by the tee that captures its output for the PR body.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$(gh api repos/canonical/model-compare/releases/latest --jq .tag_name)"
+          PIN="$(jq -r .tag vendor/UPSTREAM.json)"
+          echo "upstream latest tag: $TAG; vendored tag: $PIN"
+          if [ "$TAG" = "$PIN" ]; then
+            echo "vendored script is up to date at $PIN"
+            exit 0
+          fi
+          # Only upgrade: the newest of the two (version sort) must be $TAG.
+          NEWEST="$(printf '%s\n%s\n' "${PIN#v}" "${TAG#v}" | sort -V | tail -n 1)"
+          if [ "$NEWEST" != "${TAG#v}" ]; then
+            echo "latest release $TAG is older than the pin $PIN; not opening a downgrade PR"
+            exit 0
+          fi
+          BRANCH="vendor/$TAG"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "branch $BRANCH already exists (open or deliberately closed PR); nothing to do"
+            exit 0
+          fi
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url')" ]; then
+            echo "a PR for $BRANCH is already open; nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          node scripts/sync-vendor.mjs "$TAG" | tee sync-output.txt
+          git add vendor/model_compare.py vendor/UPSTREAM.json
+          git commit -m "vendor: model_compare.py $TAG"
+          # Added lines that touch imports, URLs, environment variables,
+          # subprocesses or file writes: the reviewer's checklist (design §11).
+          { git diff HEAD~1 HEAD -- vendor/model_compare.py | grep -E '^\+' | grep -vE '^\+\+\+' \
+              | grep -nE '^\+\s*(import|from)\s|https?://|os\.environ|getenv|subprocess|os\.system|\bopen\(|makedirs|__import__|importlib' || true; } > scan-output.txt
+          git push -u origin "$BRANCH"
+          {
+            echo "Automated vendor bump opened by upgrade-pr.yml."
+            echo
+            echo "- \`node scripts/sync-vendor.mjs $TAG\` rewrote \`vendor/model_compare.py\` (fetched at the tag's resolved commit) and re-pinned \`vendor/UPSTREAM.json\`."
+            echo "- CI is dispatched on this branch by the workflow (a GITHUB_TOKEN PR does not trigger it). Review the diff against the upstream CHANGELOG below, then merge by hand. Never auto-merge."
+            echo
+            echo "## Added lines touching imports / URLs / env vars / subprocess / file writes"
+            echo
+            echo '```'
+            if [ -s scan-output.txt ]; then cat scan-output.txt; else echo "(none)"; fi
+            echo '```'
+            echo
+            echo "## sync-vendor output (sha change + upstream CHANGELOG section)"
+            echo
+            cat sync-output.txt
+          } > pr-body.md
+          gh pr create --draft --title "vendor: model_compare.py $TAG" --body-file pr-body.md --head "$BRANCH"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" -f ref="$BRANCH"
