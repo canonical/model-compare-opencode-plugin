@@ -12,7 +12,10 @@ Then:
 The scratch project loads the plugin straight from the repo's `src/` —
 OpenCode's local loader resolves `src/index.ts` and the `./tui` half
 (`src/tui.tsx`) directly from the directory target; no bridge or build step
-is needed.
+is needed. (The build step — `npm run build` — is only for the *published*
+npm package: OpenCode's Solid JSX transform skips `node_modules` paths, so
+the npm-installed raw TSX cannot load and the tarball ships the precompiled
+`dist/tui.js` instead.)
 
 - The model picker shows the three aliases: `Model Compare: balanced/price/quality → <pick>`
 - `/use-best [priority]` switches this session (a toast confirms)
