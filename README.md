@@ -60,7 +60,7 @@ model: openrouter/model-compare/quality
 Or via `--model`:
 
 ```
-opencode run --model "msg"
+opencode run --model "openrouter/model-compare/price" "msg"
 ```
 
 
