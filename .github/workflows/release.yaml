@@ -1,0 +1,71 @@
+# Publishes the npm package when a GitHub release is published, through npm
+# trusted publishing: tokenless OIDC, no NPM_TOKEN secret. The npmjs.com
+# trusted-publisher entry for this package must name exactly this workflow
+# file (release.yaml), the canonical/model-compare-opencode-plugin repository,
+# and the "release" environment — with "Allow npm publish" and
+# "Allow npm dist-tag" both UNCHECKED (stage-only, npm's recommended posture).
+#
+# The workflow STAGES the new version (npm stage publish); it does not go
+# live by itself. A maintainer must approve it with 2FA — npmjs.com, package
+# page, "Staged Packages" tab, Approve — or `npm stage approve <stage-id>`
+# from a 2FA-authenticated CLI (OIDC tokens cannot approve). Provenance is
+# generated automatically by trusted publishing; no flag is needed.
+#
+# Failure modes, all safe:
+#   - OIDC/config mismatch: the stage step fails with a 403 before anything
+#     is uploaded; fix the trusted-publisher entry and re-run the workflow.
+#   - Tag/version mismatch: the guard below exits 1 before staging.
+#   - Version already published or already staged: npm refuses.
+#   - A new trusted-publisher configuration expires after 2 days without a
+#     first successful stage/publish — recreate it if the first release
+#     through this flow slips.
+#
+# Note: pre-releases on GitHub also fire the `published` event and would
+# stage an npm prerelease (0.2.0-rc.1) — cut pre-releases only when one is
+# actually wanted on npm.
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing + automatic provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v7
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0; staged
+      # publishing needs npm >= 11.15.0. Node 24 satisfies both.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
+      # Refuse a release whose tag does not name the packaged version (a
+      # v0.1.0 release must not stage 0.1.1 content and vice versa).
+      - name: Check the tag matches the package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "release tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          fi
+      - run: npm ci
+      # The publish gates, run explicitly (npm stage publish's lifecycle-
+      # script parity with npm publish is not documented, so the gates do not
+      # rely on prepublishOnly firing): build (dist/tui.js), typecheck, test,
+      # pack-smoke — any failure aborts before staging.
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: node scripts/pack-smoke.mjs
+      # Stages the package for maintainer approval (see header). Provenance
+      # is automatic under trusted publishing.
+      - run: npm stage publish

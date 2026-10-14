@@ -33,7 +33,7 @@ Add a `plugins` entry to `opencode.jsonc` (project or global):
 }
 ```
 
-All options are optional — see [Configuration](#configuration). The package is on npm; OpenCode resolves and loads it itself. To run a checkout of this repo instead, see [Development](#development).
+All options are optional — see [Configuration](#configuration). The package is on npm; OpenCode resolves and loads it itself. The terminal-UI half ships precompiled (`dist/tui.js`): OpenCode compiles plugin JSX itself only for local sources — files under a `node_modules` directory skip its Solid JSX transform and would fall back to a React compile that cannot resolve — so the published package must not ship raw JSX. To run a checkout of this repo instead, see [Development](#development).
 
 
 ## Usage
@@ -146,6 +146,7 @@ A scheduled workflow opens a draft upgrade PR when upstream publishes a newer re
 - **`Model unavailable: openrouter/model-compare/<p>`** — a subagent configured with a disabled alias; OpenCode fails the launch before any request, so the guard is not involved.
 - **Data age in `/model-compare`** — the plugin's own acquisition time of the document, not upstream's `generated_at` (set at build time even when serving inputs from cache).
 - **No aliases at all** — the aliases live inside the `openrouter` provider; if it is not connected in the project, they cannot be created. The plugin warns at setup and on every refresh; primary runs fall back silently.
+- **`Cannot find package 'react'` for `src/tui.tsx` in the CLI log** — an OpenCode install of a release that still shipped the TUI half as raw TSX: OpenCode's Solid JSX transform skips `node_modules` paths, so the installed TSX fell to a React compile. Update the plugin to a release that ships the precompiled `dist/tui.js` entry (the server half is unaffected either way). If the warning persists after updating, restart the TUI so the new package generation is picked up.
 
 
 ## Development
@@ -169,13 +170,16 @@ OpenCode's local loader resolves a directory target strictly as `<dir>/index.*` 
 
 ```sh
 npm test                                              # unit + vendored-conformance suites (hermetic)
+npm run build                                         # regenerate dist/tui.js from src/tui.tsx
 MC_INTEGRATION=1 npx vitest run tests/integration/    # live-server suite (opt-in)
 ```
 
+- Local development loads `src/` directly and needs no build; the *published* package does — OpenCode's Solid JSX transform skips `node_modules` paths, so the npm-installed raw TSX cannot load (see [Install](#install) and the troubleshooting entry). `npm run build` precompiles `src/tui.tsx` through the same Babel pipeline as the host's loader (taken from the pinned `@opentui/solid`) into `dist/tui.js`, rebasing relative imports from `src/`-relative to `dist/`-relative; `prepublishOnly` runs it, and CI builds before the packaging check. `dist/` is regenerated, never committed.
 - The integration files skip unless `MC_INTEGRATION=1`, so plain `npm test` stays hermetic. The suite drives a real `opencode serve` on 127.0.0.1:14721 and needs the `opencode` CLI and `python3` (skips cleanly when either is missing); one case needs network access and the `sqlite3` CLI.
-- `node scripts/pack-smoke.mjs` (also in CI) packs the plugin and checks the tarball against the packaging list (files, `exports`, relative imports). It does **not** load the package in OpenCode — install the tarball into a scratch project and confirm OpenCode loads it before publishing.
+- `node scripts/pack-smoke.mjs` (also in CI, after `node scripts/build-tui.mjs`) packs the plugin and checks the tarball against the packaging list (files, `exports`, relative imports, and that the TUI artifact is precompiled — no react import). It does **not** load the package in OpenCode — install the tarball into a scratch project and confirm OpenCode loads it before publishing.
+- Publishing: cut a GitHub release tagged `vX.Y.Z` and `.github/workflows/release.yaml` stages the package on npm through trusted publishing (tokenless OIDC — no token secret; the npmjs.com trusted-publisher entry must name `release.yaml`, the `canonical/model-compare-opencode-plugin` repository and the `release` environment, with "Allow npm publish" and "Allow npm dist-tag" unchecked — stage-only, npm's recommended posture). Nothing goes live until a maintainer approves it with 2FA on npmjs.com (package page → Staged Packages) or via `npm stage approve`. The workflow fails closed when the tag does not match `package.json`'s version, and the gates (build, typecheck, tests, pack-smoke) run before staging.
 - `fixtures/catalog-v0.3.0.json` is a recorded schema-v2 catalog; `fixtures/catalog-no-quality.json` is generated from it by `scripts/make-no-quality-fixture.py` (the vendored script's own quality-blind weights, so its scores are internally consistent). `node scripts/sync-vendor.mjs --check` verifies the pin's sha256 offline.
-- Repo layout: `src/core/` (pure ranking/pinning), `src/sources/` (local + remote acquisition), `src/opencode/` (aliases, guard, commands, storage, refresh), `vendor/` (pinned upstream script), `tests/{unit,conformance,integration}`.
+- Repo layout: `src/core/` (pure ranking/pinning), `src/sources/` (local + remote acquisition), `src/opencode/` (aliases, guard, commands, storage, refresh), `dist/` (generated `tui.js` artifact, gitignored), `vendor/` (pinned upstream script), `tests/{unit,conformance,integration}`.
 
 
 ## License

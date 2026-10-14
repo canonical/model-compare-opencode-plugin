@@ -4,6 +4,10 @@
 # Node.js
 node_modules/
 
+# The precompiled TUI entry (scripts/build-tui.mjs, run by `npm run build`
+# and CI): regenerated, never committed.
+dist/
+
 # Python
 __pycache__/
 *.pyc

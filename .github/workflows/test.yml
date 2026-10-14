@@ -30,4 +30,5 @@ jobs:
       - run: npm ci
       - run: npx vitest run tests/unit tests/conformance
       - run: npx tsc --noEmit
+      - run: node scripts/build-tui.mjs
       - run: node scripts/pack-smoke.mjs

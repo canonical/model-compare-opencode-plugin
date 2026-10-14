@@ -2,33 +2,40 @@
 //
 // Packs the plugin exactly as `npm publish` would, unpacks the tarball into a
 // temp directory and verifies, WITHOUT OpenCode:
-//   1. the file set equals the §12 list: package.json, src/**, vendor/
-//      model_compare.py, vendor/UPSTREAM.json, LICENSE, README.md — nothing
-//      from tests/, scripts/, fixtures/, docs/ leaks in and nothing is missing;
-//   2. the `exports` map points at files that are in the tarball;
-//   3. every relative import in the packaged TypeScript sources, and the
-//      `new URL("…", import.meta.url)` that locates the vendored script,
-//      resolves to a file in the tarball;
+//   1. the file set equals the §12 list: package.json, src/**, dist/tui.js,
+//      vendor/model_compare.py, vendor/UPSTREAM.json, LICENSE, README.md —
+//      nothing from tests/, scripts/, fixtures/, docs/ leaks in and nothing
+//      is missing;
+//   2. the `exports` map points at files that are in the tarball — with
+//      exports["./tui"] required to be the precompiled dist/ artifact, not
+//      the raw TSX source (OpenCode's Solid JSX loader skips node_modules
+//      paths, so the published raw-TSX entry cannot load);
+//   3. every relative import in the packaged TypeScript sources and the
+//      dist/ artifact, and the `new URL("…", import.meta.url)` that locates
+//      the vendored script, resolves to a file in the tarball;
+//   4. the dist/ artifact imports no react — the TUI entry is Solid, and a
+//      react import means the artifact was not precompiled.
 //
 // Type correctness is `tsc --noEmit`'s job (CI runs it); the typescript
 // package at v7 ships no JS API to re-check the unpacked files here.
 //
 // NOT covered (deferred, spec §12): loading the installed package inside a
 // real OpenCode — that needs the opencode binary and credentials, so it stays a
-// manual/integration step. `exports` pointing at raw .ts is the V2 docs'
-// pattern, but only OpenCode itself can confirm it loads.
+// manual/integration step. `exports` pointing at dist/tui.js is loadable
+// plain JS, but only OpenCode itself can confirm it loads.
 //
 // Usage: node scripts/pack-smoke.mjs   (from the repository root)
 
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
+import { invokedDirectly } from "./lib/invoked-directly.mjs"
 
 // The §12 file list. `src/` is a prefix; the rest are exact paths.
 const EXACT = new Set([
   "package.json",
+  "dist/tui.js",
   "vendor/model_compare.py",
   "vendor/UPSTREAM.json",
   "LICENSE",
@@ -60,27 +67,82 @@ export function checkPackage(files) {
     problems.push("package.json is missing or not valid JSON")
   }
   if (pkg) {
-    const entry = pkg.exports?.["."]
-    const target = typeof entry === "string" ? entry : entry?.import ?? entry?.default
-    if (typeof target !== "string") {
-      problems.push('package.json has no resolvable exports["."]')
-    } else if (!files.has(path.posix.normalize(target))) {
-      problems.push(`exports["."] points at ${target}, which is not in the package`)
+    // exports entries and their constraints: "." is any file in the package;
+    // "./tui" must be a plain string naming the precompiled dist/ artifact
+    // (see the header) — a conditions object could smuggle raw TSX under the
+    // "bun" condition the TUI host actually selects.
+    const entries = [[".", null], ["./tui", "dist/"]]
+    for (const [key, requirePrefix] of entries) {
+      const entry = pkg.exports?.[key]
+      if (requirePrefix !== null && entry !== undefined && typeof entry !== "string") {
+        problems.push(
+          `exports["${key}"] must be a string entry pointing at ${requirePrefix}, got a conditions object ` +
+            "(a condition could smuggle raw TSX past this check)",
+        )
+        continue
+      }
+      const target = typeof entry === "string" ? entry : entry?.import ?? entry?.default
+      if (typeof target !== "string") {
+        problems.push(`package.json has no resolvable exports["${key}"]`)
+      } else if (!files.has(path.posix.normalize(target))) {
+        problems.push(`exports["${key}"] points at ${target}, which is not in the package`)
+      } else if (requirePrefix !== null && !path.posix.normalize(target).startsWith(requirePrefix)) {
+        problems.push(
+          `exports["${key}"] points at ${target}, which is the raw TSX source — ` +
+            "it must be the precompiled dist/ artifact (raw TSX cannot load from node_modules)",
+        )
+      }
     }
   }
 
-  // relative imports and vendored-script locators inside src/
+  // relative imports, vendored-script locators, and (dist/ only) a react
+  // import inside the shipped sources. src/ carries the raw .ts/.tsx sources;
+  // dist/ carries the precompiled .js artifact.
+  const scanned = names.filter(
+    (n) => (n.startsWith("src/") && /\.(m|c)?tsx?$/.test(n)) || (n.startsWith("dist/") && /\.(m|c)?js$/.test(n)),
+  )
   const resolves = (fromFile, specifier) => {
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), specifier))
     return [base, `${base}.ts`, `${base}/index.ts`].some((candidate) => files.has(candidate))
   }
-  for (const name of names.filter((n) => n.startsWith(PREFIX) && n.endsWith(".ts"))) {
+  for (const name of scanned) {
     const source = files.get(name) ?? ""
-    for (const match of source.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g)) {
-      if (!resolves(name, match[1])) problems.push(`${name}: import "${match[1]}" does not resolve inside the package`)
+    for (const match of source.matchAll(/\b(?:from|import|require)\s*\(?\s*(["'`])(\.{1,2}\/[^"'`]*)\1/g)) {
+      if (!resolves(name, match[2])) problems.push(`${name}: import "${match[2]}" does not resolve inside the package`)
     }
     for (const match of source.matchAll(/new URL\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url/g)) {
       if (!resolves(name, match[1])) problems.push(`${name}: URL "${match[1]}" does not resolve inside the package`)
+    }
+    if (name.startsWith("dist/")) {
+      // Bare imports via from/import/require with any quote char — the shapes
+      // a JSX transform can emit include require("react/jsx-runtime").
+      for (const match of source.matchAll(/\b(?:from|import|require)\s*\(?\s*(["'`])([^."'`][^"'`]*)\1/g)) {
+        if (/^react(-dom)?(\/|$)/.test(match[2])) {
+          problems.push(
+            `${name}: TUI artifact imports "${match[2]}" — ` +
+              "rebuild it with scripts/build-tui.mjs (raw JSX cannot load from node_modules)",
+          )
+        }
+      }
+      // Syntax check: the regex scans cannot see a corrupted banner or a
+      // truncated write — the shipped file must survive a real parse. The
+      // temp copy is .mjs so `node --check` reads it as a module (the
+      // artifact is ESM) regardless of the temp directory's package type.
+      const checkDir = mkdtempSync(path.join(tmpdir(), "pack-smoke-check-"))
+      try {
+        const checkFile = path.join(checkDir, "artifact.mjs")
+        writeFileSync(checkFile, source)
+        execFileSync("node", ["--check", checkFile], { stdio: "pipe" })
+      } catch (error) {
+        const detail =
+          String(error.stderr ?? error.message)
+            .trim()
+            .split("\n")
+            .findLast((line) => line.trim()) ?? ""
+        problems.push(`${name}: does not parse as JavaScript (${detail})`)
+      } finally {
+        rmSync(checkDir, { recursive: true, force: true })
+      }
     }
   }
   return problems
@@ -128,4 +190,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main()
+if (invokedDirectly(import.meta.url, process.argv[1])) await main()

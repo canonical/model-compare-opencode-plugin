@@ -12,10 +12,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./tui": "./src/tui.tsx"
+    "./tui": "./dist/tui.js"
   },
   "files": [
     "src",
+    "dist/tui.js",
     "vendor/model_compare.py",
     "vendor/UPSTREAM.json",
     "LICENSE",
@@ -34,9 +35,10 @@
     "node": ">=20"
   },
   "scripts": {
+    "build": "node scripts/build-tui.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm test && node scripts/pack-smoke.mjs"
+    "prepublishOnly": "npm run build && npm run typecheck && npm test && node scripts/pack-smoke.mjs"
   },
   "dependencies": {
     "@opencode/plugin": "2.0.16"
