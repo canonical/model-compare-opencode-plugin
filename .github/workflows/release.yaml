@@ -40,13 +40,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0; staged
-      # publishing needs npm >= 11.15.0. Node 24 satisfies both.
+      # publishing needs npm >= 11.15.0. Node 24 satisfies both. npm is
+      # pinned to a MAJOR (not @latest): npm 12's npm pack --json output
+      # shape differs from 11's, and pack-smoke consumes it — a floating
+      # upgrade broke the release workflow once already.
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@12
       # Refuse a release whose tag does not name the packaged version (a
       # v0.1.0 release must not stage 0.1.1 content and vice versa).
       - name: Check the tag matches the package version

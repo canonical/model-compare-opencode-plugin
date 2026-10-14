@@ -157,6 +157,23 @@ function readTree(root, dir = root, into = new Map()) {
   return into
 }
 
+// -> { filename: string, [key: string]: unknown } — the single pack's tarball
+// info, normalized across npm CLI versions. `npm pack --json` output changed
+// shape in npm 12: <= 11 printed an ARRAY of tarball-content objects,
+// >= 12 (utils/tar.js logTar) buffers ONE object keyed by the package name.
+// Anything else is a hard error, not a guess.
+export function normalizePackOutput(parsed, packageName) {
+  if (Array.isArray(parsed) && parsed[0]?.filename) return parsed[0]
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const entry = parsed[packageName] ?? Object.values(parsed)[0]
+    if (entry?.filename) return entry
+  }
+  throw new Error(
+    `unrecognizable npm pack --json output (${JSON.stringify(parsed).slice(0, 120)}) — ` +
+      "extend normalizePackOutput for the new npm CLI's shape",
+  )
+}
+
 async function main() {
   const work = mkdtempSync(path.join(tmpdir(), "pack-smoke-"))
   try {
@@ -165,13 +182,16 @@ async function main() {
     // would dry the nested pack too — no tarball is written and the tar step
     // below fails with "Cannot open: No such file or directory". CLI flags
     // beat inherited config env, so the child always writes the tarball.
+    // The output shape is normalized for both npm <= 11 (array) and >= 12
+    // (object keyed by package name) — see normalizePackOutput.
     const packed = JSON.parse(
       execFileSync("npm", ["pack", "--json", "--dry-run=false", "--pack-destination", work, "--ignore-scripts"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "inherit"],
       }),
     )
-    const tarball = path.join(work, packed[0].filename)
+    const tarballInfo = normalizePackOutput(packed, "model-compare-opencode-plugin")
+    const tarball = path.join(work, tarballInfo.filename)
     const unpacked = path.join(work, "unpacked")
     execFileSync("mkdir", ["-p", unpacked])
     execFileSync("tar", ["-xzf", tarball, "-C", unpacked, "--strip-components=1"])
@@ -184,7 +204,9 @@ async function main() {
       process.exitCode = 1
       return
     }
-    console.log(`pack-smoke ok: ${files.size} files in ${packed[0].filename}, §12 list matches, exports and imports resolve`)
+    console.log(
+      `pack-smoke ok: ${files.size} files in ${tarballInfo.filename}, §12 list matches, exports and imports resolve`,
+    )
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

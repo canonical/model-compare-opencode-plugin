@@ -7,7 +7,7 @@
 // contract: the artifact is present, exports["./tui"] points at it, it
 // imports no react, and its relative imports resolve inside the package.
 import { describe, expect, test } from "vitest"
-import { checkPackage } from "../../scripts/pack-smoke.mjs"
+import { checkPackage, normalizePackOutput } from "../../scripts/pack-smoke.mjs"
 
 const good = () =>
   new Map([
@@ -181,5 +181,30 @@ describe("checkPackage", () => {
     const files = good()
     files.delete("src/opencode/usebest.ts")
     expect(checkPackage(files).join("\n")).toMatch(/dist\/tui\.js: import "\.\.\/src\/opencode\/usebest" does not resolve/)
+  })
+})
+
+describe("normalizePackOutput", () => {
+  // npm <= 11 prints an array of tarball contents.
+  test("reads the npm 10/11 array shape", () => {
+    const parsed = [{ filename: "pkg-0.1.1.tgz", name: "pkg" }]
+    expect(normalizePackOutput(parsed, "pkg").filename).toBe("pkg-0.1.1.tgz")
+  })
+
+  // npm >= 12 buffers one object keyed by the package name (utils/tar.js
+  // logTar: output.buffer({ [key]: tarball })).
+  test("reads the npm 12 object-keyed-by-package-name shape", () => {
+    const parsed = { pkg: { filename: "pkg-0.1.1.tgz", name: "pkg" } }
+    expect(normalizePackOutput(parsed, "pkg").filename).toBe("pkg-0.1.1.tgz")
+  })
+
+  test("falls back to the sole entry of a keyed object", () => {
+    const parsed = { something: { filename: "pkg-0.1.1.tgz" } }
+    expect(normalizePackOutput(parsed, "pkg").filename).toBe("pkg-0.1.1.tgz")
+  })
+
+  test("throws a clear error on an unrecognizable shape", () => {
+    expect(() => normalizePackOutput({}, "pkg")).toThrow(/unrecognizable npm pack --json output/)
+    expect(() => normalizePackOutput([], "pkg")).toThrow(/unrecognizable npm pack --json output/)
   })
 })
