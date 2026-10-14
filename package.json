@@ -34,6 +34,9 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "seroval": "^1.6.9"
+  },
   "scripts": {
     "build": "node scripts/build-tui.mjs",
     "test": "vitest run",
