@@ -82,7 +82,7 @@ Commands:
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
 | `esc` | close the dialog |
 
-Both dialogs need an open session — with none, a toast explains and nothing else happens. The TUI has no `/use-best` keybinding: the slash command already covers switching.
+Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before. The TUI has no `/use-best` keybinding: the slash command already covers switching.
 
 Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). Toasts announce `/use-best` outcomes and pick changes — never for the first observation after load. Headless, all feedback is synthetic transcript messages at the next turn.
 

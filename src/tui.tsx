@@ -8,12 +8,17 @@
 //     names current, so the registry IS the state; no messaging involved);
 //   * the picks dialog (alt+m): a select over the three priorities —
 //     choosing one switches the session to it, with the same decision logic
-//     as the server command;
+//     as the server command; with no session open (the opening screen)
+//     choosing one CREATES a session already bound to that alias and opens
+//     it, so the shortcuts work from the first keystroke (merely OPENING a
+//     dialog never creates a session);
 //   * the report dialog (alt+shift+m): the /model-compare command emits its
 //     structured report as an RPC event, and this half opens it as a
 //     selectable dialog (selecting a ranked model switches straight to it) —
 //     one command serves both worlds, so no TUI duplicate of the server
-//     command exists;
+//     command exists; with no session open the report is fetched directly
+//     over the plugin's RPC (no session command to post it to) and a pick
+//     creates a session bound to that model;
 //   * a toast when a pick flips (at most one per changed priority per
 //     reload, and never for the first observation after load).
 //
@@ -63,6 +68,7 @@ import {
 } from "./opencode/usebest"
 import type { ReportEntry } from "./opencode/commands"
 import { sanitizeCatalogText } from "./opencode/commands"
+import { ModelCompare } from "./rpc"
 
 const TOAST_MS = 6_000
 const RESYNC_MS = 30_000
@@ -86,6 +92,38 @@ let armedClose: (() => void) | null = null
 
 function StatusLine(props: { line: () => string; fg?: string }) {
   return <text fg={props.fg}>{props.line()}</text>
+}
+
+// One report entry's defensive normalization, shared by the two paths that
+// carry report data across a trust boundary (the /model-compare command's
+// event and the TUI's direct RPC call): an entry missing any identity field
+// is dropped, every other field falls back to its neutral value.
+function toReportEntries(raw: unknown): ReportEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item): ReportEntry[] => {
+    const entry = item as Partial<ReportEntry>
+    if (
+      typeof entry?.id !== "string" ||
+      typeof entry?.value !== "string" ||
+      typeof entry?.priority !== "string"
+    )
+      return []
+    return [
+      {
+        priority: entry.priority as Priority,
+        rank: typeof entry.rank === "number" ? entry.rank : null,
+        // The F-20 split (see ReportEntry): `id` sanitized for display,
+        // `value` the raw catalog id for switching.
+        id: entry.id,
+        value: entry.value,
+        score: typeof entry.score === "string" ? entry.score : "-",
+        quality: typeof entry.quality === "string" ? entry.quality : "-",
+        price: typeof entry.price === "string" ? entry.price : "-",
+        current: entry.current === true,
+        fromFallback: entry.fromFallback === true,
+      },
+    ]
+  })
 }
 
 export default Plugin.define({
@@ -177,27 +215,34 @@ export default Plugin.define({
       return "balanced"
     }
 
-    // Switch the current session to one of the plugin's aliases — the shared
-    // decision chain behind /use-best, the palette command and the picks
-    // dialog's selection.
+    // Switch to one of the plugin's aliases — the shared decision chain
+    // behind /use-best, the palette command and the picks dialog's
+    // selection. With a session open it switches THAT session; with none
+    // (the opening screen) it creates a session already bound to the alias
+    // and opens it — the pick is the session's starting model. A disabled
+    // alias refuses before anything is created.
     async function switchToPriority(priority: Priority): Promise<void> {
+      const views = aliases()
+      if (!views.some((view) => view.priority === priority && view.enabled)) {
+        notify(useBestRefusal(priority), "error")
+        return
+      }
+      const view = views.find((item) => item.priority === priority)
+      const notice = useBestNotice(priority, view?.modelID ?? pickFromName(view?.name ?? ""))
       const sessionID = currentSessionID()
       if (sessionID === null) {
-        notify("Open a session first", "error")
+        await createSessionOnModel(
+          { providerID: ALIAS_PROVIDER, id: aliasId(priority) },
+          notice,
+        )
         return
       }
       try {
-        const views = aliases()
-        if (!views.some((view) => view.priority === priority && view.enabled)) {
-          notify(useBestRefusal(priority), "error")
-          return
-        }
         await context.client.session.switchModel({
           sessionID,
           model: { providerID: ALIAS_PROVIDER, id: aliasId(priority) },
         })
-        const view = views.find((item) => item.priority === priority)
-        notify(useBestNotice(priority, view?.modelID ?? pickFromName(view?.name ?? "")))
+        notify(notice)
       } catch (error) {
         notify(`use-best failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
@@ -216,6 +261,28 @@ export default Plugin.define({
         notify(`switched to openrouter/${sanitizeCatalogText(id)}`)
       } catch (error) {
         notify(`switch failed: ${error instanceof Error ? error.message : String(error)}`, "error")
+      }
+    }
+
+    // No session open (the opening screen's pick paths): create one already
+    // bound to the given model and navigate into it. Returns whether the
+    // session came up; a failure is toasted and nothing else happens — no
+    // half-open session to clean up.
+    async function createSessionOnModel(
+      model: { providerID: string; id: string },
+      success: string,
+    ): Promise<boolean> {
+      try {
+        const session = await context.client.session.create({ model })
+        context.ui.router.navigate({ type: "session", sessionID: session.id })
+        notify(success)
+        return true
+      } catch (error) {
+        notify(
+          `could not open a session: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        )
+        return false
       }
     }
 
@@ -402,7 +469,8 @@ export default Plugin.define({
     // A snapshot at open time; unavailable priorities are dimmed — the
     // cursor still reaches them, and choosing one is refused with a toast
     // (switchToPriority's guard). Choosing an available priority switches
-    // the session to it.
+    // the session to it — or, with no session open, creates one bound to
+    // it (the opening screen's path; opening the dialog never does).
     function showPicksDialog(): void {
       const views = aliases()
       const rows: ListRow[] = PRIORITIES.map((priority) => {
@@ -425,7 +493,10 @@ export default Plugin.define({
     // model switches straight to it. Empty entries mean the command had no
     // ranking data.
     function showReportDialog(data: {
-      sessionID: string
+      // The session the report belongs to — null when the dialog was opened
+      // with no session (the opening screen's direct-RPC path); a pick then
+      // creates a session bound to the chosen model instead of switching.
+      sessionID: string | null
       age: string | null
       entries: ReportEntry[]
     }): void {
@@ -497,7 +568,18 @@ export default Plugin.define({
       showListDialog(
         `Model Compare — top 5 (data age: ${data.age ?? "unknown"})`,
         rows,
-        (id) => void switchToModel(data.sessionID, id),
+        (id) => {
+          if (data.sessionID !== null) {
+            void switchToModel(data.sessionID, id)
+            return
+          }
+          // The opening screen: the pick becomes a NEW session's model —
+          // the same concrete model the in-session path switches to.
+          void createSessionOnModel(
+            { providerID: ALIAS_PROVIDER, id },
+            `switched to openrouter/${sanitizeCatalogText(id)}`,
+          )
+        },
       )
     }
 
@@ -522,30 +604,7 @@ export default Plugin.define({
       const data = event.data
       if (typeof data?.sessionID !== "string" || data.sessionID !== currentSessionID()) return
       if (!Array.isArray(data.entries)) return
-      const entries = data.entries.flatMap((raw): ReportEntry[] => {
-        const entry = raw as Partial<ReportEntry>
-        if (
-          typeof entry?.id !== "string" ||
-          typeof entry?.value !== "string" ||
-          typeof entry?.priority !== "string"
-        )
-          return []
-        return [
-          {
-            priority: entry.priority as Priority,
-            rank: typeof entry.rank === "number" ? entry.rank : null,
-            // The F-20 split (see ReportEntry): `id` sanitized for display,
-            // `value` the raw catalog id for switching.
-            id: entry.id,
-            value: entry.value,
-            score: typeof entry.score === "string" ? entry.score : "-",
-            quality: typeof entry.quality === "string" ? entry.quality : "-",
-            price: typeof entry.price === "string" ? entry.price : "-",
-            current: entry.current === true,
-            fromFallback: entry.fromFallback === true,
-          },
-        ]
-      })
+      const entries = toReportEntries(data.entries)
       const eventSessionID = data.sessionID
       // Ownerless callback: park the report on the signal — the app slot's
       // in-tree effect opens the dialog (see pendingReport above).
@@ -628,29 +687,27 @@ export default Plugin.define({
 
     // The picks dialog's command. No slash: /use-best already covers the
     // switching surface (the server command is slash-routable; the TUI's
-    // duplicate of it was removed for exactly that reason).
+    // duplicate of it was removed for exactly that reason). The dialog opens
+    // everywhere — with no session it shows the current picks, and only
+    // picking one creates a session bound to it (switchToPriority).
     const picksCommand: KeymapCommand = {
       id: "model-compare.picks",
       title: "Model-compare top picks",
       group: "Model Compare",
       bind: "alt+m",
       palette: true,
-      run: () => {
-        if (currentSessionID() === null) {
-          notify("no session yet — submit any prompt to create one; picking a priority switches that session", "error")
-          return
-        }
-        showPicksDialog()
-      },
+      run: () => showPicksDialog(),
     }
 
-    // The report command: posts the server's /model-compare command, whose
-    // RPC event opens the selectable report dialog here (and the transcript
-    // keeps the notice). A session is required: the dialog's whole point is
-    // switching a session's model, and with no session open there is
-    // nothing to switch — the pinned runtime (2.0.16) exposes no composer-
-    // model setter to plugins, so there is nothing to change either. The
-    // refusal says why and how.
+    // The report command: with a session open it posts the server's
+    // /model-compare command, whose RPC event opens the selectable report
+    // dialog here (and the transcript keeps the notice). With no session
+    // (the opening screen) there is nothing to post to, so the report is
+    // fetched straight from the plugin's report RPC — same builder, same
+    // entries — and picking a model creates a session bound to it (there is
+    // no composer-model setter to change instead; verified against the
+    // pinned runtime). The refusal-free opening also keeps the footer's
+    // status line honest: the shortcuts always DO something.
     const reportCommand: KeymapCommand = {
       id: "model-compare.report",
       title: "Model-compare report",
@@ -659,12 +716,25 @@ export default Plugin.define({
       palette: true,
       run: async () => {
         const sessionID = currentSessionID()
-        if (sessionID === null) {
-          notify("no session yet — submit any prompt to create one; a report pick switches that session", "error")
+        if (sessionID !== null) {
+          try {
+            await context.client.session.command({ sessionID, name: "model-compare", text: "" })
+          } catch (error) {
+            notify(`report failed: ${error instanceof Error ? error.message : String(error)}`, "error")
+          }
           return
         }
         try {
-          await context.client.session.command({ sessionID, name: "model-compare", text: "" })
+          const report: unknown = await context.client.rpc(ModelCompare).report(
+            {},
+            here === undefined ? undefined : { location: { directory: here } },
+          )
+          const data = report as { age?: unknown; entries?: unknown } | undefined
+          showReportDialog({
+            sessionID: null,
+            age: typeof data?.age === "string" ? data.age : null,
+            entries: toReportEntries(data?.entries),
+          })
         } catch (error) {
           notify(`report failed: ${error instanceof Error ? error.message : String(error)}`, "error")
         }
