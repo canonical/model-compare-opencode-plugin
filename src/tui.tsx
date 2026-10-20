@@ -380,30 +380,47 @@ export default Plugin.define({
       const [cursor, setCursor] = createSignal(initial)
       // The scrollbox that carries the rows (see the JSX below); its ref
       // lands when the host renders the dialog. The cursor's row is kept in
-      // view the way the command palette keeps its selection in view — and
-      // timing matters as much as the math: row positions exist only after a
-      // layout frame, so the scroll is deferred to the next rendered frame
-      // (the palette's own once(FRAME) + requestRender() pattern), never run
-      // synchronously inside the key handler. The look-ahead is the native
-      // lists' behavior: the content scrolls as soon as the cursor comes
-      // within three lines of an edge, and the cursor only touches an edge
-      // line when the content ends (the scroll clamps at its maximum).
+      // view with the native lists' look-ahead: the content scrolls as soon
+      // as the cursor comes within three lines of an edge, and the cursor
+      // only touches an edge line when the content ends (the scroll clamps
+      // at its maximum).
+      //
+      // The row offsets are pure ARITHMETIC, not renderable geometry: every
+      // row is one line except the second and later priority headings, which
+      // carry one blank line above (the palette's heading recipe). Reading
+      // the host's .y was tried and is unreliable across the plugin boundary
+      // — it reported the scrollbox's own position for every row — while
+      // scrollTop/scrollHeight/height behave as plain numbers.
       let listScroll: ScrollBoxRenderable | undefined
       let pendingReveal: (() => void) | undefined
+      const rowOffset = (index: number): number => {
+        let y = 0
+        let headings = 0
+        for (let k = 0; k < index; k++) {
+          if (rows[k]!.heading !== undefined) {
+            headings += 1
+            y += headings > 1 ? 2 : 1
+            continue
+          }
+          y += 1
+        }
+        return y
+      }
       const reveal = (center: boolean) => {
         const box = listScroll
         if (box === undefined) return
-        const index = rows.indexOf(selectable[cursor()])
-        const child = box.getChildren()[index]
-        if (child === undefined) return
-        const offset = child.y - box.y
-        if (center) {
-          box.scrollBy(offset - Math.floor(box.height / 2))
-          return
-        }
-        if (offset > box.height - 4) box.scrollBy(offset - (box.height - 4))
-        else if (offset < 3) box.scrollBy(offset - 3)
+        const top = rowOffset(rows.indexOf(selectable[cursor()]))
+        const max = Math.max(0, box.scrollHeight - box.height)
+        let target = box.scrollTop
+        if (center) target = top - Math.floor(box.height / 2)
+        else if (top - box.scrollTop > box.height - 4) target = top - (box.height - 4)
+        else if (top - box.scrollTop < 3) target = top - 3
+        box.scrollTo(Math.max(0, Math.min(target, max)))
       }
+      // Positions exist only after a layout frame, so the reveal defers to
+      // the next rendered frame (the palette's own once(FRAME) +
+      // requestRender() pattern) rather than racing the renderer inside the
+      // key handler.
       const revealOnFrame = (center: boolean) => {
         if (pendingReveal !== undefined) context.renderer.off("frame", pendingReveal)
         const run = () => {
