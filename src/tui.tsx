@@ -44,6 +44,7 @@ import { TextAttributes, RGBA } from "@opentui/core"
 // the package's solid-js JSX augmentation without a runtime import — the TUI
 // host already provides the runtime side.
 import type { JSX } from "@opentui/solid"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import {
   createEffect,
   createMemo,
@@ -94,6 +95,15 @@ function StatusLine(props: { line: () => string; fg?: string }) {
   return <text fg={props.fg}>{props.line()}</text>
 }
 
+// The list dialogs' row-area cap, the host command palette's own formula:
+// min(rows, floor(terminal height / 2) - 6). The host's dialog layer caps
+// nothing itself and anchors UNcentered dialogs a quarter viewport down —
+// without this cap an uncapped list overflows the viewport at large font
+// sizes (the report dialog did exactly that). Exported for the unit rig.
+export function cappedRowsHeight(rowCount: number, terminalHeight: number): number {
+  return Math.min(rowCount, Math.max(1, Math.floor(terminalHeight / 2) - 6))
+}
+
 // One report entry's defensive normalization, shared by the two paths that
 // carry report data across a trust boundary (the /model-compare command's
 // event and the TUI's direct RPC call): an entry missing any identity field
@@ -134,6 +144,18 @@ export default Plugin.define({
 
     const notify = (message: string, variant: "success" | "error" = "success") =>
       context.ui.toast.show({ title: "model-compare", message, variant, duration: TOAST_MS })
+
+    // The terminal's size, reactive: the renderer emits "resize" carrying the
+    // fresh dimensions, and the dialogs' row-area caps must track font-size
+    // and window changes the way the host's own dialogs do (the palette caps
+    // its list at a fraction of the viewport; the dialog layer gives plugin
+    // dialogs no cap of their own). Detached in the returned cleanup.
+    const [terminalSize, setTerminalSize] = createSignal({
+      width: context.renderer.width,
+      height: context.renderer.height,
+    })
+    const onRendererResize = (width: number, height: number) => setTerminalSize({ width, height })
+    context.renderer.on("resize", onRendererResize)
 
     let disposeRoot = () => {}
     // The three slot disposers (the two footers and the app slot below):
@@ -356,6 +378,26 @@ export default Plugin.define({
       // never updated — the cursor sat on row 1 however many times the
       // keymap moved the internal index; observed live, 2026-10-11).
       const [cursor, setCursor] = createSignal(initial)
+      // The scrollbox that carries the rows (see the JSX below); its ref
+      // lands when the host renders the dialog. The cursor's row is kept in
+      // view the way the command palette keeps its selection in view: a move
+      // scrolls only when the row left the viewport, and opening with a
+      // preselected row (the report's current pick) centers it.
+      let listScroll: ScrollBoxRenderable | undefined
+      const reveal = (center: boolean) => {
+        const box = listScroll
+        if (box === undefined) return
+        const index = rows.indexOf(selectable[cursor()])
+        const child = box.getChildren()[index]
+        if (child === undefined) return
+        const offset = child.y - box.y
+        if (center) {
+          box.scrollBy(offset - Math.floor(box.height / 2))
+          return
+        }
+        if (offset >= box.height) box.scrollBy(offset - box.height + 1)
+        else if (offset < 0) box.scrollBy(offset)
+      }
       const close = () => {
         if (!alive) return
         alive = false
@@ -372,6 +414,7 @@ export default Plugin.define({
       // first is the last (the command palette's behavior).
       const move = (delta: number) => {
         setCursor((cursor() + delta + selectable.length) % selectable.length)
+        reveal(false)
       }
       const pick = () => {
         const row = selectable[cursor()]
@@ -399,7 +442,14 @@ export default Plugin.define({
                 esc
               </text>
             </box>
-            <box paddingLeft={1} paddingRight={1} flexDirection="column">
+            <scrollbox
+              ref={(element) => (listScroll = element)}
+              height={cappedRowsHeight(rows.length, terminalSize().height)}
+              paddingLeft={1}
+              paddingRight={1}
+              scrollbarOptions={{ visible: false }}
+              contentOptions={{ minHeight: 0 }}
+            >
               {(() => {
                 let headings = 0
                 return rows.map((row) => {
@@ -455,7 +505,7 @@ export default Plugin.define({
                   )
                 })
               })()}
-            </box>
+            </scrollbox>
             <box paddingLeft={4}>
               <text fg={muted}>Details: https://canonical.github.io/model-compare</text>
             </box>
@@ -463,6 +513,14 @@ export default Plugin.define({
         ),
         close,
       )
+      // The palette's presentation: vertically centered at the medium width.
+      // The size/centered state persists across dialogs (the host's own set
+      // it on every open), so the explicit set also clears a stale xlarge a
+      // host dialog may have left behind.
+      context.ui.dialog.set({ size: "medium", centered: true })
+      // The report's preselected row (the current pick) opens centered in the
+      // scrollbox — after the host's first render has mounted the ref.
+      if (initial > 0) queueMicrotask(() => reveal(true))
     }
 
     // The picks dialog: the three priorities, one cursor, palette styling.
@@ -832,6 +890,7 @@ export default Plugin.define({
 
     return () => {
       if (resyncTimer !== undefined) clearInterval(resyncTimer)
+      context.renderer.off("resize", onRendererResize)
       offReportEvent()
       disposeRoot()
       disposeAppSlot()

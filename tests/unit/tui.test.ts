@@ -19,7 +19,7 @@ import { createRoot } from "solid-js"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { ModelCompare } from "../../src/rpc"
 import { aliasId, useBestNotice, useBestRefusal } from "../../src/opencode/usebest"
-import tuiPlugin from "../../src/tui"
+import tuiPlugin, { cappedRowsHeight } from "../../src/tui"
 
 type TuiDef = { setup: (ctx: unknown) => Promise<() => void> }
 const def = tuiPlugin as unknown as TuiDef
@@ -98,6 +98,7 @@ function makeHarness() {
   const slots: Array<{ append: string; render: () => unknown }> = []
   const layerFactories: Array<() => unknown> = []
   const dialogRenders: Array<() => unknown> = []
+  const dialogSets: Array<unknown> = []
   // The host dialog's close callbacks, in show() order: a dialog's close()
   // tears down ITS keyboard and surface (the modal keymap layer, the host
   // dialog), and the tests need to drive it to disarm a dialog without
@@ -135,10 +136,17 @@ function makeHarness() {
           dialogRenders.push(render)
           closes.push(close)
         }),
+        set: vi.fn((options: unknown) => {
+          dialogSets.push(options)
+        }),
         clear: vi.fn(),
       },
     },
     theme: { surface: vi.fn(() => THEME) },
+    // The host's live renderer: the TUI entry tracks its resize events for
+    // the dialogs' viewport caps (CliRenderEvents.RESIZE passes the fresh
+    // dimensions as arguments).
+    renderer: { width: 80, height: 24, on: vi.fn(), off: vi.fn() },
     keymap: {
       layer: vi.fn((factory: () => unknown) => {
         layerFactories.push(factory)
@@ -154,7 +162,7 @@ function makeHarness() {
     },
   }
 
-  return { state, toasts, slots, layerFactories, dialogRenders, closes, listenCallbacks, session, report, rpc, navigate, entries, reportPayload, ctx }
+  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, rpc, navigate, entries, reportPayload, ctx }
 }
 
 type Harness = ReturnType<typeof makeHarness> & {
@@ -607,5 +615,51 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     expect(active.toasts).toEqual([{ message: "switch failed: quota", variant: "error" }])
     expect(active.session.create).not.toHaveBeenCalled()
     expect(active.navigate).not.toHaveBeenCalled()
+  })
+})
+
+// ---- dialog presentation and viewport fitting (the palette's behavior) -----
+
+describe("dialog presentation and viewport fitting", () => {
+  test("the dialogs open centered at the medium size, like the palette", async () => {
+    active = await activate()
+
+    await active.command("model-compare.picks").run()
+    await drain()
+
+    // The host's dialog layer anchors UNcentered dialogs at a quarter of the
+    // viewport height, and dialog size/centered state persists across dialogs
+    // — without an explicit set() a large-font viewport clips the dialog's
+    // bottom and a host dialog's stale xlarge width leaks in.
+    expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+  })
+
+  test("alt+shift+m sets the same presentation on the report dialog", async () => {
+    active = await activate()
+    active.reportPayload.age = "2h"
+    active.reportPayload.entries = ENTRIES
+
+    await active.command("model-compare.report").run()
+    await drain()
+
+    expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+  })
+})
+
+describe("cappedRowsHeight (the palette's list cap)", () => {
+  test("caps the row area at half the viewport minus six rows", () => {
+    expect(cappedRowsHeight(50, 40)).toBe(14)
+  })
+
+  test("short lists keep their natural height", () => {
+    expect(cappedRowsHeight(3, 40)).toBe(3)
+  })
+
+  test("a tiny viewport still shows one row", () => {
+    expect(cappedRowsHeight(50, 13)).toBe(1)
+  })
+
+  test("no rows means no height", () => {
+    expect(cappedRowsHeight(0, 40)).toBe(0)
   })
 })
