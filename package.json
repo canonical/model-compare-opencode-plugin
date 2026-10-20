@@ -1,6 +1,6 @@
 {
   "name": "model-compare-opencode-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OpenCode plugin that switches OpenRouter model aliases to the best value-for-money pick from canonical/model-compare's ranking (balanced, price, quality).",
   "keywords": [
     "opencode",
