@@ -380,10 +380,16 @@ export default Plugin.define({
       const [cursor, setCursor] = createSignal(initial)
       // The scrollbox that carries the rows (see the JSX below); its ref
       // lands when the host renders the dialog. The cursor's row is kept in
-      // view the way the command palette keeps its selection in view: a move
-      // scrolls only when the row left the viewport, and opening with a
-      // preselected row (the report's current pick) centers it.
+      // view the way the command palette keeps its selection in view — and
+      // timing matters as much as the math: row positions exist only after a
+      // layout frame, so the scroll is deferred to the next rendered frame
+      // (the palette's own once(FRAME) + requestRender() pattern), never run
+      // synchronously inside the key handler. The look-ahead is the native
+      // lists' behavior: the content scrolls as soon as the cursor comes
+      // within three lines of an edge, and the cursor only touches an edge
+      // line when the content ends (the scroll clamps at its maximum).
       let listScroll: ScrollBoxRenderable | undefined
+      let pendingReveal: (() => void) | undefined
       const reveal = (center: boolean) => {
         const box = listScroll
         if (box === undefined) return
@@ -395,8 +401,19 @@ export default Plugin.define({
           box.scrollBy(offset - Math.floor(box.height / 2))
           return
         }
-        if (offset >= box.height) box.scrollBy(offset - box.height + 1)
-        else if (offset < 0) box.scrollBy(offset)
+        if (offset > box.height - 4) box.scrollBy(offset - (box.height - 4))
+        else if (offset < 3) box.scrollBy(offset - 3)
+      }
+      const revealOnFrame = (center: boolean) => {
+        if (pendingReveal !== undefined) context.renderer.off("frame", pendingReveal)
+        const run = () => {
+          pendingReveal = undefined
+          if (!alive) return
+          reveal(center)
+        }
+        pendingReveal = run
+        context.renderer.once("frame", run)
+        context.renderer.requestRender()
       }
       const close = () => {
         if (!alive) return
@@ -443,12 +460,17 @@ export default Plugin.define({
               </text>
             </box>
             <scrollbox
-              ref={(element) => (listScroll = element)}
-              height={cappedRowsHeight(rows.length, terminalSize().height)}
+              ref={(element) => {
+                listScroll = element
+                // The report's preselected row (the current pick) opens
+                // centered in the scrollbox: scheduled from the ref, so the
+                // frame it waits for is the one that lays these rows out.
+                if (initial > 0) revealOnFrame(true)
+              }}
+              maxHeight={cappedRowsHeight(rows.length, terminalSize().height)}
               paddingLeft={1}
               paddingRight={1}
               scrollbarOptions={{ visible: false }}
-              contentOptions={{ minHeight: 0 }}
             >
               {(() => {
                 let headings = 0
@@ -518,9 +540,6 @@ export default Plugin.define({
       // it on every open), so the explicit set also clears a stale xlarge a
       // host dialog may have left behind.
       context.ui.dialog.set({ size: "medium", centered: true })
-      // The report's preselected row (the current pick) opens centered in the
-      // scrollbox — after the host's first render has mounted the ref.
-      if (initial > 0) queueMicrotask(() => reveal(true))
     }
 
     // The picks dialog: the three priorities, one cursor, palette styling.

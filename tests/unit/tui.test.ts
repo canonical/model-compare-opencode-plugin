@@ -146,7 +146,14 @@ function makeHarness() {
     // The host's live renderer: the TUI entry tracks its resize events for
     // the dialogs' viewport caps (CliRenderEvents.RESIZE passes the fresh
     // dimensions as arguments).
-    renderer: { width: 80, height: 24, on: vi.fn(), off: vi.fn() },
+    renderer: {
+      width: 80,
+      height: 24,
+      on: vi.fn(),
+      off: vi.fn(),
+      once: vi.fn(),
+      requestRender: vi.fn(),
+    },
     keymap: {
       layer: vi.fn((factory: () => unknown) => {
         layerFactories.push(factory)
