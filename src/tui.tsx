@@ -90,18 +90,71 @@ const REPORT_EVENT = "rpc.model-compare.report"
 // and arming a new dialog closes whatever is still armed first.
 let dialogGeneration = 0
 let armedClose: (() => void) | null = null
+// The armed dialog's reveal hook (see showListDialog): its own
+// revealOnFrame, exposed module-scope so the setup-scope resize handler can
+// re-reveal the cursor when a resize re-caps the row area under it. Set
+// when a dialog is armed, cleared by its close() alongside armedClose.
+let armedReveal: ((center: boolean) => void) | null = null
 
 function StatusLine(props: { line: () => string; fg?: string }) {
   return <text fg={props.fg}>{props.line()}</text>
 }
 
+// One list-dialog row (see showListDialog).
+type ListRow = {
+  // Section headings render in the palette's category color, and are
+  // skipped by the cursor.
+  heading?: string
+  // A pre-built column-header line (the report table): dim, skipped by
+  // the cursor, and never gets a blank line above it.
+  headerLine?: string
+  label: string
+  // Trailing dim right-justified columns (the report table); when
+  // present, label renders in its own span so the two tones can differ.
+  columns?: string
+  selected?: string
+  value?: string
+  dim?: boolean
+}
+
+// The rows' ONE height rule, shared by three places that must agree or the
+// scroll lands on the wrong line: the rows' JSX (the heading's blank line
+// above), rowOffset's arithmetic and the row-area cap's content measure. A
+// header-line row renders as its text ONLY — the JSX checks headerLine
+// before heading — so a row carrying both fields counts the way it renders,
+// never as both. Every other row is one line except the second and later
+// headings, which carry one blank line above (the palette's heading
+// recipe).
+function isHeadingRow(row: ListRow): boolean {
+  return row.headerLine === undefined && row.heading !== undefined
+}
+function rowLines(row: ListRow, headingsSoFar: number): number {
+  return isHeadingRow(row) && headingsSoFar > 0 ? 2 : 1
+}
+// The rows' total LINE count (not their row count — heading blanks are
+// content too); `upto` measures the first rows alone, which is how rowOffset
+// gets a row's y within the content.
+function rowsHeight(rows: readonly ListRow[], upto: number = rows.length): number {
+  let y = 0
+  let headings = 0
+  for (let k = 0; k < upto; k++) {
+    const row = rows[k]!
+    y += rowLines(row, headings)
+    if (isHeadingRow(row)) headings += 1
+  }
+  return y
+}
+
 // The list dialogs' row-area cap, the host command palette's own formula:
-// min(rows, floor(terminal height / 2) - 6). The host's dialog layer caps
-// nothing itself and anchors UNcentered dialogs a quarter viewport down —
-// without this cap an uncapped list overflows the viewport at large font
-// sizes (the report dialog did exactly that). Exported for the unit rig.
-export function cappedRowsHeight(rowCount: number, terminalHeight: number): number {
-  return Math.min(rowCount, Math.max(1, Math.floor(terminalHeight / 2) - 6))
+// min(content LINES, floor(terminal height / 2) - 6) — the first argument is
+// rowsHeight(rows), never the rows' count, or the cap clips tail rows even
+// on a roomy terminal (with the scrollbar hidden). The host's dialog layer
+// caps nothing itself and anchors UNcentered dialogs a quarter viewport
+// down — without this cap an uncapped list overflows the viewport at large
+// font sizes (the report dialog did exactly that). Exported for the unit
+// rig.
+export function cappedRowsHeight(contentLines: number, terminalHeight: number): number {
+  return Math.min(contentLines, Math.max(1, Math.floor(terminalHeight / 2) - 6))
 }
 
 // One report entry's defensive normalization, shared by the two paths that
@@ -154,7 +207,14 @@ export default Plugin.define({
       width: context.renderer.width,
       height: context.renderer.height,
     })
-    const onRendererResize = (width: number, height: number) => setTerminalSize({ width, height })
+    const onRendererResize = (width: number, height: number) => {
+      setTerminalSize({ width, height })
+      // A resize re-caps the armed dialog's row area under its cursor: the
+      // reveal re-runs on the next frame (see showListDialog's
+      // revealOnFrame) or a shrunken viewport can leave the cursor below
+      // the fold until the next key move.
+      armedReveal?.(false)
+    }
     context.renderer.on("resize", onRendererResize)
 
     let disposeRoot = () => {}
@@ -318,21 +378,6 @@ export default Plugin.define({
     // render closure (context-less — "Keymap.Provider is missing", the same
     // trap as setup scope), so the app slot's IN-TREE effect registers it
     // while `listKeys` is armed, and the host unmounts it with the dialog.
-    type ListRow = {
-      // Section headings render in the palette's category color, and are
-      // skipped by the cursor.
-      heading?: string
-      // A pre-built column-header line (the report table): dim, skipped by
-      // the cursor, and never gets a blank line above it.
-      headerLine?: string
-      label: string
-      // Trailing dim right-justified columns (the report table); when
-      // present, label renders in its own span so the two tones can differ.
-      columns?: string
-      selected?: string
-      value?: string
-      dim?: boolean
-    }
 
     // The keymap layer hand-off (see showListDialog): set while a list
     // dialog is open, cleared on close; the app slot's in-tree effect maps
@@ -385,36 +430,34 @@ export default Plugin.define({
       // only touches an edge line when the content ends (the scroll clamps
       // at its maximum).
       //
-      // The row offsets are pure ARITHMETIC, not renderable geometry: every
-      // row is one line except the second and later priority headings, which
-      // carry one blank line above (the palette's heading recipe). Reading
-      // the host's .y was tried and is unreliable across the plugin boundary
-      // — it reported the scrollbox's own position for every row — while
-      // scrollTop/scrollHeight/height behave as plain numbers.
+      // The row offsets are pure ARITHMETIC, not renderable geometry —
+      // rowsHeight (module scope) is the ONE row-height rule the rows' JSX
+      // and the row-area cap share. Reading the host's .y was tried and is
+      // unreliable across the plugin boundary — it reported the scrollbox's
+      // own position for every row — while scrollTop/scrollHeight/height
+      // behave as plain numbers.
       let listScroll: ScrollBoxRenderable | undefined
       let pendingReveal: (() => void) | undefined
-      const rowOffset = (index: number): number => {
-        let y = 0
-        let headings = 0
-        for (let k = 0; k < index; k++) {
-          if (rows[k]!.heading !== undefined) {
-            headings += 1
-            y += headings > 1 ? 2 : 1
-            continue
-          }
-          y += 1
-        }
-        return y
-      }
+      const rowOffset = (index: number): number => rowsHeight(rows, index)
       const reveal = (center: boolean) => {
         const box = listScroll
         if (box === undefined) return
         const top = rowOffset(rows.indexOf(selectable[cursor()]))
         const max = Math.max(0, box.scrollHeight - box.height)
+        // The look-ahead band, clamped to the window: at box.height <= 3 the
+        // three-line margin degenerates to plain ensure-visible (the row
+        // lands ON a window line instead of the overscroll an unclamped
+        // `box.height - 4` produced once it went negative — cap values of
+        // 1-3 are exactly what large font sizes reach).
+        const band = Math.min(3, Math.max(0, box.height - 1))
+        // Keep the row on-screen whatever the branch: the row's line must
+        // stay within [scrollTop, scrollTop + box.height - 1].
+        const visible = (target: number): number =>
+          Math.min(top, Math.max(top - box.height + 1, target))
         let target = box.scrollTop
         if (center) target = top - Math.floor(box.height / 2)
-        else if (top - box.scrollTop > box.height - 4) target = top - (box.height - 4)
-        else if (top - box.scrollTop < 3) target = top - 3
+        else if (top - box.scrollTop > box.height - 1 - band) target = visible(top - (box.height - 1 - band))
+        else if (top - box.scrollTop < band) target = visible(top - band)
         box.scrollTo(Math.max(0, Math.min(target, max)))
       }
       // Positions exist only after a layout frame, so the reveal defers to
@@ -435,11 +478,20 @@ export default Plugin.define({
       const close = () => {
         if (!alive) return
         alive = false
+        // A pending frame reveal is THIS dialog's alone: cancel it here or
+        // the once("frame") listener (and its closure over the rows)
+        // outlives the dialog — it self-guarded on `alive`, but leaked until
+        // the next frame.
+        if (pendingReveal !== undefined) {
+          context.renderer.off("frame", pendingReveal)
+          pendingReveal = undefined
+        }
         // A newer dialog was armed since this one: its own close owns the
-        // shared state (the keymap layer, the host dialog) now — clearing
-        // here would kill ITS keyboard and surface.
+        // shared state (the keymap layer, the host dialog, the reveal hook)
+        // now — clearing here would kill ITS keyboard and surface.
         if (generation !== dialogGeneration) return
         armedClose = null
+        armedReveal = null
         setListKeys(null)
         context.ui.dialog.clear()
       }
@@ -448,7 +500,10 @@ export default Plugin.define({
       // first is the last (the command palette's behavior).
       const move = (delta: number) => {
         setCursor((cursor() + delta + selectable.length) % selectable.length)
-        reveal(false)
+        // Frame-deferred like every reveal — and it CANCELS a pending one,
+        // so the preselected row's open-time centering can never land after
+        // the user has already moved the cursor off it.
+        revealOnFrame(false)
       }
       const pick = () => {
         const row = selectable[cursor()]
@@ -460,6 +515,7 @@ export default Plugin.define({
       // slot below); it registers on the next reactive run. This dialog is
       // now the armed one (the lifecycle token above).
       armedClose = close
+      armedReveal = revealOnFrame
       setListKeys({ move, pick })
 
       context.ui.dialog.show(
@@ -484,7 +540,7 @@ export default Plugin.define({
                 // frame it waits for is the one that lays these rows out.
                 if (initial > 0) revealOnFrame(true)
               }}
-              maxHeight={cappedRowsHeight(rows.length, terminalSize().height)}
+              maxHeight={cappedRowsHeight(rowsHeight(rows), terminalSize().height)}
               paddingLeft={1}
               paddingRight={1}
               scrollbarOptions={{ visible: false }}
@@ -499,11 +555,14 @@ export default Plugin.define({
                   }
                   if (row.heading !== undefined) {
                     // The palette's heading recipe: accent hue, bold, one
-                    // blank line above every heading but the first. Flush
-                    // with the title: 1 (list inset) + 3 = 4.
+                    // blank line above every heading but the first — the
+                    // blank is rowLines' call (the ONE row-height rule the
+                    // offsets and the cap share), not a second copy of its
+                    // condition. Flush with the title: 1 (list inset) + 3 = 4.
+                    const paddingTop = rowLines(row, headings) - 1
                     headings += 1
                     return (
-                      <box paddingTop={headings > 1 ? 1 : 0} paddingLeft={3}>
+                      <box paddingTop={paddingTop} paddingLeft={3}>
                         <text fg={accent} attributes={TextAttributes.BOLD}>
                           {row.heading}
                         </text>
@@ -925,6 +984,11 @@ export default Plugin.define({
     })
 
     return () => {
+      // Disarm whatever dialog is still armed FIRST: its pending frame
+      // reveal and modal keyboard must not outlive the plugin (the
+      // module-scope armedClose/armedReveal survive setup's cleanup
+      // otherwise).
+      armedClose?.()
       if (resyncTimer !== undefined) clearInterval(resyncTimer)
       context.renderer.off("resize", onRendererResize)
       offReportEvent()

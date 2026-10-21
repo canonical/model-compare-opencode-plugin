@@ -21,6 +21,99 @@ import { ModelCompare } from "../../src/rpc"
 import { aliasId, useBestNotice, useBestRefusal } from "../../src/opencode/usebest"
 import tuiPlugin, { cappedRowsHeight } from "../../src/tui"
 
+// ---- the dialog JSX's fake element model -----------------------------------
+// src/tui.tsx is Solid JSX: the transform compiles it to @opentui/solid's
+// universal runtime (createElement/insertNode/setProp/insert/use/...), whose
+// real element creation demands a live RenderContext this unit rig has no
+// business spinning up. The mock below is that runtime's whole surface for
+// the compiled dialog tree: plain nodes carrying props and children, and a
+// scrollbox node that is exactly what showListDialog's ref captures — its
+// geometry (height/scrollHeight/scrollTop) is TEST-DRIVEN and scrollTo is
+// recorded, so the reveal arithmetic can be asserted line by line. Effects
+// (the universal runtime's reactive expressions) run once at render and are
+// replayable: `rerenderEffects` stands in for Solid re-evaluating them on a
+// signal change such as a resize.
+type FakeNode = {
+  tag: string
+  props: Record<string, unknown>
+  children: FakeNode[]
+  height: number
+  scrollHeight: number
+  scrollTop: number
+  scrollCalls: number[]
+  scrollTo: (position: number) => void
+}
+
+const solidRuntime = vi.hoisted((): {
+  makeNode: (tag: string) => FakeNode
+  effects: Array<() => void>
+} => {
+  const effects: Array<() => void> = []
+  const makeNode = (tag: string): FakeNode => {
+    const node: FakeNode = {
+      tag,
+      props: {},
+      children: [],
+      height: 0,
+      scrollHeight: 0,
+      scrollTop: 0,
+      scrollCalls: [],
+      // The real scrollTo clamps through the scrollbar ([0, scrollHeight -
+      // height]); the reveal clamps first anyway, so recording the call and
+      // applying the same clamp keeps multi-move sequences faithful.
+      scrollTo(position: number) {
+        node.scrollCalls.push(position)
+        node.scrollTop = Math.max(0, Math.min(position, Math.max(0, node.scrollHeight - node.height)))
+      },
+    }
+    return node
+  }
+  return { makeNode, effects }
+})
+
+vi.mock("@opentui/solid", () => {
+  const { makeNode, effects } = solidRuntime
+  const textNode = (value: unknown): FakeNode => {
+    const node = makeNode("#text")
+    node.props.text = value
+    return node
+  }
+  return {
+    createElement: (tag: string) => makeNode(tag),
+    createTextNode: textNode,
+    insertNode: (parent: FakeNode, child: FakeNode) => {
+      parent.children.push(child)
+      return child
+    },
+    insert: (parent: FakeNode, accessor: unknown) => {
+      const value = typeof accessor === "function" ? (accessor as () => unknown)() : accessor
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child === undefined || child === null || child === false) continue
+        parent.children.push(typeof child === "object" ? (child as FakeNode) : textNode(child))
+      }
+      return value
+    },
+    setProp: (node: FakeNode, name: string, value: unknown) => {
+      node.props[name] = value
+      return value
+    },
+    // The JSX ref: the real runtime applies it to the created element — how
+    // showListDialog captures its scrollbox.
+    use: (fn: (node: FakeNode) => void, node: FakeNode) => fn(node),
+    createComponent: (type: unknown, props: Record<string, unknown>) =>
+      typeof type === "function"
+        ? (type as (input: Record<string, unknown>) => unknown)(props)
+        : makeNode(String(type)),
+    memo: (fn: () => unknown) => () => fn(),
+    effect: (fn: (prev: Record<string, unknown>) => unknown, init?: Record<string, unknown>) => {
+      const state = init ?? {}
+      const out = fn(state)
+      const prev = typeof out === "object" && out !== null ? (out as Record<string, unknown>) : state
+      effects.push(() => fn(prev))
+    },
+  }
+})
+
 type TuiDef = { setup: (ctx: unknown) => Promise<() => void> }
 const def = tuiPlugin as unknown as TuiDef
 
@@ -117,6 +210,23 @@ function makeHarness() {
   const rpc = vi.fn((_rpcClass: unknown) => ({ report }))
   const navigate = vi.fn((_route: unknown) => {})
 
+  // The renderer's captured listeners and the test-side event trigger.
+  type RendererListener = (...args: unknown[]) => void
+  const rendererListeners = new Map<string, Map<RendererListener, boolean>>()
+  const listen = (event: string, fn: RendererListener, once: boolean) => {
+    const byFn = rendererListeners.get(event) ?? new Map<RendererListener, boolean>()
+    byFn.set(fn, once)
+    rendererListeners.set(event, byFn)
+  }
+  const fireRenderer = (event: string, ...args: unknown[]) => {
+    const byFn = rendererListeners.get(event)
+    if (byFn === undefined) return
+    for (const [fn, once] of [...byFn.entries()]) {
+      if (once) byFn.delete(fn)
+      fn(...args)
+    }
+  }
+
   const ctx = {
     location: { directory: "/repo" },
     client: { session, config: { get: vi.fn(async () => []) }, rpc },
@@ -145,13 +255,19 @@ function makeHarness() {
     theme: { surface: vi.fn(() => THEME) },
     // The host's live renderer: the TUI entry tracks its resize events for
     // the dialogs' viewport caps (CliRenderEvents.RESIZE passes the fresh
-    // dimensions as arguments).
+    // dimensions as arguments) and the dialogs' frame-deferred reveals ride
+    // CliRenderEvents.FRAME. The listeners are captured here so tests can
+    // fire them — including "once" semantics (a once listener is dropped
+    // before it runs, and off() removes by the ORIGINAL callback, which is
+    // what showListDialog's cancellation passes).
     renderer: {
       width: 80,
       height: 24,
-      on: vi.fn(),
-      off: vi.fn(),
-      once: vi.fn(),
+      on: vi.fn((event: string, fn: RendererListener) => listen(event, fn, false)),
+      off: vi.fn((event: string, fn: RendererListener) => {
+        rendererListeners.get(event)?.delete(fn)
+      }),
+      once: vi.fn((event: string, fn: RendererListener) => listen(event, fn, true)),
       requestRender: vi.fn(),
     },
     keymap: {
@@ -169,7 +285,7 @@ function makeHarness() {
     },
   }
 
-  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, rpc, navigate, entries, reportPayload, ctx }
+  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, rpc, navigate, entries, reportPayload, fireRenderer, rendererListeners, ctx }
 }
 
 type Harness = ReturnType<typeof makeHarness> & {
@@ -221,6 +337,98 @@ async function modalPick(active: Harness): Promise<Command | null> {
   const modal = await active.modalCommands()
   if (modal === null) return null
   return modal.find((item) => item.id === "model-compare.list.pick") ?? null
+}
+
+// ---- the scroll fixture and the fake-tree render rig ------------------------
+// THREE sections × two entries: 10 rows (1 column header, 3 headings, 6
+// entries) whose content is 12 LINES — every heading after the first carries
+// a blank line above it (the palette recipe), so the selectable entries sit
+// at content lines 2, 3, 6, 7, 10, 11 and the content's maximum scroll is
+// 12 - height.
+const SCROLL_TOPS = [2, 3, 6, 7, 10, 11]
+const SCROLL_LINES = 12
+
+function scrollEntries(current?: string): Array<Record<string, unknown>> {
+  const entries: Array<Record<string, unknown>> = []
+  for (const priority of ["balanced", "price", "quality"]) {
+    for (const rank of [1, 2]) {
+      const value = `acme/${priority}${rank}`
+      entries.push({
+        priority,
+        rank,
+        id: value,
+        value,
+        score: "0.5",
+        quality: "8.0",
+        price: "$1/$2",
+        current: value === current,
+        fromFallback: false,
+      })
+    }
+  }
+  return entries
+}
+
+function findNode(node: FakeNode, tag: string): FakeNode | undefined {
+  if (node.tag === tag) return node
+  for (const child of node.children) {
+    const found = findNode(child, tag)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+// Renders a captured dialog tree against the fake JSX runtime: the ref lands
+// on the fake scrollbox during the render (exactly as the host's does), and
+// the render's reactive expressions come back replayable.
+function renderDialog(harness: Harness): { scrollbox: FakeNode; rerenderEffects: () => void } {
+  const tree = harness.dialogRenders.at(-1)!() as FakeNode
+  const effects = solidRuntime.effects.splice(0)
+  const scrollbox = findNode(tree, "scrollbox")
+  if (scrollbox === undefined) throw new Error("the dialog tree carries no scrollbox")
+  return { scrollbox, rerenderEffects: () => effects.forEach((run) => run()) }
+}
+
+// Opens the report dialog over `entries`, renders its tree, stages the
+// scrollbox geometry the tests drive and hands back the modal movement
+// commands plus the frame trigger the reveal rides.
+async function openReportScroll(
+  entries: ReturnType<typeof scrollEntries>,
+  geometry: { height: number; scrollHeight?: number; terminal?: { width: number; height: number } },
+): Promise<{
+  scrollbox: FakeNode
+  down: Command
+  up: Command
+  frame: () => void
+  rerenderEffects: () => void
+}> {
+  const harness = makeHarness()
+  if (geometry.terminal !== undefined) {
+    harness.ctx.renderer.width = geometry.terminal.width
+    harness.ctx.renderer.height = geometry.terminal.height
+  }
+  active = await activate(harness)
+  const open = active
+  open.reportPayload.age = "1h"
+  open.reportPayload.entries = entries
+  await open.command("model-compare.report").run()
+  await drain()
+  const { scrollbox, rerenderEffects } = renderDialog(open)
+  scrollbox.height = geometry.height
+  scrollbox.scrollHeight = geometry.scrollHeight ?? SCROLL_LINES
+  const modal = await open.modalCommands()
+  const down = modal?.find((item) => item.id === "model-compare.list.down")
+  const up = modal?.find((item) => item.id === "model-compare.list.up")
+  if (down === undefined || up === undefined) {
+    throw new Error("the list dialog movement commands were never registered")
+  }
+  return {
+    scrollbox,
+    down,
+    up,
+    frame: () => harness.fireRenderer("frame", { frameId: 1 }),
+    rerenderEffects,
+  }
 }
 
 let active: Harness | undefined
@@ -668,5 +876,154 @@ describe("cappedRowsHeight (the palette's list cap)", () => {
 
   test("no rows means no height", () => {
     expect(cappedRowsHeight(0, 40)).toBe(0)
+  })
+})
+
+// ---- the dialogs' viewport scroll (the reveal arithmetic and lifecycle) ----
+
+describe("the dialogs' viewport scroll", () => {
+  test.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    "the reveal keeps the cursor row visible at viewport height %i",
+    async (height) => {
+      const { scrollbox, down, up, frame } = await openReportScroll(scrollEntries(), { height })
+      // A walk that touches both edges and wraps both ways: seven downs
+      // (last → first), then seven ups (first → last).
+      let cursor = 0
+      for (const delta of [1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1]) {
+        cursor = (cursor + delta + SCROLL_TOPS.length) % SCROLL_TOPS.length
+        ;(delta > 0 ? down : up).run()
+        frame()
+        const top = SCROLL_TOPS[cursor]!
+        expect(
+          top >= scrollbox.scrollTop && top <= scrollbox.scrollTop + height - 1,
+          `height ${height}: row line ${top} left the window [${scrollbox.scrollTop}, ${
+            scrollbox.scrollTop + height - 1
+          }]`,
+        ).toBe(true)
+      }
+    },
+  )
+
+  test("the look-ahead places the row three lines off the edge (height 6)", async () => {
+    const { scrollbox, down, up, frame } = await openReportScroll(scrollEntries(), { height: 6 })
+    down.run() // cursor 0 → 1 (row line 3): rel 3 > 2 → scrolls to 1
+    frame()
+    down.run() // cursor 1 → 2 (row line 6): rel 5 > 2 → scrolls to 4
+    frame()
+    up.run() // cursor 2 → 1 (row line 3): rel -1 < 3 → scrolls to 0
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([1, 4, 0])
+  })
+
+  test("a one-row window pins the row exactly (the degenerate band)", async () => {
+    const { scrollbox, down, up, frame } = await openReportScroll(scrollEntries(), { height: 1 })
+    down.run() // cursor 0 → 1 (row line 3): the row IS the window at 3
+    frame()
+    up.run() // cursor 1 → 0 (row line 2)
+    frame()
+    // The unclamped look-ahead overshot by 4 - height and scrolled the row
+    // OUT of a tiny viewport on every move.
+    expect(scrollbox.scrollCalls).toEqual([3, 2])
+  })
+
+  test("wrap-around scrolls the list to the wrapped-to row", async () => {
+    const { scrollbox, down, up, frame } = await openReportScroll(scrollEntries(), { height: 6 })
+    for (let step = 0; step < 5; step++) {
+      down.run()
+      frame()
+    }
+    down.run() // last → first (row line 2): rel -4 → up-branch → clamps to 0
+    frame()
+    up.run() // first → last (row line 11): rel 11 → clamps to the maximum 6
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([1, 4, 5, 6, 6, 0, 6])
+    expect(scrollbox.scrollTop).toBe(6)
+  })
+
+  test.each<[string, string, number[]]>([
+    ["near the top", "acme/balanced2", [0]],
+    ["mid-list", "acme/price1", [3]],
+    ["near the bottom", "acme/quality2", [6]],
+  ])("the preselected row opens centered (%s), clamped to the scroll range", async (_case, current, expected) => {
+    const { scrollbox, frame } = await openReportScroll(scrollEntries(current), { height: 6 })
+    frame()
+    // Center of a 6-row window is 3 rows up; both ends clamp to the range.
+    expect(scrollbox.scrollCalls).toEqual(expected)
+  })
+
+  test("a cursor move before the first frame defers its reveal and cancels the open-time centering", async () => {
+    // The preselected row (line 6) would open centered at 3.
+    const { scrollbox, down, frame } = await openReportScroll(scrollEntries("acme/price1"), { height: 6 })
+    down.run() // cursor 2 → 3 (row line 7) BEFORE any frame
+    expect(scrollbox.scrollCalls).toEqual([]) // nothing races the layout
+    frame()
+    // ONE reveal, at the look-ahead offset 5 — not the centering's 3, and
+    // not a stale second call after the move.
+    expect(scrollbox.scrollCalls).toEqual([5])
+  })
+
+  test("a pending frame reveal is cancelled on close — and the alive guard backs it up", async () => {
+    const { scrollbox, frame } = await openReportScroll(scrollEntries("acme/price1"), { height: 6 })
+    // The ref scheduled the preselected row's centering on the next frame.
+    const pending = [...(active!.rendererListeners.get("frame")?.keys() ?? [])]
+    expect(pending.length).toBe(1)
+
+    active!.closes.at(-1)!()
+    expect(active!.ctx.renderer.off).toHaveBeenCalledWith("frame", pending[0])
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([])
+    // The !alive guard alone: even a listener that HAD survived the off()
+    // must not scroll a dead dialog.
+    pending[0]!()
+    expect(scrollbox.scrollCalls).toEqual([])
+  })
+
+  test("a resize re-reveals the cursor and re-caps the row area", async () => {
+    const { scrollbox, frame, rerenderEffects } = await openReportScroll(scrollEntries("acme/price1"), {
+      height: 6,
+    })
+    // Terminal 24: the cap is 6 (floor(24/2) - 6) — under the fixture's 12
+    // content lines.
+    expect(scrollbox.props.maxHeight).toBe(6)
+
+    active!.fireRenderer("resize", 80, 40) // the cap rises to 14
+    rerenderEffects() // Solid's reactive re-run of the cap expression
+    expect(scrollbox.props.maxHeight).toBe(12) // the LINES count, not the 10 rows
+
+    frame()
+    // The resize's reveal cancelled the pending centering and scrolled by
+    // the look-ahead rule: row line 6 at rel 6 > 2 → 4 (centering would be 3).
+    expect(scrollbox.scrollCalls).toEqual([4])
+  })
+
+  test("the plugin's cleanup closes an armed dialog and its pending reveal", async () => {
+    const { scrollbox, frame } = await openReportScroll(scrollEntries("acme/price1"), { height: 6 })
+    await active!.cleanup()
+    expect(active!.ctx.ui.dialog.clear).toHaveBeenCalledTimes(1)
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([])
+  })
+})
+
+describe("the row-area cap measures content LINES", () => {
+  test("a report list's cap counts its heading blanks (3 headings, 12 lines, 10 rows)", async () => {
+    // Terminal 40: the cap is 14 — above the row count but not the line
+    // count. Measured in rows the cap would clip the tail entries behind
+    // the hidden scrollbar; measured in lines the dialog shows them all.
+    const { scrollbox } = await openReportScroll(scrollEntries(), {
+      height: 6,
+      terminal: { width: 80, height: 40 },
+    })
+    expect(scrollbox.props.maxHeight).toBe(12)
+  })
+
+  test("a heading-free list's cap is its row count (rows == lines)", async () => {
+    active = await activate()
+    await active.command("model-compare.picks").run()
+    await drain()
+    const { scrollbox } = renderDialog(active)
+    // The picks dialog: 3 rows, no heading blanks — min(3, cap 6 at
+    // terminal 24).
+    expect(scrollbox.props.maxHeight).toBe(3)
   })
 })
