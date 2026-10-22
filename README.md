@@ -99,7 +99,7 @@ Options live under `plugins[].options`:
 | `weights` | upstream | Partial overrides per named priority (`quality`, `price`, `context`, `age`), merged with upstream's weights and renormalized to sum 1 |
 | `pinDays` | `14` | Age in days after which a pick is re-evaluated |
 | `minLead` | `0.03` | Score lead needed to replace a pinned pick |
-| `catalogURL` | published catalog | Remote source URL (`https://canonical.github.io/model-compare/catalog.json`). Only point it at a source you trust: it decides which models can be picked |
+| `catalogURL` | published catalog | Remote source URL. The catalog is published at `https://model-compare.dev/catalog.json` (`https://canonical.github.io/model-compare` — the plugin's built-in default — redirects there). Only point it at a source you trust: it decides which models can be picked |
 | `scriptPath` | vendored copy | Development override for a local `model_compare.py` |
 
 A present-but-invalid value logs a warning and applies the default (`weights` drop invalid entries individually; the valid remainder applies). Absent options apply defaults silently. Setup never throws; the aliases stay functional.

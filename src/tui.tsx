@@ -605,7 +605,7 @@ export default Plugin.define({
               })()}
             </scrollbox>
             <box paddingLeft={4}>
-              <text fg={muted}>Details: https://canonical.github.io/model-compare</text>
+              <text fg={muted}>Details: https://model-compare.dev</text>
             </box>
           </box>
         ),
