@@ -177,7 +177,7 @@ export function validateStoredCatalog(
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(stored)) return { ok: false, reason: "stored catalog must be an object" }
   return validateCatalog({
-    schema_version: 2,
+    schema_version: 3,
     generated_at: stored.generatedAt,
     parameters: { weights: stored.weights },
     models: stored.models,
