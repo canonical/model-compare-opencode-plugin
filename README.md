@@ -125,16 +125,16 @@ Resolution order: pin (if runnable) → best runnable candidate → `fallback` (
 
 The last validated catalog is persisted, so ranking and `/model-compare` work offline after a restart. The cache is keyed by source (URL or script path), so changing the source never serves the previous source's data. Script exit code 2 means "no candidates" *or* an argparse usage error — never read it as "no candidates" alone.
 
-**Vendored pin:** `vendor/model_compare.py` is byte-identical to upstream `v0.3.1` (`vendor/UPSTREAM.json` records repo, tag, commit, sha256). Since upstream 0.3.0 the catalog is schema v2: `pricing` scalars hold effective-tier values — the tier in effect at 1M-token prompts — so models with OpenRouter price overrides are ranked at what a long session actually pays.
+**Vendored pin:** `vendor/model_compare.py` is byte-identical to upstream `v0.4.0` (`vendor/UPSTREAM.json` records repo, tag, commit, sha256). Since upstream 0.4.0 the catalog is schema v3: `pricing` carries tier and schedule structure alongside the flat scalars, and `parameters` carries the published ranking weights. The plugin accepts schema v3 ONLY — `validateCatalog` rejects anything else — and releases are gated on the live remote serving v3 (the release-gate check pipes `https://model-compare.dev/catalog.json` through `scripts/canary-check.mjs`, which fails closed when the served document is not the expected schema). Effective-tier pricing semantics still apply: `pricing` scalars hold effective-tier values — the tier in effect at 1M-token prompts — so models with OpenRouter price overrides are ranked at what a long session actually pays.
 
 **Upgrading the pin** — reviewed PRs only; nothing merges automatically:
 
 1. `node scripts/sync-vendor.mjs <tag>` — fetches the script at that commit, reports the sha256 change, re-pins `UPSTREAM.json`, prints the matching CHANGELOG section (`--check` verifies offline).
-2. Conformance tests check `--version`, schema v2, required fields, recomputed `overall` scores, and the standard-library-only import allowlist.
+2. Conformance tests check `--version`, schema v3, required fields, recomputed `overall` scores, and the standard-library-only import allowlist.
 3. The upgrade PR body lists script lines touching imports, URLs, environment variables, subprocess calls and file writes, for reviewer attention.
 4. Release with a changelog line naming the upstream tag; users run `opencode plugin update` (OpenCode checks but doesn't apply).
 
-A scheduled workflow opens a draft upgrade PR when upstream publishes a newer release (never a downgrade); a nightly canary exercises the script live; a weekly drift check compares the vendored sha256 against upstream's pinned commit and the published rankings against the published scores.
+A scheduled workflow opens a draft upgrade PR when upstream publishes a newer release (never a downgrade); a nightly canary exercises the script live and gates on the live remote serving schema v3 (`scripts/canary-check.mjs` pins `EXPECTED_SCHEMA_VERSION = 3` and exits nonzero on any other version); a weekly drift check compares the vendored sha256 against upstream's pinned commit and the published rankings against the published scores.
 
 
 ## Troubleshooting
@@ -178,7 +178,7 @@ MC_INTEGRATION=1 npx vitest run tests/integration/    # live-server suite (opt-i
 - The integration files skip unless `MC_INTEGRATION=1`, so plain `npm test` stays hermetic. The suite drives a real `opencode serve` on 127.0.0.1:14721 and needs the `opencode` CLI and `python3` (skips cleanly when either is missing); one case needs network access and the `sqlite3` CLI.
 - `node scripts/pack-smoke.mjs` (also in CI, after `node scripts/build-tui.mjs`) packs the plugin and checks the tarball against the packaging list (files, `exports`, relative imports, and that the TUI artifact is precompiled — no react import). It does **not** load the package in OpenCode — install the tarball into a scratch project and confirm OpenCode loads it before publishing.
 - Publishing: cut a GitHub release tagged `vX.Y.Z` and `.github/workflows/release.yaml` stages the package on npm through trusted publishing (tokenless OIDC — no token secret; the npmjs.com trusted-publisher entry must name `release.yaml`, the `canonical/model-compare-opencode-plugin` repository and the `release` environment, with "Allow npm publish" and "Allow npm dist-tag" unchecked — stage-only, npm's recommended posture). Nothing goes live until a maintainer approves it with 2FA on npmjs.com (package page → Staged Packages) or via `npm stage approve`. The workflow fails closed when the tag does not match `package.json`'s version, and the gates (build, typecheck, tests, pack-smoke) run before staging.
-- `fixtures/catalog-v0.4.0.json` is a recorded schema-v3 catalog; `fixtures/catalog-no-quality.json` is generated from it by `scripts/make-no-quality-fixture.py` (the vendored script's own quality-blind weights, so its scores are internally consistent). `node scripts/sync-vendor.mjs --check` verifies the pin's sha256 offline.
+- `fixtures/catalog-v0.4.0.json` is the sole contract fixture — a recorded schema-v3 catalog; `fixtures/catalog-no-quality.json` is derived from it by `scripts/make-no-quality-fixture.py` (the vendored script's own quality-blind weights, so its scores are internally consistent). No v2 fixture exists; the v3-only gate rejects one. `node scripts/sync-vendor.mjs --check` verifies the pin's sha256 offline.
 - Repo layout: `src/core/` (pure ranking/pinning), `src/sources/` (local + remote acquisition), `src/opencode/` (aliases, guard, commands, storage, refresh), `dist/` (generated `tui.js` artifact, gitignored), `vendor/` (pinned upstream script), `tests/{unit,conformance,integration}`.
 
 
