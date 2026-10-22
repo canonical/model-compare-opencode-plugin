@@ -18,6 +18,8 @@ test("vendored script matches the pinned tag", () => {
 const ALLOWLIST = new Set([
   "__future__",
   "argparse",
+  // vendored 0.4.0 uses concurrent.futures for catalog assembly
+  "concurrent.futures",
   "datetime",
   "gzip",
   "json",
