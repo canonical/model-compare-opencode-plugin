@@ -188,10 +188,10 @@ describe("runLocalScript", () => {
     const dir = mkdtempSync(join(tmpdir(), "local-source-bad-doc-"))
     try {
       const stub = join(dir, "stub-bad-schema.py")
-      writeFileSync(stub, `print('{"schema_version": 3}')\n`)
+      writeFileSync(stub, `print('{"schema_version": 2}')\n`)
       const reason = await rejectionOf(runLocalScript(stub))
       expect(reason).toContain("local source failed")
-      expect(reason).toContain("schema_version must be 2")
+      expect(reason).toContain("schema_version must be 3")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

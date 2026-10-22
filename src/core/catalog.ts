@@ -1,5 +1,5 @@
 // src/core/catalog.ts
-// Catalog document validation (design §5). Accepts schema v2 documents (only) from
+// Catalog document validation (design §5). Accepts schema v3 documents (only) from
 // either source (vendored script or remote catalog) and projects them onto
 // the plugin's Catalog type. Validation only — ranking lives elsewhere.
 
@@ -17,14 +17,11 @@ export function validateCatalog(
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(raw)) return { ok: false, reason: "catalog must be a JSON object" }
 
-  // Supported schema: v2 only — upstream's current contract (0.3.0: pricing
-  // scalars are effective-tier values; pricing.base/tiers/schedule and a
-  // top-level schedules index were added — ignored here, see the roadmap
-  // for consumer ideas). The plugin has never been released, so no stored
-  // v1 documents exist anywhere; the published catalog has served v2 since
-  // 2026-10-10.
-  if (raw.schema_version !== 2) {
-    return { ok: false, reason: `schema_version must be 2, got ${JSON.stringify(raw.schema_version)}` }
+  // Supported schema: v3 only — upstream's current contract (0.4.0's
+  // schema_version 3). Every other version is rejected with the reason string
+  // the canary and the stored-document path rely on.
+  if (raw.schema_version !== 3) {
+    return { ok: false, reason: `schema_version must be 3, got ${JSON.stringify(raw.schema_version)}` }
   }
   if (typeof raw.generated_at !== "string") {
     return { ok: false, reason: "generated_at must be a string" }

@@ -32,7 +32,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
 
 // One schema-valid document, validated once and shared by the stubs.
 const raw = {
-  schema_version: 2,
+  schema_version: 3,
   generated_at: "2026-10-09T00:00:00+00:00",
   models: [
     {

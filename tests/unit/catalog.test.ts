@@ -21,14 +21,16 @@ function model() {
 
 function doc() {
   return {
-    schema_version: 2,
+    schema_version: 3,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [model()],
   }
 }
 
 test("accepts the recorded catalog fixture", () => {
-  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.3.0.json", "utf8"))
+  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8"))
+  // The gate accepts v3 only; the fixture records the v3 contract document.
+  expect(raw.schema_version).toBe(3)
   const result = validateCatalog(raw)
   expect(result.ok).toBe(true)
   if (!result.ok) return
@@ -63,8 +65,16 @@ test("rejects schema_version 1 (dropped: the plugin never shipped, so no stored 
   expect(result.reason).toMatch(/schema_version/)
 })
 
-test("rejects schema_version 3", () => {
-  const result = validateCatalog({ ...doc(), schema_version: 3 })
+test("validateCatalog rejects a v2 document", () => {
+  const doc = { schema_version: 2, generated_at: "2026-10-19T00:00:00+00:00", models: [] }
+  const result = validateCatalog(doc)
+  expect(result.ok).toBe(false)
+  if (result.ok) return
+  expect(result.reason).toMatch(/must be 3, got 2/)
+})
+
+test("rejects schema_version 2 (dropped: the plugin goes v3-only with upstream 0.4.0)", () => {
+  const result = validateCatalog({ ...doc(), schema_version: 2 })
   expect(result.ok).toBe(false)
   if (result.ok) return
   expect(result.reason).toMatch(/schema_version/)
@@ -249,7 +259,7 @@ test("ignores unknown top-level fields", () => {
 
 describe("validateStoredCatalog (F-16)", () => {
   const recorded = () => {
-    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.3.0.json", "utf8")))
+    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8")))
     if (!result.ok) throw new Error(result.reason)
     return result.catalog
   }

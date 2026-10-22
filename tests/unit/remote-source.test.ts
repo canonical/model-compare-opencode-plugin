@@ -23,7 +23,7 @@ const TTL = 6 * 60 * 60 * 1000
 // A minimal schema-valid document (one model, no weights or rankings).
 function doc() {
   return {
-    schema_version: 2,
+    schema_version: 3,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [
       {
@@ -329,14 +329,14 @@ describe("fetchRemote", () => {
 
   test("a schema-invalid document rejects with the validator's reason", async () => {
     const { storage } = memoryStorage()
-    const fetcher = fetchReturns(JSON.stringify({ schema_version: 3 }))
+    const fetcher = fetchReturns(JSON.stringify({ schema_version: 2 }))
 
     const reason = await rejectionOf(
       fetchRemote(REMOTE_URL, storage, { fetch: fetcher.fetch, now: () => NOW }),
     )
 
     expect(reason).toContain("remote source failed")
-    expect(reason).toContain("schema_version must be 2")
+    expect(reason).toContain("schema_version must be 3")
   })
 
   test("a record without a usable doc is treated as no cache", async () => {
