@@ -27,7 +27,7 @@ import importlib.util
 import json
 import sys
 
-SOURCE = "fixtures/catalog-v0.3.0.json"
+SOURCE = "fixtures/catalog-v0.4.0.json"
 TARGET = "fixtures/catalog-no-quality.json"
 VENDOR = "vendor/model_compare.py"
 
@@ -78,12 +78,21 @@ def main():
         }
         model["quality"] = None
         model["quality_match"] = None
-        model["aa"] = {"intelligence_index": None, "coding_index": None, "agentic_index": None}
+        model["aa"] = {
+            "intelligence_index": None,
+            "coding_index": None,
+            "agentic_index": None,
+        }
 
     doc["models"].sort(key=lambda m: (-m["scores"]["overall"]["balanced"], m["id"]))
     doc["parameters"]["weights"] = weights
     doc["rankings"] = mc.catalog_rankings(candidates, weights)
-    doc["sources"]["aa"] = {"mode": "none", "fallback": "none", "matched": 0, "matched_openrouter": 0}
+    doc["sources"]["aa"] = {
+        "mode": "none",
+        "fallback": "none",
+        "matched": 0,
+        "matched_openrouter": 0,
+    }
 
     balanced = {m["id"]: m["scores"]["overall"]["balanced"] for m in doc["models"]}
     for entry in doc["schedules"]:
