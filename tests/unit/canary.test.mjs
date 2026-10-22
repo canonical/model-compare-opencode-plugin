@@ -6,12 +6,12 @@ import { readFileSync } from "node:fs"
 import { describe, expect, test } from "vitest"
 import { checkCanary } from "../../scripts/canary-check.mjs"
 
-const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.3.0.json", "utf8"))
+const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8"))
 
 describe("checkCanary", () => {
-  test("passes the recorded v2 catalog", () => {
+  test("passes the recorded v3 catalog", () => {
     const doc = fixture()
-    expect(doc.schema_version).toBe(2)
+    expect(doc.schema_version).toBe(3)
     expect(checkCanary(doc)).toEqual({ ok: true, models: doc.models.length })
   })
 
@@ -19,12 +19,12 @@ describe("checkCanary", () => {
     const doc = { ...fixture(), schema_version: 1 }
     const result = checkCanary(doc)
     expect(result.ok).toBe(false)
-    expect(result.reason).toMatch(/schema_version is 1, expected 2/)
+    expect(result.reason).toMatch(/schema_version is 1, expected 3/)
   })
 
   test("fails a missing schema_version", () => {
     const { schema_version, ...rest } = fixture()
-    expect(checkCanary(rest)).toEqual({ ok: false, reason: "schema_version is null, expected 2" })
+    expect(checkCanary(rest)).toEqual({ ok: false, reason: "schema_version is null, expected 3" })
   })
 
   test("fails an empty model pool", () => {
