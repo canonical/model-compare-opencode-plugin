@@ -285,14 +285,14 @@ async function waitForReloadSetupLine(baseline, timeoutMs, describe) {
 }
 
 // ---- OpenCode's persisted plugin storage (case 4 only) -----------------------
-// The plugin's records live in OpenCode's global sqlite kv store, keyed
+// The plugin's records live in the RUN's scratch sqlite kv store (harness.mjs
+// isolates every suite run into its own OpenCode data dir; live state is never
+// read or written), keyed
 // `plugin:<hex of the plugin id's char codes>:<record key>` (verified live).
 // The harness neutralizes persisted PINS via pinDays expiry; the doc/cache
 // record has a hardcoded 6 h TTL (fetchRemote serves any younger record
 // without a fetch), so case 4 removes the row itself — with the server
 // STOPPED — the same way the plugin's own ticks rewrite it.
-
-const OPENCODE_DB = path.join(process.env.HOME ?? "", ".local/share/opencode/opencode.db")
 // The document cache is keyed per source identity (`doc/cache/<hash>`), so the
 // rows are addressed by prefix.
 const DOC_CACHE_KV_PREFIX =
@@ -309,12 +309,19 @@ function hasSqlite3() {
   }
 }
 
+// The SQL goes in on STDIN, together with the .timeout dot-command: sqlite3
+// executes command-line SQL arguments and exits WITHOUT reading stdin, and a
+// restored doc/cache row's value is the cached catalog document re-serialized
+// compactly — 288 KB for the v3 fixture, past the 128 KiB per-argv cap
+// (spawnSync E2BIG; the v2-era document was 91 KB and always just fit).
+// Stdin has no such cap. Surfaced 2026-10-22 when the snapshot/restore
+// round-trip first ran against the run's scratch database.
 function sqlite(sql) {
-  return execFileSync("sqlite3", [OPENCODE_DB, ".timeout 10000", sql], { encoding: "utf8" })
+  return execFileSync("sqlite3", [h.opencodeDbPath()], { encoding: "utf8", input: `.timeout 10000\n${sql}\n` })
 }
 
 function sqliteJson(sql) {
-  return execFileSync("sqlite3", ["-json", OPENCODE_DB, ".timeout 10000", sql], { encoding: "utf8" })
+  return execFileSync("sqlite3", ["-json", h.opencodeDbPath()], { encoding: "utf8", input: `.timeout 10000\n${sql}\n` })
 }
 
 function docCacheRowCount() {
@@ -328,7 +335,7 @@ function deleteDocCacheRow() {
     console.warn(`[model-compare integration] doc/cache row still present (attempt ${attempt})`)
     void h.sleep(500)
   }
-  throw new Error(`could not delete ${DOC_CACHE_KV_PREFIX}* from ${OPENCODE_DB}`)
+  throw new Error(`could not delete ${DOC_CACHE_KV_PREFIX}* from ${h.opencodeDbPath()}`)
 }
 
 // Every persisted document-cache row (all columns, exact values), for cases
@@ -788,6 +795,15 @@ suite("model-compare integration: commands, failure and degradation (spec §13)"
         titleRequest.wire.startsWith("model-compare/"),
         `the title request must run on a concrete model, got ${JSON.stringify(titleRequest.wire)}`,
       ).toBe(false)
+      // The title generation is a real completion on a free model — its
+      // latency is the provider's (observed 0.6 s–10 s), and the run command
+      // returns as soon as the PRIMARY turn is done, so the response must be
+      // WAITED for (bounded, observation-driven), not read after a settle.
+      await h.waitForWireLine(
+        (e) => e.type === "response" && e.sessionID === sessionID && e.kind === "title",
+        60_000,
+        "the title response for the session",
+      )
       const titleResponse = h
         .readWire()
         .find((e) => e.type === "response" && e.sessionID === sessionID && e.kind === "title")

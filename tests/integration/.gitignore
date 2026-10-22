@@ -4,6 +4,9 @@ wire.jsonl
 *.log
 project-fixture*
 server.out
+# Per-suite-run scratch OpenCode homes (fresh kv database + seeded auth copy),
+# created by harness.mjs and removed in finalCleanup.
+data/
 
 # npm install artifacts of the probe plugin (package.json/index.ts are committed)
 probe/package-lock.json

@@ -4,6 +4,11 @@
 // appends one JSON line per event to tests/integration/wire.jsonl:
 //
 //   { type: "setup",   version }                   — once per server instance
+//   { type: "options", options }                   — the plugin context's
+//                                                  options object, logged once
+//                                                  at setup (delivery probe:
+//                                                  whatever OpenCode handed the
+//                                                  plugin, verbatim)
 //   { type: "models",  openrouter: string[] }      — bare ids of openrouter's
 //                                                  enabled models (logged at
 //                                                  setup and again on the first
@@ -55,6 +60,7 @@ export default Plugin.define({
   id: "integration-probe",
   async setup(ctx) {
     log({ type: "setup", version: ctx.app.version })
+    log({ type: "options", options: ctx.options })
 
     const logModels = (when: string) => {
       try {

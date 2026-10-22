@@ -22,12 +22,25 @@
 //   state). When the seed already yields the current pick, the wait matches
 //   the first snapshot — the pending refresh re-adopts the same pick, a
 //   no-op for dispatch.
-// - Plugin storage is GLOBAL (keyed by plugin id in OpenCode's database), so
-//   pins survive server restarts. §7 keeps a runnable last-known-good even
-//   when fresh rules yield nothing — a persisted pin would defeat the
-//   pick-change case. The scratch config therefore sets pinDays: 0.00001
-//   (~0.9 s): every pin is expired by the time the next server instance's
-//   refresh resolves, so each restart adopts the CURRENT fixture's top pick.
+// - Plugin storage is keyed by plugin id in OpenCode's database. The suite
+//   gives every run its OWN scratch database (XDG_DATA_HOME → tests/
+//   integration/data/<run>/, see runDirs), so pins survive server restarts
+//   WITHIN a run but never leak into — or in from — the machine's live
+//   opencode state (whose live sessions re-write the same records mid-run).
+//   §7 keeps a runnable last-known-good even when fresh rules yield nothing —
+//   a persisted pin would defeat the pick-change case. The scratch config
+//   therefore sets pinDays: 0.00001 (~0.9 s): every pin is expired by the
+//   time the next server instance's refresh resolves, so each restart adopts
+//   the CURRENT fixture's top pick.
+// - The spawned server (and the run client) also get a scratch
+//   OPENCODE_CONFIG_DIR: the user's global config installs
+//   model-compare-opencode-plugin, whose generation shares the plugin id with
+//   this repo's local entry — OpenCode keeps the FIRST generation per id, so
+//   the project entry (the only one carrying options) was dropped as a
+//   duplicate and the global package plugin ran with default options instead
+//   (observed under opencode 2.0.16: the tick's doc-cache identity was
+//   local:vendored, never the stub's). Hiding the global config from the
+//   suite leaves the project's options as the only source.
 // - The guard case needs the alias DISABLED. With warm storage the setup seed
 //   always finds the pin under the previous fixture's effective-weights key.
 //   The guard phase therefore rewrites the project config with a
@@ -39,8 +52,20 @@
 
 import { spawn, execFileSync } from "node:child_process"
 import net from "node:net"
-import { existsSync, openSync, closeSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
+import os from "node:os"
 import path from "node:path"
+import { randomUUID } from "node:crypto"
 import { fileURLToPath } from "node:url"
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -68,9 +93,78 @@ export const PORT = 14721
 export const SERVER_URL = `http://127.0.0.1:${PORT}`
 export const SERVER_PASSWORD = "integration-only"
 
+// ---- per-run scratch data/config dirs --------------------------------------
+
+// The spawned server (and every run client) get their own OpenCode home for
+// the whole suite run (see the header's isolation notes). Unique per harness
+// module instance — vitest runs the two integration files sequentially, each
+// with a fresh module graph, so each file's phases share one scratch store
+// while the two files stay isolated from each other and from live state.
+// One exception is seeded deliberately: the run's scratch data dir gets a
+// copy of the live auth.json (read-only use), and its openrouter key is also
+// exported as OPENROUTER_API_KEY to the suite's processes — the fresh scratch
+// database's legacy credential import does not populate the credential table
+// under opencode 2.0.16 (migrations record applied; the table stays empty),
+// and without a resolvable key the openrouter provider materializes ZERO
+// models, so every model call would fail. The real auth.json is only ever
+// READ; the copy never leaves the run's git-ignored scratch dir, which
+// finalCleanup removes.
+export const RUN_SCRATCH_ROOT = path.join(HERE, "data")
+
+let runDirsCache = null
+function runDirs() {
+  if (runDirsCache === null) {
+    const root = path.join(RUN_SCRATCH_ROOT, `run-${process.pid}-${randomUUID().slice(0, 8)}`)
+    const data = path.join(root, "data")
+    const config = path.join(root, "config")
+    mkdirSync(path.join(data, "opencode"), { recursive: true })
+    mkdirSync(config, { recursive: true })
+    const liveData = path.join(
+      process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share"),
+      "opencode",
+    )
+    const authSrc = path.join(liveData, "auth.json")
+    let openrouterApiKey
+    if (existsSync(authSrc)) {
+      copyFileSync(authSrc, path.join(data, "opencode", "auth.json"))
+      chmodSync(path.join(data, "opencode", "auth.json"), 0o600)
+      try {
+        const entry = JSON.parse(readFileSync(authSrc, "utf8")).openrouter
+        if (entry?.type === "api" && typeof entry.key === "string" && entry.key !== "") {
+          openrouterApiKey = entry.key
+        }
+      } catch {
+        // An unparseable auth copy leaves the provider unauthenticated; the
+        // suite's model calls fail visibly rather than silently.
+      }
+    }
+    runDirsCache = { root, data, config, openrouterApiKey }
+  }
+  return runDirsCache
+}
+
+// The scratch database the run's server writes (cases that inspect or
+// neutralize the plugin's persisted records address THIS one — never the
+// machine's live database).
+export function opencodeDbPath() {
+  return path.join(runDirs().data, "opencode", "opencode.db")
+}
+
 const RUN_TIMEOUT_MS = 150_000 // B-phase runs block through the 90-105s reload chain (ledger: thin headroom; flakes observed 2026-10-10)
 const SETUP_TIMEOUT_MS = 120_000 // post-restart alias flips observed at 90-105s
 const PORT_TIMEOUT_MS = 30_000
+
+// The warmup run's model (waitReady). The phase's own alias may be ABSENT
+// (cold start) or DISABLED (guard phase) when the warmup fires, and an
+// UNPINNED request then falls to OpenCode's own default — `available[0]`,
+// currently the opencode provider's flint-40b-free, whose endpoint 503s and
+// is retried with backoff for minutes SERVER-SIDE (a killed client does not
+// stop the retries, which then hang the next server's graceful shutdown and
+// cascade into port-contention failures). The warmup only needs to activate
+// the plugins and produce the observations — the probe logs even
+// guard-aborted requests — so pinning it to the healthy baseline model the
+// suite already relies on costs nothing and keeps shutdowns clean.
+const WARMUP_MODEL = "openrouter/z-ai/glm-5.3-flash"
 
 // ---- prerequisites ----------------------------------------------------------
 
@@ -170,10 +264,10 @@ export function renderProjectConfig(shape) {
         // weights hash, so the setup seed finds NO pin for the quality alias
         // (the dispatch phases ran without an override); balanced and price
         // keep their pins and stay enabled, which proves the transform
-        // registered. The override's value is unique per phase: plugin storage
-        // is GLOBAL and survives suite runs, and a tick with a pin that no
-        // candidate can replace re-writes it under the current weights key, so
-        // a fixed override value would be "never-used" only the first time.
+        // registered. The override's value is unique per phase: a tick with a
+        // pin that no candidate can replace re-writes it under the current
+        // weights key, and the run's scratch store keeps earlier phases' pins,
+        // so a fixed override value would be "never-used" only the first time.
         "weights": { "quality": { "price": ${guardOverridePrice()} } }`
   return `{
   // Integration scratch project (Task 13). GENERATED by harness.mjs and
@@ -183,6 +277,11 @@ export function renderProjectConfig(shape) {
   // Root default = the quality alias: every primary run (any agent) dispatches
   // through it to the current pick.
   "model": "openrouter/model-compare/quality",
+  // The title agent must complete 200 through an authenticated provider (an
+  // ops case asserts it): the user's global config — whose small_model this
+  // pins — is hidden from the suite (scratch OPENCODE_CONFIG_DIR), so the
+  // suite supplies the setting itself.
+  "agents": { "title": { "model": "openrouter/xiaomi/mimo-v2.6-flash" } },
   "plugins": [
     // Probe FIRST: its http.request hook runs before the guard's, so even an
     // aborted (guard-error) request is still logged.
@@ -195,7 +294,7 @@ export function renderProjectConfig(shape) {
       "options": {
         "source": "local",
         "scriptPath": ${JSON.stringify(scriptPath)},
-        // Pins persist in OpenCode's global plugin storage across restarts,
+        // Pins persist in the run's scratch plugin storage across restarts,
         // and §7 keeps a runnable last-known-good even against an empty
         // catalog. 0.00001 days (~0.9 s) expires every pin between server
         // instances, so each restart's refresh adopts the CURRENT fixture's
@@ -238,7 +337,17 @@ let serverProc = null
 let serverPid = null
 
 function clientEnv() {
-  return { ...process.env, OPENCODE_SERVER_PASSWORD: SERVER_PASSWORD }
+  const dirs = runDirs()
+  return {
+    ...process.env,
+    OPENCODE_SERVER_PASSWORD: SERVER_PASSWORD,
+    // Per-run OpenCode home: a fresh kv database (the plugin's storage) plus
+    // an empty global config dir — both isolated from live state (runDirs).
+    XDG_DATA_HOME: dirs.data,
+    OPENCODE_CONFIG_DIR: dirs.config,
+    // The provider key the scratch database cannot supply (see runDirs).
+    ...(dirs.openrouterApiKey !== undefined ? { OPENROUTER_API_KEY: dirs.openrouterApiKey } : {}),
+  }
 }
 
 function tryConnect() {
@@ -279,9 +388,14 @@ export function serverLogTail(chars = 4000) {
 export async function startServer() {
   if (serverProc !== null) await stopServer()
   writeStubs()
-  // Truncate the per-instance server log (the readiness predicates read it).
+  // Truncate the per-instance server log AND the wire log: the readiness
+  // predicates and case assertions must only ever see the CURRENT instance's
+  // observations — stale lines from earlier runs/phases could satisfy a wait
+  // before this instance's plugin has done anything.
   const fd = openSync(SERVER_LOG, "w")
   closeSync(fd)
+  const wireFd = openSync(WIRE_FILE, "w")
+  closeSync(wireFd)
   // Append-mode fds handed to the child: each instance's log is self-contained
   // and the child owns its descriptor for its whole life.
   const outFd = openSync(SERVER_LOG, "a")
@@ -421,7 +535,7 @@ function qualityAliasState() {
 // expectation must both land. Ends by truncating wire.jsonl so case
 // assertions only see their own runs.
 export async function waitReady(shape) {
-  await run(["Reply with exactly: ready"])
+  await run(["--model", WARMUP_MODEL, "Reply with exactly: ready"])
   await waitForWireLine((e) => e.type === "setup", SETUP_TIMEOUT_MS, "the probe's setup line")
   await waitForWireLine(
     (e) => e.type === "models" && e.when === "first-request",
@@ -543,6 +657,12 @@ export async function setFixture(shape) {
 export async function finalCleanup() {
   await stopServer()
   removeGeneratedConfig()
+  // The run's scratch OpenCode home (fresh kv database + seeded auth copy)
+  // goes with it: nothing of the run survives on disk.
+  if (runDirsCache !== null) {
+    rmSync(runDirsCache.root, { recursive: true, force: true })
+    runDirsCache = null
+  }
   // Orphan verification (self-review requirement): anything still serving the
   // integration port is killed; the suite asserts none remain.
   try {
