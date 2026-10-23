@@ -85,7 +85,7 @@ Commands:
 
 Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before. The TUI has no `/use-best` keybinding: the slash command already covers switching.
 
-Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). Toasts announce `/use-best` outcomes and pick changes — never for the first observation after load. Headless, all feedback is synthetic transcript messages at the next turn.
+Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
 
 
 ## Configuration
@@ -116,6 +116,35 @@ Per priority the plugin keeps one pin/last-known-good record in plugin storage, 
 - Otherwise: switch only when the best candidate leads the pinned pick by at least `minLead` (upstream's 0–1 score scale).
 
 Resolution order: pin (if runnable) → best runnable candidate → `fallback` (if runnable) → the alias is disabled. The fallback is never stored as a pin. Pins are advisory: concurrent OpenCode processes refresh independently, last writer wins.
+
+
+## Steering and served endpoints
+
+Requests made through one of the three aliases carry the resolved pick's routing: the catalog's per-model `steering` block is injected into the request body under OpenRouter's `provider` key, so the call is routed onto the endpoints whose pricing the ranking actually ranked — not onto whatever OpenRouter's default routing picks, which can be a sub-default-quantization endpoint at a price the ranking never saw.
+
+The block comes from the catalog, whichever source produced it: the vendored script derives it from the same per-model endpoint data its pricing uses, and the published catalog carries it ready-made. Only the block's `provider` sub-object is injected — its top-level `model` field never reaches the body — and the routing object is built field by field:
+
+- `order` — the endpoints the ranking priced, cheapest blended price first; eligible endpoints whose price can't be computed are appended last rather than dropped.
+- `ignore` — the live endpoints the ranking excluded, so OpenRouter cannot route onto pricing it never ranked (sub-default quantizations, schedule-gate failures, variants).
+- `quantizations` — the precision floor: the model's default precision and anything more precise among its live endpoints. The key is omitted entirely when the model has no default precision — never sent as an empty list, which would exclude every endpoint.
+- `allow_fallbacks` — always `true`: when nothing in `order` can serve, OpenRouter may still route outside the list.
+
+The rules, and the exceptions:
+
+- **Aliases only.** Steering fires only when the session's model is one of the three aliases and the request's model is that alias's current pick. What decides is the request's model reference: alias references steer, concrete references never do — a model you picked directly is untouched even when it is the exact model an alias currently resolves to. Primary turns and compaction alike are steered; auxiliary calls that run a different model (title generation) are not.
+- **A pre-existing `provider` key wins.** If the request body already carries a `provider` key — routing you or a provider integration configured — the plugin does not inject; it never clobbers routing it did not choose.
+- **No steering data, no injection.** When the plugin has no catalog source, or the current pick's catalog entry carries no `steering` block, the request proceeds untouched: OpenRouter's default routing applies and the run completes normally — unsteered, not failed. With no catalog source at all, the TUI says so once per session, on the first alias request that has a pick to steer: `cannot steer this session; OpenRouter default routing applies` (skipped when that request already carries its own `provider` — then default routing is not what applies). Headless runs render no toasts; the routing behavior is identical. A disabled alias steers nothing and toasts nothing; what serves then is the binding's own fallback behavior (see [Troubleshooting](#troubleshooting)).
+- **Always-on.** No option turns steering off. It is what makes the plugin's value promise — the ranked price is what you pay — true.
+
+`order` is a preference list, not a pinned destination: OpenRouter works down the list and serves from whichever ranked endpoint can take the call — which one serves is OpenRouter's decision, and with fallbacks allowed it can even land outside the list.
+
+**Which endpoint served a call.** Three ways to check:
+
+- The `alt+e` toast (see [Keyboard shortcuts](#keyboard-shortcuts)) — the current session's last primary response's served endpoint: `last response served by <endpoint>`, or `! served by <endpoint> — not in steering order` when the served provider matched no entry of the steering order actually applied. The report dialog's footer carries the same capture as `last response: <model> @ <endpoint>`, under the note `routing steered to <quant> endpoints (aliases only)`.
+- The response body — every OpenRouter response names its serving endpoint in the `provider` field.
+- OpenRouter's dashboard — per-request endpoint records.
+
+The alt+e capture is best-effort by design: the plugin peeks at only the first 4 KB of the response body — a pass-through read; the body itself flows byte-for-byte. Streaming responses carry `provider` in the first chunk, so the peek normally catches them; a non-streaming response whose `provider` field sits beyond the peek window is forwarded uncaptured, and `alt+e` then toasts nothing. The response body's `provider` field and OpenRouter's dashboard remain the authoritative verification paths.
 
 
 ## Data sources
