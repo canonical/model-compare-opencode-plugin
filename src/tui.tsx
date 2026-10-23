@@ -68,7 +68,7 @@ import {
   type AliasView,
 } from "./opencode/usebest"
 import type { ReportEntry } from "./opencode/commands"
-import { sanitizeCatalogText } from "./opencode/commands"
+import { lastResponseLine, sanitizeCatalogText } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 
 const TOAST_MS = 6_000
@@ -194,6 +194,30 @@ function toReportEntries(raw: unknown): ReportEntry[] {
   })
 }
 
+// The report payload's footer capture (the last-response line and the alt+e
+// toast's data), defensively normalized at the trust boundary like the
+// entries: anything but a well-shaped object — or one without an endpoint —
+// degrades to null (no capture), never a placeholder line.
+function toCapture(raw: unknown): { endpoint: string; model: string; downgrade: boolean } | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const capture = raw as { endpoint?: unknown; model?: unknown; downgrade?: unknown }
+  if (typeof capture.endpoint !== "string" || capture.endpoint === "") return null
+  return {
+    endpoint: capture.endpoint,
+    // The Task-5 handoff: a capture may carry an empty model (a response
+    // whose provider had no model id) — carried as-is, and the footer omits
+    // the model part rather than rendering an empty slot.
+    model: typeof capture.model === "string" ? capture.model : "",
+    downgrade: capture.downgrade === true,
+  }
+}
+
+// The footer's steering note, defensively normalized: anything but a
+// non-empty string means the note does not render (no steering data).
+function toSteeringNote(raw: unknown): string | null {
+  return typeof raw === "string" && raw !== "" ? raw : null
+}
+
 export default Plugin.define({
   id: "model-compare-tui",
   async setup(context) {
@@ -241,6 +265,8 @@ export default Plugin.define({
       sessionID: string
       age: string | null
       entries: ReportEntry[]
+      capture: { endpoint: string; model: string; downgrade: boolean } | null
+      steeringNote: string | null
     } | null>(null)
 
     // The registry view, reactive: OpenCode's data layer updates the list
@@ -392,7 +418,15 @@ export default Plugin.define({
       pick: () => void
     } | null>(null)
 
-    function showListDialog(title: string, rows: ListRow[], onPick: (value: string) => void): void {
+    function showListDialog(
+      title: string,
+      rows: ListRow[],
+      onPick: (value: string) => void,
+      // The footer's extra lines (the report dialog's steering note and
+      // last-response line), rendered muted ABOVE the Details line. Absent
+      // for the other dialogs (the picks dialog carries no footer lines).
+      footerLines: string[] = [],
+    ): void {
       const selectable = rows.filter((row) => row.value !== undefined)
       if (selectable.length === 0) {
         notify("nothing to select", "error")
@@ -609,6 +643,11 @@ export default Plugin.define({
                 })
               })()}
             </scrollbox>
+            {footerLines.map((line) => (
+              <box paddingLeft={4}>
+                <text fg={muted}>{line}</text>
+              </box>
+            ))}
             <box paddingLeft={4}>
               <text fg={muted}>Details: https://model-compare.dev</text>
             </box>
@@ -657,6 +696,11 @@ export default Plugin.define({
       sessionID: string | null
       age: string | null
       entries: ReportEntry[]
+      // The footer (design §Steering visibility, the user's option C): the
+      // steering note above the last-response line, both omitted when their
+      // data is absent — never a placeholder.
+      capture: { endpoint: string; model: string; downgrade: boolean } | null
+      steeringNote: string | null
     }): void {
       if (data.entries.length === 0) {
         notify("no ranking data available yet", "error")
@@ -723,12 +767,20 @@ export default Plugin.define({
           })
         }
       }
+      // The report dialog's footer (design §Decisions, option C): the
+      // steering note ABOVE the last-response line, both omitted when their
+      // data is absent — never a placeholder line.
+      const footerLines: string[] = []
+      if (data.steeringNote !== null) footerLines.push(data.steeringNote)
+      const lastResponse = lastResponseLine(data.capture)
+      if (lastResponse !== null) footerLines.push(lastResponse)
       showListDialog(
         `Model Compare — top 5 (data age: ${data.age ?? "unknown"})`,
         rows,
         (id) => {
-          if (data.sessionID !== null) {
-            void switchToModel(data.sessionID, id)
+          const sessionID = data.sessionID
+          if (sessionID !== null) {
+            void switchToModel(sessionID, id)
             return
           }
           // The opening screen: the pick becomes a NEW session's model —
@@ -738,6 +790,7 @@ export default Plugin.define({
             `switched to openrouter/${sanitizeCatalogText(id)}`,
           )
         },
+        footerLines,
       )
     }
 
@@ -750,7 +803,13 @@ export default Plugin.define({
       const event = details as {
         type?: unknown
         location?: { directory?: unknown }
-        data?: { sessionID?: unknown; age?: unknown; entries?: unknown }
+        data?: {
+          sessionID?: unknown
+          age?: unknown
+          entries?: unknown
+          capture?: unknown
+          steeringNote?: unknown
+        }
       }
       if (event.type !== REPORT_EVENT) return
       if (
@@ -765,11 +824,15 @@ export default Plugin.define({
       const entries = toReportEntries(data.entries)
       const eventSessionID = data.sessionID
       // Ownerless callback: park the report on the signal — the app slot's
-      // in-tree effect opens the dialog (see pendingReport above).
+      // in-tree effect opens the dialog (see pendingReport above). The
+      // footer's fields ride the payload like the entries (defensively
+      // normalized at this trust boundary).
       setPendingReport({
         sessionID: eventSessionID,
         age: typeof data.age === "string" ? data.age : null,
         entries,
+        capture: toCapture(data.capture),
+        steeringNote: toSteeringNote(data.steeringNote),
       })
     })
 
@@ -915,14 +978,57 @@ export default Plugin.define({
             {},
             here === undefined ? undefined : { location: { directory: here } },
           )
-          const data = report as { age?: unknown; entries?: unknown } | undefined
+          const data = report as
+            | { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown }
+            | undefined
           showReportDialog({
             sessionID: null,
             age: typeof data?.age === "string" ? data.age : null,
             entries: toReportEntries(data?.entries),
+            capture: toCapture(data?.capture),
+            steeringNote: toSteeringNote(data?.steeringNote),
           })
         } catch (error) {
           notify(`report failed: ${error instanceof Error ? error.message : String(error)}`, "error")
+        }
+      },
+    }
+
+    // The served-endpoint toast (design §Steering visibility): alt+e toasts
+    // the CURRENT session's last response's served endpoint, looked up
+    // through the report RPC's footer fields (the capture record rides the
+    // established report payload path). The copy is exact — normal:
+    // "last response served by <endpoint>"; downgrade (the served provider
+    // matched none of the applied steering order): "! served by <endpoint> —
+    // not in steering order"; nothing toasts when nothing was captured for
+    // the session (and with no session open there is nothing to look up).
+    const endpointCommand: KeymapCommand = {
+      id: "model-compare.endpoint",
+      title: "Last served endpoint",
+      group: "Model Compare",
+      bind: "alt+e",
+      palette: true,
+      run: async () => {
+        const sessionID = currentSessionID()
+        if (sessionID === null) return
+        try {
+          const report: unknown = await context.client.rpc(ModelCompare).report(
+            { sessionID },
+            here === undefined ? undefined : { location: { directory: here } },
+          )
+          const capture = toCapture((report as { capture?: unknown } | undefined)?.capture)
+          if (capture === null) return
+          // F-20: the endpoint is response data — flattened for the toast.
+          notify(
+            capture.downgrade
+              ? `! served by ${sanitizeCatalogText(capture.endpoint)} — not in steering order`
+              : `last response served by ${sanitizeCatalogText(capture.endpoint)}`,
+          )
+        } catch (error) {
+          notify(
+            `endpoint lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error",
+          )
         }
       },
     }
@@ -1007,7 +1113,7 @@ export default Plugin.define({
         try {
           context.keymap.layer(() => ({
             mode: "global",
-            commands: [useBestCommand, picksCommand, reportCommand],
+            commands: [useBestCommand, picksCommand, reportCommand, endpointCommand],
           }))
         } catch (error) {
           layerFailure("the model-compare keymap layer", error)

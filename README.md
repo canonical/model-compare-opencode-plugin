@@ -77,6 +77,7 @@ Commands:
 | Key | Action |
 |---|---|
 | `alt+m` | picks dialog — all three priorities with their current picks |
+| `alt+e` | toast the last response's served endpoint (`!` prefix flags a downgrade — not in the steering order) |
 | `alt+shift+m` | report dialog — the top-5 table; `return` switches the session to the highlighted model |
 | `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |

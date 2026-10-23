@@ -199,7 +199,7 @@ function makeHarness() {
   const closes: Array<() => void> = []
   const listenCallbacks: Array<(event: unknown) => void> = []
   const entries = aliasEntries()
-  const reportPayload: { age?: unknown; entries?: unknown } = {}
+  const reportPayload: { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown } = {}
 
   const session = {
     create: vi.fn(async (_input: { model: { providerID: string; id: string } }) => ({ id: "new-session-1" })),
@@ -378,15 +378,28 @@ function findNode(node: FakeNode, tag: string): FakeNode | undefined {
   return undefined
 }
 
+// Every text node's content, in tree order — the dialog's rendered lines,
+// including the footer's. (The mock's text nodes are `#text` nodes whose
+// `props.text` carries the string.)
+function treeTexts(node: FakeNode): string[] {
+  const texts: string[] = []
+  const walk = (n: FakeNode): void => {
+    if (n.tag === "#text" && typeof n.props.text === "string") texts.push(n.props.text)
+    for (const child of n.children) walk(child)
+  }
+  walk(node)
+  return texts
+}
+
 // Renders a captured dialog tree against the fake JSX runtime: the ref lands
 // on the fake scrollbox during the render (exactly as the host's does), and
 // the render's reactive expressions come back replayable.
-function renderDialog(harness: Harness): { scrollbox: FakeNode; rerenderEffects: () => void } {
+function renderDialog(harness: Harness): { scrollbox: FakeNode; rerenderEffects: () => void; tree: FakeNode } {
   const tree = harness.dialogRenders.at(-1)!() as FakeNode
   const effects = solidRuntime.effects.splice(0)
   const scrollbox = findNode(tree, "scrollbox")
   if (scrollbox === undefined) throw new Error("the dialog tree carries no scrollbox")
-  return { scrollbox, rerenderEffects: () => effects.forEach((run) => run()) }
+  return { scrollbox, rerenderEffects: () => effects.forEach((run) => run()), tree }
 }
 
 // Opens the report dialog over `entries`, renders its tree, stages the
@@ -895,6 +908,178 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
       details: { type: "rpc.model-compare.report", data: { sessionID: "s1" } },
     })
     expect(active.toasts).toEqual([])
+  })
+})
+
+// ---- the alt+e toast (the served endpoint) ----------------------------------
+// The alt+e toast (design §Decisions): the served endpoint, from the CURRENT
+// session's capture. Normal copy `last response served by <endpoint>`;
+// downgrade copy `! served by <endpoint> — not in steering order`; nothing
+// when nothing was captured for the current session.
+describe("the alt+e toast (the served endpoint)", () => {
+  test("alt+e toasts the served endpoint from the current session's capture (normal)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      { message: "last response served by Novita", variant: "success" },
+    ])
+    // The lookup is addressed to the CURRENT session's id.
+    expect(active.report).toHaveBeenCalledWith(
+      { sessionID: "s1" },
+      { location: { directory: "/repo" } },
+    )
+  })
+
+  test("alt+e toasts the downgrade copy when the capture is a downgrade", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: true }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      { message: "! served by Novita — not in steering order", variant: "success" },
+    ])
+  })
+
+  test("alt+e with no capture for the session toasts nothing", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = null
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("alt+e with no session open fetches nothing and toasts nothing", async () => {
+    active = await activate()
+    active.state.route = undefined // the opening screen: no session to look up
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.report).not.toHaveBeenCalled()
+    expect(active.toasts).toEqual([])
+  })
+
+  test("alt+e looks up the CURRENT session's capture, not a stale one", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+    expect(active.toasts).toEqual([{ message: "last response served by Novita", variant: "success" }])
+
+    // A different session: the same payload can't serve the new lookup.
+    active.state.route = { type: "session", sessionID: "s2" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    await active.command("model-compare.endpoint").run()
+    await drain()
+    expect(active.toasts).toEqual([
+      { message: "last response served by Novita", variant: "success" },
+      { message: "last response served by Novita", variant: "success" },
+    ])
+    expect(active.report).toHaveBeenLastCalledWith(
+      { sessionID: "s2" },
+      { location: { directory: "/repo" } },
+    )
+  })
+})
+
+// ---- the report dialog's footer (option C) ----------------------------------
+// The report dialog's footer (design §Decisions): the steering note ABOVE the
+// last-response line `last response: <model> @ <endpoint>`. The last-response
+// line is omitted entirely when nothing was captured (never a placeholder);
+// an empty captured model omits the model part.
+describe("the report dialog footer (option C)", () => {
+  test("the footer renders the steering note above the last-response line", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.steeringNote = "routing steered to fp8, fp4, fp16 endpoints (aliases only)"
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const { tree } = renderDialog(active)
+    const texts = treeTexts(tree)
+
+    expect(texts).toContain("routing steered to fp8, fp4, fp16 endpoints (aliases only)")
+    expect(texts).toContain("last response: acme/alpha @ Novita")
+    expect(texts.indexOf("routing steered to fp8, fp4, fp16 endpoints (aliases only)")).toBeLessThan(
+      texts.indexOf("last response: acme/alpha @ Novita"),
+    )
+  })
+
+  test("with no capture the footer omits the last-response line entirely", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+    active.reportPayload.capture = null
+    active.reportPayload.steeringNote = "routing steered to fp8, fp4, fp16 endpoints (aliases only)"
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const { tree } = renderDialog(active)
+    const texts = treeTexts(tree)
+
+    expect(texts).toContain("routing steered to fp8, fp4, fp16 endpoints (aliases only)")
+    expect(texts.some((text) => text.startsWith("last response:"))).toBe(false)
+  })
+
+  test("an empty captured model omits the model part from the footer line", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+    active.reportPayload.capture = { endpoint: "Novita", model: "", downgrade: false }
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const { tree } = renderDialog(active)
+    const texts = treeTexts(tree)
+
+    expect(texts).toContain("last response: Novita")
+    expect(texts.some((text) => text.includes(" @ "))).toBe(false)
+  })
+
+  test("the report event's footer fields flow into the dialog", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    await drain()
+
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "s1",
+          age: "2h",
+          entries: ENTRIES,
+          capture: { endpoint: "DeepInfra", model: "acme/beta", downgrade: true },
+          steeringNote: "routing steered to fp8 endpoints (aliases only)",
+        },
+      },
+    })
+    await drain()
+    const { tree } = renderDialog(active)
+    const texts = treeTexts(tree)
+
+    expect(texts).toContain("routing steered to fp8 endpoints (aliases only)")
+    expect(texts).toContain("last response: acme/beta @ DeepInfra")
   })
 })
 

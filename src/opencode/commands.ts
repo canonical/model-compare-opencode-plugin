@@ -8,7 +8,7 @@
 // not upstream's `generated_at`.
 
 import { effectiveWeights, overallScore } from "../core/rank"
-import type { Catalog, ModelEntry, Priority, Sourced, Weights } from "../core/types"
+import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced, Weights } from "../core/types"
 import type { AliasTarget } from "./aliases"
 
 const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
@@ -64,12 +64,63 @@ export function sanitizeCatalogText(text: string): string {
 }
 
 // What the report knows beyond the ranking: the pick each alias currently
-// serves (a pin can differ from rank 1 — minLead hysteresis) and which
-// priorities rank under a weights override.
+// serves (a pin can differ from rank 1 — minLead hysteresis), which priorities
+// rank under a weights override, the aliases' enabled flags (the steering
+// note's "every enabled alias" scope), and the session's last-endpoint
+// capture (the footer's last-response line — absent when nothing was
+// captured for the session the report belongs to).
 export type ReportContext = {
   picks?: Partial<Record<Priority, AliasTarget>>
   overrides?: Partial<Record<Priority, Partial<Weights>>>
+  enabled?: Partial<Record<Priority, boolean>>
+  capture?: { endpoint: string; model: string; downgrade: boolean } | null
 }
+
+// The report footer's steering note (design §Steering visibility): the union
+// of the current picks' steering blocks' `quantizations` lists, resolved
+// through the catalog's ModelEntry map, across the three ENABLED aliases.
+// It renders only when EVERY enabled alias's current pick carries
+// quantizations data (a pick missing from the catalog, or a steering block
+// without the list, withholds the whole note — no claim on partial data);
+// a disabled alias's pick is excluded from both the union and the check, and
+// an empty quantizations list contributes nothing without withholding. No
+// enabled aliases → no note. Steering shipped with the Q2 verdict PASS, so
+// the note renders purely per this data rule.
+export function steeringNote(
+  doc: Catalog,
+  picks: Partial<Record<Priority, AliasTarget>> = {},
+  enabled: Partial<Record<Priority, boolean>> = {},
+): string | null {
+  const byId = new Map(doc.models.map((model) => [model.id, model]))
+  const union: string[] = []
+  for (const p of PRIORITIES) {
+    if (enabled[p] !== true) continue
+    const pick = picks[p]
+    const steering =
+      pick === undefined || pick.id === null ? undefined : byId.get(pick.id)?.steering
+    const quants = steering?.quantizations
+    if (quants === undefined) return null
+    for (const quant of quants) if (!union.includes(quant)) union.push(quant)
+  }
+  return union.length === 0 ? null : `routing steered to ${union.join(", ")} endpoints (aliases only)`
+}
+
+// The report footer's last-response line (design §Steering visibility, the
+// user's option C): `last response: <model> @ <endpoint>` — the captured
+// response's concrete model id and the served endpoint verbatim. An empty
+// model (a response whose provider carried no model id) omits the model part
+// rather than rendering an empty `@` slot. No capture → null: the line is
+// omitted entirely, never a placeholder.
+export function lastResponseLine(
+  capture: Pick<EndpointCapture, "endpoint" | "model" | "downgrade"> | null | undefined,
+): string | null {
+  if (capture === null || capture === undefined) return null
+  const endpoint = sanitizeCatalogText(capture.endpoint)
+  return capture.model === ""
+    ? `last response: ${endpoint}`
+    : `last response: ${sanitizeCatalogText(capture.model)} @ ${endpoint}`
+}
+
 
 // Whether a priority's weights override actually took effect, shared by the
 // two report builders (formatReport, reportEntries) so the "(custom weights)"
@@ -138,6 +189,14 @@ export function formatReport(
       }
     }
   }
+  // The footer (design §Steering visibility): the steering note ABOVE the
+  // last-response line, both omitted when their data is absent. The
+  // transcript's text report and the TUI dialog's footer agree — one
+  // derivation, two surfaces.
+  const note = steeringNote(sourced.doc, context.picks, context.enabled)
+  if (note !== null) lines.push(note)
+  const lastResponse = lastResponseLine(context.capture)
+  if (lastResponse !== null) lines.push(lastResponse)
   return lines.join("\n")
 }
 

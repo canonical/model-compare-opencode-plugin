@@ -20,7 +20,7 @@ import { pinKey, type Pin } from "./core/pins"
 import { effectiveWeights, rankModels } from "./core/rank"
 import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced } from "./core/types"
 import { captureEndpoint, injectSteering, steeringFor } from "./core/steering"
-import { formatReport, humanizeAge, reportEntries } from "./opencode/commands"
+import { formatReport, humanizeAge, reportEntries, steeringNote } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
 import { guardDecision, parseAliasRef, type ModelRef } from "./opencode/guard"
@@ -678,15 +678,50 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
   // drift), and the registration carries the report EVENT the command emits
   // so the TUI half can open the report as an instant selectable dialog.
   // Registered BEFORE the commands: the command's execute emits through it.
+  //
+  // The report footer (design §Steering visibility): the payload carries the
+  // session's last-endpoint capture and the steering note. One derivation
+  // (reportFooter, below) serves the RPC method, the event emit and
+  // formatReport, so the dialog's footer and the transcript text agree.
+  const reportFooter = (sessionID: string | null) => {
+    // The capture is keyed by sessionID (Task 5's per-session map): a null
+    // session (the opening screen) has nothing to look up. The record's
+    // display fields are projected — the toast needs `downgrade` too, so all
+    // three travel.
+    const record = sessionID === null ? undefined : state.lastEndpoints[sessionID]
+    const capture =
+      record === undefined
+        ? null
+        : { endpoint: record.endpoint, model: record.model, downgrade: record.downgrade }
+    // The steering note needs the catalog: without a source there is no data
+    // to derive it from, and the note does not render.
+    const steeringNoteFor =
+      state.sourced === null ? null : steeringNote(state.sourced.doc, state.picks, state.enabled)
+    return { capture, steeringNote: steeringNoteFor }
+  }
+
   rpcRegistration = await ctx.rpc.register(ModelCompare, {
-    report: async () => {
+    report: async (rawInput: unknown) => {
+      const input = rawInput as { sessionID?: string | null } | undefined
+      const sessionID = input?.sessionID ?? null
       const ranks = reportRanks()
       if (state.sourced === null || ranks === null) {
-        return { text: "model-compare: no ranking data available yet", age: null, entries: [] }
+        return {
+          text: "model-compare: no ranking data available yet",
+          age: null,
+          ...reportFooter(sessionID),
+          entries: [],
+        }
       }
       return {
-        text: formatReport(state.sourced, ranks, { picks: state.picks, overrides: config.weights }),
+        text: formatReport(state.sourced, ranks, {
+          picks: state.picks,
+          overrides: config.weights,
+          enabled: state.enabled,
+          capture: reportFooter(sessionID).capture,
+        }),
         age: humanizeAge(Date.now() - state.sourced.acquiredAt),
+        ...reportFooter(sessionID),
         entries: reportEntries(state.sourced, ranks, { picks: state.picks, overrides: config.weights }),
       }
     },
@@ -755,7 +790,12 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         // transcript notice is the durable copy, not the fast path).
         if (sourced === null || ranks === null) {
           try {
-            await rpcRegistration.events.emit("report", { sessionID, age: null, entries: [] })
+            await rpcRegistration.events.emit("report", {
+              sessionID,
+              age: null,
+              ...reportFooter(sessionID),
+              entries: [],
+            })
           } catch {
             // Emission failures must not fail the command.
           }
@@ -766,11 +806,19 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           })
           return
         }
-        const context = { picks: state.picks, overrides: config.weights }
+        const footer = reportFooter(sessionID)
+        const context = {
+          picks: state.picks,
+          overrides: config.weights,
+          enabled: state.enabled,
+          capture: footer.capture,
+        }
         try {
           await rpcRegistration.events.emit("report", {
             sessionID,
             age: humanizeAge(Date.now() - sourced.acquiredAt),
+            capture: footer.capture,
+            steeringNote: footer.steeringNote,
             entries: reportEntries(sourced, ranks, context),
           })
         } catch {

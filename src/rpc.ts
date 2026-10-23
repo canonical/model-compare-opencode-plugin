@@ -8,16 +8,41 @@
 // surfaces at the session's next turn.
 import { Rpc } from "@opencode/plugin/rpc"
 
+// The capture record the report payload carries (the footer's last-response
+// line and the alt+e toast's data): the served endpoint verbatim, the
+// response's concrete model id (empty when the response had none), and the
+// downgrade verdict. Null when nothing was captured for the session.
+const captureSchema = {
+  type: ["object", "null"],
+  properties: {
+    endpoint: { type: "string" },
+    model: { type: "string" },
+    downgrade: { type: "boolean" },
+  },
+  required: ["endpoint", "model", "downgrade"],
+  additionalProperties: false,
+} as const
+
 export const ModelCompare = Rpc.define({
   id: "model-compare",
   methods: {
     report: {
-      input: { type: "object", properties: {}, additionalProperties: false },
+      // The session whose capture the footer fields report: the TUI passes
+      // the CURRENT session's id (null on the opening screen — no capture
+      // can belong to no session). Optional for the opening screen's
+      // existing `{}` calls.
+      input: {
+        type: "object",
+        properties: { sessionID: { type: ["string", "null"] } },
+        additionalProperties: false,
+      },
       output: {
         type: "object",
         properties: {
           text: { type: "string" },
           age: { type: ["string", "null"] },
+          capture: captureSchema,
+          steeringNote: { type: ["string", "null"] },
           entries: {
             type: "array",
             items: {
@@ -38,7 +63,7 @@ export const ModelCompare = Rpc.define({
             },
           },
         },
-        required: ["text", "age", "entries"],
+        required: ["text", "age", "capture", "steeringNote", "entries"],
         additionalProperties: false,
       },
     },
@@ -50,6 +75,8 @@ export const ModelCompare = Rpc.define({
         properties: {
           sessionID: { type: "string" },
           age: { type: ["string", "null"] },
+          capture: captureSchema,
+          steeringNote: { type: ["string", "null"] },
           entries: {
             type: "array",
             items: {
@@ -70,7 +97,7 @@ export const ModelCompare = Rpc.define({
             },
           },
         },
-        required: ["sessionID", "age", "entries"],
+        required: ["sessionID", "age", "capture", "steeringNote", "entries"],
         additionalProperties: false,
       },
     },
