@@ -273,9 +273,12 @@ export type AliasPlan = {
 // event was already emitted for that session: when a steerable alias request
 // (alias ref + a current pick) finds NO steering data — no catalog source,
 // `sourced === null` — the injection hook emits the event exactly ONCE PER
-// SESSION (never once per request), leaving the request body untouched. The
-// flag is never re-armed: a session that has seen the toast keeps it for its
-// lifetime.
+// SESSION (never once per request), leaving the request body untouched. A
+// body that already carries a `provider` key binds the exclusion: the emit
+// is skipped (user-configured routing makes the "default routing applies"
+// copy false) without consuming the flag, so a later provider-free request
+// still toasts. The flag is never re-armed: a session that has seen the
+// toast keeps it for its lifetime.
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -483,7 +486,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // can toast the fallback: exactly ONCE PER SESSION (the
       // cannotSteerToasted flag), never once per request. A disabled alias
       // (no pick) stays silent — that is the guard's domain, not a toast.
-      // The body is never read, let alone touched.
+      // The body is never reassigned — the request proceeds untouched.
       if (state.sourced === null) {
         state.appliedSteering[event.sessionID] = null
         const pick = state.picks[p]
@@ -492,9 +495,27 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           pick.id !== null &&
           state.cannotSteerToasted[event.sessionID] !== true
         ) {
-          state.cannotSteerToasted[event.sessionID] = true
-          if (rpcRegistration !== undefined) {
-            await rpcRegistration.events.emit("cannotSteer", { sessionID: event.sessionID })
+          // The one-off body read (fix round 1): gated behind the once-flag
+          // so steady-state requests are never parsed. A body that already
+          // carries a `provider` key binds the exclusion — user-configured
+          // routing makes the "default routing applies" toast false copy —
+          // so the emit is skipped WITHOUT consuming the flag: a later
+          // provider-free request for the session still toasts. The read is
+          // a cheap clone-parse; the original Request is never reassigned.
+          let bodyHasProvider = false
+          try {
+            const body: unknown = JSON.parse(await (event.request as Request).clone().text())
+            bodyHasProvider =
+              typeof body === "object" && body !== null && Object.hasOwn(body, "provider")
+          } catch {
+            // Unreadable or missing body: no provider key is knowable —
+            // fall back to the plain emit (fail open).
+          }
+          if (!bodyHasProvider) {
+            state.cannotSteerToasted[event.sessionID] = true
+            if (rpcRegistration !== undefined) {
+              await rpcRegistration.events.emit("cannotSteer", { sessionID: event.sessionID })
+            }
           }
         }
         return

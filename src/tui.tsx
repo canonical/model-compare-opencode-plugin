@@ -777,9 +777,27 @@ export default Plugin.define({
     // once per session when a steerable alias request finds no steering data
     // (no catalog source). The TUI surfaces it as a toast with the exact
     // fallback copy; headless shows nothing — like every TUI-coupled surface.
+    // Scoped exactly like the report listener: a foreign directory's session
+    // is never viewable here, and only the CURRENTLY viewed session toasts.
+    // Trade-off: a cannotSteer notice for a same-project background session
+    // (or a session the user isn't currently viewing) is dropped forever —
+    // the emit is once-per-session — but noise from unopened sessions is the
+    // worse failure; the notice is about the session the user interacts with.
     const offCannotSteerEvent = context.data.listen(({ details }) => {
-      const event = details as { type?: unknown }
+      const event = details as {
+        type?: unknown
+        location?: { directory?: unknown }
+        data?: { sessionID?: unknown }
+      }
       if (event.type !== CANNOT_STEER_EVENT) return
+      if (
+        typeof event.location?.directory === "string" &&
+        here !== undefined &&
+        event.location.directory !== here
+      )
+        return
+      const data = event.data
+      if (typeof data?.sessionID !== "string" || data.sessionID !== currentSessionID()) return
       notify(CANNOT_STEER_COPY)
     })
 

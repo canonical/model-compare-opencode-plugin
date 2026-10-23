@@ -833,13 +833,23 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
   })
 
   // The Q2 fallback (Task 6): the server hook's once-per-session cannot-steer
-  // event surfaces as a toast with the exact fallback copy.
+  // event surfaces as a toast with the exact fallback copy, but ONLY for the
+  // user's current session in this directory. A session in a foreign
+  // directory is never viewable here, and a session the user isn't currently
+  // viewing drops its notice — the emit is once-per-session, so that notice
+  // is lost forever (the accepted trade-off: noise from unopened sessions is
+  // the worse failure).
   test("the cannot-steer event toasts the fallback message", async () => {
     active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
     expect(active.listenCallbacks).toHaveLength(2) // the report listener + the cannot-steer listener
 
     active.listenCallbacks[1]({
-      details: { type: "rpc.model-compare.cannotSteer", data: { sessionID: "s1" } },
+      details: {
+        type: "rpc.model-compare.cannotSteer",
+        location: { directory: "/repo" },
+        data: { sessionID: "s1" },
+      },
     })
 
     expect(active.toasts).toEqual([
@@ -847,6 +857,36 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     ])
     // No dialog was opened by this event.
     expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("a cannot-steer event from a foreign directory is ignored", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[1]({
+      details: {
+        type: "rpc.model-compare.cannotSteer",
+        location: { directory: "/elsewhere" },
+        data: { sessionID: "s1" },
+      },
+    })
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("a cannot-steer event for a non-current session is ignored", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[1]({
+      details: {
+        type: "rpc.model-compare.cannotSteer",
+        location: { directory: "/repo" },
+        data: { sessionID: "s2" },
+      },
+    })
+
+    expect(active.toasts).toEqual([])
   })
 
   test("a non-cannot-steer event is ignored by the cannot-steer listener", async () => {

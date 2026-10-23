@@ -1247,6 +1247,54 @@ describe("steering injection hook", () => {
     expect(secondData).toEqual({ sessionID: "s2" })
   })
 
+  // The pre-existing `provider` exclusion binds on the Q2 path too: a body
+  // that already carries a `provider` key means user-configured routing is
+  // active, so the "OpenRouter default routing applies" toast would be false
+  // copy. The body read is gated behind the once-flag check (only when the
+  // session hasn't been toasted yet AND the trigger conditions hold) and is
+  // a cheap clone-parse — the original Request is never reassigned. The
+  // provider-key skip does NOT consume the once-flag: a later provider-free
+  // request for the same session still toasts.
+  test("a Q2-path request whose body pre-sets provider emits nothing and does not consume the once-flag", async () => {
+    const harness = makeCtx()
+    harness.raw.options = { fallback: "openrouter/zeta/fallback" }
+    harness.raw.model.list.mockReturnValue({
+      location: {},
+      data: [{ id: "zeta/fallback", providerID: "openrouter", enabled: true }],
+    })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    expect(harness.hookCallbacks).toHaveLength(3)
+
+    // The provider-preset request: no emit, and the Request is untouched.
+    const presetEvent = steeredEvent({
+      body: {
+        model: "acme/alpha",
+        messages: [{ role: "user", content: "hi" }],
+        provider: { order: ["acme"] },
+      },
+    })
+    const original = presetEvent.request as Request
+    await harness.hookCallbacks[1](presetEvent)
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(0)
+    expect(presetEvent.request).toBe(original)
+    expect(Object.hasOwn(await bodyOf((original as Request).clone()), "provider")).toBe(true)
+
+    // The once-flag was NOT consumed: a provider-free request afterward
+    // for the SAME session still toasts.
+    const freeEvent = steeredEvent()
+    await harness.hookCallbacks[1](freeEvent)
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+    const [name, data] = harness.rpcEmit.mock.calls[0]!
+    expect(name).toBe("cannotSteer")
+    expect(data).toEqual({ sessionID: "s1" })
+    expect(freeEvent.request).toBe(freeEvent.request)
+
+    // ...and it consumes the flag: a third request is silent.
+    await harness.hookCallbacks[1](steeredEvent())
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+  })
+
   test("a non-alias request with no steering data emits nothing (the gate stays alias-scoped)", async () => {
     const harness = makeCtx()
     await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
