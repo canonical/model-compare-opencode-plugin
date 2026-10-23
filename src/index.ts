@@ -4,9 +4,10 @@
 // warn-and-default, never throws), seeds state from storage (§8's startup
 // chain: pin → fallback → disabled) without ever blocking on fresh data,
 // registers the alias transform — after seeding, so the registration-time
-// application sees the seeded picks — then the guard hook and the two
-// commands, kicks off the first refresh in the background, schedules the
-// 30-minute refresh tick, and returns a cleanup that clears the timer.
+// application sees the seeded picks — then the guard hook, the steering
+// injection hook and the two commands, kicks off the first refresh in the
+// background, schedules the 30-minute refresh tick, and returns a cleanup
+// that clears the timer.
 //
 // `wire` is the testable core — the same setup with injected seams (acquire,
 // timer, clock). The default export hands OpenCode the real context; it is
@@ -18,10 +19,11 @@ import { parseConfig } from "./config"
 import { pinKey, type Pin } from "./core/pins"
 import { effectiveWeights, rankModels } from "./core/rank"
 import type { Catalog, ModelEntry, Priority, Sourced } from "./core/types"
+import { injectSteering, steeringFor } from "./core/steering"
 import { formatReport, humanizeAge, reportEntries } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
-import { guardDecision, type ModelRef } from "./opencode/guard"
+import { guardDecision, parseAliasRef, type ModelRef } from "./opencode/guard"
 import { readNewestCachedDoc, readRecord, type Storage } from "./opencode/storage"
 import { acquire, cacheIdentities } from "./sources"
 import {
@@ -49,6 +51,16 @@ function bareModelId(configValue: string): string {
   return configValue.startsWith(PROVIDER_PREFIX)
     ? configValue.slice(PROVIDER_PREFIX.length)
     : configValue
+}
+
+// The request body's `model` field when it is a string, else undefined — the
+// gate steeringFor checks against the pick's id (the live alias-bound body
+// carries the pick id verbatim, spike fact 1). Any non-object body reads as
+// undefined; injectSteering rejects those on its own.
+function bodyModelOf(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null) return undefined
+  const model = (body as Record<string, unknown>).model
+  return typeof model === "string" ? model : undefined
 }
 
 // ---- the slice of the OpenCode v2 plugin context the plugin touches --------
@@ -166,6 +178,14 @@ export type AliasPlan = {
 // `registryDisabled[p]` records that the transform wanted alias p enabled but
 // its concrete model was missing from the editor; the applied view then says
 // disabled, whatever the plan wanted.
+//
+// `appliedSteering[sessionID]` records the steering order the request hook
+// ACTUALLY injected into that session's most recent request: the order array
+// when it injected (catalog-projected blocks always carry a non-empty order),
+// null when it did not (non-alias ref, no steering data, a pre-existing body
+// `provider`, or any failure — fail open). The response hook consumes it as
+// captureEndpoint's `order`, so the `!` downgrade flag fires only when a
+// non-empty order was really applied. Last request per session wins.
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -173,6 +193,7 @@ export type WireState = {
   enabled: Partial<Record<Priority, boolean>>
   plan: AliasPlan
   registryDisabled: Partial<Record<Priority, boolean>>
+  appliedSteering: Record<string, string[] | null>
 }
 
 // readRecord only guarantees a v=1 object; the pin fields are checked so a
@@ -251,6 +272,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     enabled: {},
     plan: { picks: {}, enabled: {} },
     registryDisabled: {},
+    appliedSteering: {},
   }
 
   // Seed state from storage (§8 startup) BEFORE registering the transform:
@@ -331,6 +353,71 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     }
     const decision = guardDecision(event.kind, agentModel, (p) => state.enabled[p] === true)
     if (decision.error !== undefined) throw new Error(decision.error)
+  })
+
+  // The steering injection (design §Steering injection; spike fact 2):
+  // alias-scoped requests whose pick's catalog entry carries a steering block
+  // get the block's provider sub-object injected into the JSON body and the
+  // Request re-created. No kind filter — alias-bound refs arrive for primary
+  // AND compaction (spike scoping), and a directly-picked ref is never an
+  // alias ref, so it falls through untouched (the anti-goal). Every path
+  // that does not inject leaves the original request untouched (fail open,
+  // spec anti-goal) and nulls the session's appliedSteering record.
+  await ctx.session.hook("http.request", async (event) => {
+    try {
+      // Cheap gate before any body read (the guard's parseAliasRef rule;
+      // steeringFor re-checks variant-blind): concrete refs — title kinds,
+      // direct picks, fallback-bound sessions — skip the body entirely.
+      if (parseAliasRef(event.model) === null || state.sourced === null) {
+        state.appliedSteering[event.sessionID] = null
+        return
+      }
+      const request = event.request as Request
+      let body: unknown
+      try {
+        body = JSON.parse(await request.clone().text())
+      } catch {
+        // No JSON body (or unreadable): untouched, fail open.
+        state.appliedSteering[event.sessionID] = null
+        return
+      }
+      const steering = steeringFor(
+        event.model,
+        bodyModelOf(body),
+        state.picks,
+        new Map(state.sourced.doc.models.map((entry): [string, ModelEntry] => [entry.id, entry])),
+      )
+      if (steering === null) {
+        // No steering data for the pick: untouched, fail open.
+        state.appliedSteering[event.sessionID] = null
+        return
+      }
+      const modified = injectSteering(body, steering)
+      if (modified === body) {
+        // The body already carries a `provider` key (or is not an object):
+        // never clobber routing the user or a provider configured.
+        state.appliedSteering[event.sessionID] = null
+        return
+      }
+      // Spike fact 2's verified recipe: re-create the Request around the
+      // modified body, dropping the stale length/encoding headers (the
+      // runtime re-derives content-length for the new body).
+      const headers = new Headers(request.headers)
+      headers.delete("content-length")
+      headers.delete("content-encoding")
+      event.request = new Request(request.url, {
+        method: request.method,
+        headers,
+        body: JSON.stringify(modified),
+      })
+      // Record the order actually applied — the response hook reads it as
+      // captureEndpoint's order (the `!` flag fires only on a non-empty one).
+      state.appliedSteering[event.sessionID] = steering.order
+    } catch {
+      // Fail open: any error leaves the original request proceeding
+      // untouched, and records that nothing was injected.
+      state.appliedSteering[event.sessionID] = null
+    }
   })
 
   // The RPC (V2 plugins RPC): the report method serves the SAME text the

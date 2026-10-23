@@ -49,6 +49,32 @@ if (!validated.ok) throw new Error(`test document is invalid: ${validated.reason
 const DOC: Catalog = validated.catalog
 const raw_ = raw // the module-level document, for tests whose harness shadows `raw`
 
+// The same single-model document with a steering block on its only model —
+// the catalog the steering-injection tests seed (validateCatalog unwraps the
+// raw { model, provider } block into ModelEntry.steering).
+const steeredRaw = {
+  ...raw,
+  models: [
+    {
+      ...raw.models[0],
+      steering: {
+        model: raw.models[0].id,
+        provider: {
+          order: ["novita/fp8", "deepinfra/fp8"],
+          ignore: ["coreweave/fp4"],
+          quantizations: ["fp8"],
+          allow_fallbacks: true,
+        },
+      },
+    },
+  ],
+}
+const steeredChecked = validateCatalog(steeredRaw)
+if (!steeredChecked.ok) throw new Error(`steered test document is invalid: ${steeredChecked.reason}`)
+const STEERED_DOC: Catalog = steeredChecked.catalog
+const STEERING = STEERED_DOC.models[0].steering
+if (STEERING === undefined) throw new Error("steered fixture lost its steering block")
+
 // The pin key as the plugin computes it for a document without overrides.
 function pinKeyFor(doc: Catalog, p: Priority): string {
   return pinKey(p, effectiveWeights(doc, p, undefined).weights)
@@ -966,7 +992,9 @@ describe("guard hook", () => {
   test("disabled alias + alias-configured agent → throws the exact message", async () => {
     const { ctx, hookCallbacks } = makeCtx()
     await wire(ctx, deps(vi.fn(), fakeTimers()))
-    expect(hookCallbacks).toHaveLength(1)
+    // Two registrations now: [0] the guard, [1] the steering injection hook
+    // (spike fact 4a: a second http.request hook in the same plugin coexists).
+    expect(hookCallbacks).toHaveLength(2)
 
     await expect(hookCallbacks[0](primaryEvent())).rejects.toThrow(
       "model-compare: no ranking data for openrouter/model-compare/quality; set options.fallback or check the data source",
@@ -983,6 +1011,192 @@ describe("guard hook", () => {
 
     const warns = warnSpy.mock.calls.map((call: unknown[]) => call.join(" "))
     expect(warns.some((w: string) => w.includes("aliases disabled"))).toBe(true)
+  })
+})
+
+// ---- steering injection hook -----------------------------------------------
+
+describe("steering injection hook", () => {
+  // The provider sub-object the fixture's steering block projects to
+  // (STEERED_DOC.models[0].steering, built field-by-field by injectSteering).
+  const PROVIDER = {
+    order: ["novita/fp8", "deepinfra/fp8"],
+    ignore: ["coreweave/fp4"],
+    quantizations: ["fp8"],
+    allow_fallbacks: true,
+  }
+
+  const REQUEST_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+  // wire() with the steered catalog seeded and the price pick resolved to the
+  // steered model. The injection hook is the SECOND registration ([1], after
+  // the guard's).
+  async function wired() {
+    const harness = makeCtx()
+    await writeCachedDoc(harness.ctx.storage, localIdentity(null), {
+      doc: STEERED_DOC,
+      acquiredAt: NOW,
+    })
+    await seedPin(harness.ctx.storage, STEERED_DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    expect(harness.hookCallbacks).toHaveLength(2)
+    return harness
+  }
+
+  function steeredEvent(
+    opts: {
+      model?: ModelRef
+      kind?: string
+      sessionID?: string
+      body?: unknown
+      request?: unknown
+    } = {},
+  ) {
+    return {
+      sessionID: opts.sessionID ?? "s1",
+      agent: "build",
+      model: opts.model ?? { providerID: "openrouter", id: "model-compare/price" },
+      kind: opts.kind ?? "primary",
+      request:
+        opts.request ??
+        new Request(REQUEST_URL, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": "123",
+            "content-encoding": "gzip",
+          },
+          body: JSON.stringify(
+            opts.body ?? {
+              model: "acme/alpha",
+              messages: [{ role: "user", content: "hi" }],
+              stream: true,
+            },
+          ),
+        }),
+    }
+  }
+
+  async function bodyOf(request: Request): Promise<Record<string, unknown>> {
+    return JSON.parse(await request.text()) as Record<string, unknown>
+  }
+
+  test("an alias-scoped request is re-created with the steering provider injected into its body", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent()
+    const original = event.request as Request
+
+    await hookCallbacks[1](event)
+
+    const rebuilt = event.request as Request
+    expect(rebuilt).not.toBe(original)
+    expect(rebuilt.url).toBe(original.url)
+    expect(rebuilt.method).toBe("POST")
+    // The copied headers survive minus the stale length/encoding pair the
+    // runtime re-derives (spike fact 2's recipe).
+    expect(rebuilt.headers.get("content-type")).toBe("application/json")
+    expect(rebuilt.headers.has("content-length")).toBe(false)
+    expect(rebuilt.headers.has("content-encoding")).toBe(false)
+
+    const body = await bodyOf(rebuilt)
+    expect(body.model).toBe("acme/alpha")
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }])
+    expect(body.stream).toBe(true)
+    expect(body.provider).toEqual(PROVIDER)
+  })
+
+  test("a compaction-kind request bound to the alias is steered too (no kind filter)", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({ kind: "compaction" })
+    await hookCallbacks[1](event)
+    const body = await bodyOf(event.request as Request)
+    expect(body.provider).toEqual(PROVIDER)
+  })
+
+  test("a DIRECTLY-PICKED request whose model id equals the pick's is untouched (the anti-goal)", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({ model: { providerID: "openrouter", id: "acme/alpha" } })
+    const original = event.request
+    await hookCallbacks[1](event)
+    expect(event.request).toBe(original)
+    expect(Object.hasOwn(await bodyOf((original as Request).clone()), "provider")).toBe(false)
+  })
+
+  test("a body that already carries a provider key is untouched (no clobber)", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({
+      body: {
+        model: "acme/alpha",
+        provider: { order: ["elsewhere/fp4"], ignore: [], allow_fallbacks: false },
+      },
+    })
+    const original = event.request
+    await hookCallbacks[1](event)
+    expect(event.request).toBe(original)
+    expect((await bodyOf((original as Request).clone())).provider).toEqual({
+      order: ["elsewhere/fp4"],
+      ignore: [],
+      allow_fallbacks: false,
+    })
+  })
+
+  test("a non-alias request is untouched", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({ model: { providerID: "openrouter", id: "z-ai/glm-5.3-flash" } })
+    const original = event.request
+    await hookCallbacks[1](event)
+    expect(event.request).toBe(original)
+  })
+
+  test("a body whose model differs from the pick's id is untouched", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({ body: { model: "other/model" } })
+    const original = event.request
+    await hookCallbacks[1](event)
+    expect(event.request).toBe(original)
+  })
+
+  test("a pick whose model carries no steering block is untouched", async () => {
+    const harness = makeCtx()
+    await seedDocCache(harness.ctx.storage) // DOC's model carries no steering block
+    await seedPin(harness.ctx.storage, DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    const event = steeredEvent()
+    const original = event.request
+    await harness.hookCallbacks[1](event)
+    expect(event.request).toBe(original)
+  })
+
+  test("an unparseable or missing body is left untouched", async () => {
+    const { hookCallbacks } = await wired()
+    const unparseable = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    })
+    const event = steeredEvent({ request: unparseable })
+    await expect(hookCallbacks[1](event)).resolves.toBeUndefined()
+    expect(event.request).toBe(unparseable)
+
+    // A bodyless GET parses to nothing: untouched too.
+    const bodyless = new Request(REQUEST_URL)
+    const event2 = steeredEvent({ request: bodyless })
+    await expect(hookCallbacks[1](event2)).resolves.toBeUndefined()
+    expect(event2.request).toBe(bodyless)
+  })
+
+  test("a hook failure is swallowed: the original request proceeds", async () => {
+    const { hookCallbacks } = await wired()
+    const broken = {
+      clone() {
+        throw new Error("boom")
+      },
+    }
+    const event = steeredEvent({ request: broken })
+    await expect(hookCallbacks[1](event)).resolves.toBeUndefined()
+    expect(event.request).toBe(broken)
   })
 })
 
