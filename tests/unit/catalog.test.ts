@@ -27,6 +27,22 @@ function doc() {
   }
 }
 
+// The raw steering shape mirrors the fixture's z-ai/glm-5.3-flash entry: the
+// vendored script records { model, provider: { order, ignore,
+// quantizations, allow_fallbacks } }; the projection unwraps `provider` as
+// ModelEntry.steering and never projects the top-level `model`.
+function steering() {
+  return {
+    model: "z-ai/glm-5.3-flash",
+    provider: {
+      order: ["streamlake/fp8", "novita/fp8"],
+      ignore: ["open-inference/fp4"],
+      quantizations: ["fp8"],
+      allow_fallbacks: true,
+    },
+  }
+}
+
 test("accepts the recorded catalog fixture", () => {
   const raw = JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8"))
   // The gate accepts v3 only; the fixture records the v3 contract document.
@@ -223,6 +239,103 @@ test("keeps the optional pricing split only when finite numbers (hostile catalog
   expect(absent.catalog.models[0].pricing.output_per_1m).toBeUndefined()
 })
 
+// Task 2 — steering block projection (F-11/F-12): the model's steering block
+// projects onto the entry as a provider-shaped record. Per-field absence (the
+// pricing-split posture), no throw, no partial field.
+
+test("projects a well-formed steering block (provider unwrapped; the top-level model is never projected)", () => {
+  const result = validateCatalog({
+    ...doc(),
+    models: [{ ...model(), steering: steering() }],
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].steering).toEqual({
+    order: ["streamlake/fp8", "novita/fp8"],
+    ignore: ["open-inference/fp4"],
+    quantizations: ["fp8"],
+    allow_fallbacks: true,
+  })
+  expect(result.catalog.models[0].steering).not.toHaveProperty("model")
+})
+
+test("a hostile steering block reads as absent: no throw, no partial field, never the raw object", () => {
+  const hostile: Array<[string, unknown]> = [
+    ["a string where an array belongs", { order: "streamlake/fp8", ignore: ["c"], allow_fallbacks: true }],
+    ["a nested object where an array belongs", { order: { "0": "streamlake/fp8" }, ignore: ["c"], allow_fallbacks: true }],
+    ["a non-string array item", { order: ["streamlake/fp8", 5], ignore: ["c"], allow_fallbacks: true }],
+    ["a string where ignore's array belongs", { order: ["a"], ignore: "open-inference/fp4", allow_fallbacks: true }],
+    ["a non-string item in ignore", { order: ["a"], ignore: ["c", null], allow_fallbacks: true }],
+    ["a string where a flag belongs", { order: ["a"], ignore: ["c"], allow_fallbacks: "true" }],
+    ["a nested object where a flag belongs", { order: ["a"], ignore: ["c"], allow_fallbacks: { fallback: true } }],
+    ["a string as the provider itself", "a"],
+    ["an array as the provider itself", []],
+    ["no provider at all", { model: "z-ai/glm-5.3-flash" }],
+  ]
+  for (const [name, provider] of hostile) {
+    const raw = { ...model(), steering: { model: "z-ai/glm-5.3-flash", provider } }
+    const result = validateCatalog({ ...doc(), models: [raw] })
+    expect(result.ok, name).toBe(true)
+    if (!result.ok) return
+    // The raw hostile block passes through the ...entry spread today; the
+    // projection must explicitly override it with undefined.
+    expect(result.catalog.models[0].steering, name).toBeUndefined()
+  }
+  // The steering block itself malformed — absent either way.
+  for (const [name, rawSteering] of [
+    ["a string as the steering block itself", "z-ai/glm-5.3-flash"],
+    ["an array as the steering block itself", []],
+  ] as Array<[string, unknown]>) {
+    const result = validateCatalog({ ...doc(), models: [{ ...model(), steering: rawSteering }] })
+    expect(result.ok, name).toBe(true)
+    if (!result.ok) return
+    expect(result.catalog.models[0].steering, name).toBeUndefined()
+  }
+})
+
+test("empty steering arrays are invalid: empty quantizations drops the field, empty order/ignore drops the block", () => {
+  // An empty quantizations list — or one holding a non-string item — drops
+  // just the field; the block survives.
+  for (const [name, quantizations] of [
+    ["an empty quantizations list", []],
+    ["a non-string item in quantizations", ["fp8", 4]],
+  ] as Array<[string, unknown]>) {
+    const result = validateCatalog({
+      ...doc(),
+      models: [
+        {
+          ...model(),
+          steering: { model: "z-ai/glm-5.3-flash", provider: { order: ["a"], ignore: ["b"], quantizations, allow_fallbacks: false } },
+        },
+      ],
+    })
+    expect(result.ok, name).toBe(true)
+    if (!result.ok) return
+    expect(result.catalog.models[0].steering, name).toEqual({ order: ["a"], ignore: ["b"], allow_fallbacks: false })
+  }
+  // An empty order or ignore list would filter out every endpoint — the whole
+  // block drops rather than stranding routing.
+  for (const [name, provider] of [
+    ["an empty order list", { order: [], ignore: ["b"], allow_fallbacks: false }],
+    ["an empty ignore list", { order: ["a"], ignore: [], allow_fallbacks: false }],
+  ] as Array<[string, unknown]>) {
+    const result = validateCatalog({
+      ...doc(),
+      models: [{ ...model(), steering: { model: "z-ai/glm-5.3-flash", provider } }],
+    })
+    expect(result.ok, name).toBe(true)
+    if (!result.ok) return
+    expect(result.catalog.models[0].steering, name).toBeUndefined()
+  }
+})
+
+test("a model without steering stays without one (absent stays absent)", () => {
+  const result = validateCatalog(doc())
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].steering).toBeUndefined()
+})
+
 test("rejects a model without context", () => {
   const { context: _omitted, ...stripped } = model()
   const result = validateCatalog({ ...doc(), models: [stripped] })
@@ -271,6 +384,21 @@ describe("validateStoredCatalog (F-16)", () => {
       ok: true,
       catalog: result.catalog,
     })
+  })
+
+  test("round-trips a steering block: the provider sub-object unwraps on the way in and re-wraps on the way back", () => {
+    const first = validateCatalog({ ...doc(), models: [{ ...model(), steering: steering() }] })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(first.catalog.models[0].steering).toEqual({
+      order: ["streamlake/fp8", "novita/fp8"],
+      ignore: ["open-inference/fp4"],
+      quantizations: ["fp8"],
+      allow_fallbacks: true,
+    })
+    // through JSON, as storage would
+    const stored = JSON.parse(JSON.stringify(first.catalog))
+    expect(validateStoredCatalog(stored)).toEqual({ ok: true, catalog: first.catalog })
   })
 
   test.each([

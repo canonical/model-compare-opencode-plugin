@@ -12,6 +12,38 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isNonEmptyStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((id) => typeof id === "string")
+}
+
+// The steering block (F-11/F-12): the raw upstream entry carries
+// { model, provider: { order, ignore, quantizations?, allow_fallbacks } }.
+// The projection unwraps `provider` as ModelEntry.steering and never projects
+// the top-level `model`. Per-field absence (the pricing-split posture), no
+// throw, no partial field: order/ignore must be non-empty string arrays (an
+// empty list would filter out every endpoint) and allow_fallbacks a boolean —
+// any miss drops the whole block; quantizations is optional and kept only as
+// a non-empty string array, otherwise that field alone is dropped and the
+// block survives.
+function steer(raw: unknown): ModelEntry["steering"] {
+  if (!isObject(raw)) return undefined
+  const provider = raw.provider
+  if (!isObject(provider)) return undefined
+  const order = provider.order
+  const ignore = provider.ignore
+  const fallbacks = provider.allow_fallbacks
+  if (!isNonEmptyStringList(order) || !isNonEmptyStringList(ignore) || typeof fallbacks !== "boolean") {
+    return undefined
+  }
+  const steering: NonNullable<ModelEntry["steering"]> = {
+    order: [...order],
+    ignore: [...ignore],
+    allow_fallbacks: fallbacks,
+  }
+  if (isNonEmptyStringList(provider.quantizations)) steering.quantizations = [...provider.quantizations]
+  return steering
+}
+
 export function validateCatalog(
   raw: unknown,
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
@@ -125,6 +157,11 @@ export function validateCatalog(
     // stays absent, present-but-invalid behaves as absent).
     const input = pricing.input_per_1m
     const output = pricing.output_per_1m
+    // The steering block projects (or reads as absent) per the steer() rules.
+    // The assignment sits AFTER the spread so it explicitly overrides the raw
+    // block that `...entry` would otherwise carry through verbatim — a
+    // hostile steering block must never survive onto the projected entry.
+    const steering = steer(entry.steering)
     models.push({
       ...entry,
       id: entry.id,
@@ -138,6 +175,7 @@ export function validateCatalog(
       context: entry.context,
       scores: { ...components, overall },
       quality,
+      steering,
     })
   }
 
@@ -171,16 +209,26 @@ export function validateCatalog(
 // `Catalog`, not the raw upstream document) by rebuilding the raw shape and
 // running it through validateCatalog: a corrupt or hand-edited record is
 // rejected instead of reaching ranking code. The round trip is lossless for a
-// catalog validateCatalog produced.
+// catalog validateCatalog produced. A model carrying a projected steering
+// block is re-wrapped into the raw { model, provider } shape first — the
+// top-level `model` is never projected, so entry.id stands in for it (the
+// projection ignores it either way). A hand-edited steering block re-projects
+// or reads as absent, exactly like a raw one would.
 export function validateStoredCatalog(
   stored: unknown,
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(stored)) return { ok: false, reason: "stored catalog must be an object" }
+  const models = Array.isArray(stored.models)
+    ? stored.models.map((entry) => {
+        if (!isObject(entry) || entry.steering === undefined) return entry
+        return { ...entry, steering: { model: entry.id, provider: entry.steering } }
+      })
+    : stored.models
   return validateCatalog({
     schema_version: 3,
     generated_at: stored.generatedAt,
     parameters: { weights: stored.weights },
-    models: stored.models,
+    models,
     rankings: stored.rankings,
   })
 }

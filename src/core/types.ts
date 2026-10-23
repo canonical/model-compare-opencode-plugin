@@ -20,6 +20,17 @@ export type ModelEntry = {
   }
   context: number
   quality: number | null
+  // The steering block (F-11/F-12): upstream records the provider's
+  // endpoint-routing hints as { model, provider: { order, ignore,
+  // quantizations?, allow_fallbacks } }; the projection unwraps the provider
+  // sub-object into this shape and never projects the top-level `model`.
+  // Present only when the raw block projects cleanly (absent stays absent).
+  steering?: {
+    order: string[]
+    ignore: string[]
+    quantizations?: string[]
+    allow_fallbacks: boolean
+  }
   scores: {
     quality: number
     price: number
