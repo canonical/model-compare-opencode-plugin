@@ -1283,16 +1283,59 @@ describe("steering injection hook", () => {
     // The once-flag was NOT consumed: a provider-free request afterward
     // for the SAME session still toasts.
     const freeEvent = steeredEvent()
+    const freeOriginal = freeEvent.request as Request
     await harness.hookCallbacks[1](freeEvent)
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
     const [name, data] = harness.rpcEmit.mock.calls[0]!
     expect(name).toBe("cannotSteer")
     expect(data).toEqual({ sessionID: "s1" })
-    expect(freeEvent.request).toBe(freeEvent.request)
+    expect(freeEvent.request).toBe(freeOriginal)
 
     // ...and it consumes the flag: a third request is silent.
     await harness.hookCallbacks[1](steeredEvent())
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+  })
+
+  // The invariant the response hook's order read leans on: EVERY
+  // no-injection path nulls the session's appliedSteering record — here the
+  // `state.sourced === null` early-out, both when its Q2 toast fires and when
+  // the pre-existing-provider exclusion suppresses the emit — so if `sourced`
+  // ever transitioned non-null → null, a session's stale order could never
+  // surface as a false `!` downgrade verdict.
+  test("appliedSteering is nulled after the no-catalog early-out and the Q2 cannot-steer path", async () => {
+    const harness = makeCtx()
+    let state!: WireState
+    // Cold start with a runnable fallback: sourced stays null while the
+    // aliases are enabled on the fallback — a steerable pick exists.
+    harness.raw.options = { fallback: "openrouter/zeta/fallback" }
+    harness.raw.model.list.mockReturnValue({
+      location: {},
+      data: [{ id: "zeta/fallback", providerID: "openrouter", enabled: true }],
+    })
+    await wire(harness.ctx, {
+      ...deps(vi.fn(), fakeTimers()),
+      onState: (s) => {
+        state = s
+      },
+    })
+    await drain()
+    expect(harness.hookCallbacks).toHaveLength(3)
+
+    // The Q2 cannot-steer path (the toast fires): the record is nulled.
+    await harness.hookCallbacks[1](steeredEvent({ sessionID: "s1" }))
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+    expect(state.appliedSteering.s1 === null || state.appliedSteering.s1 === undefined).toBe(true)
+
+    // The same no-catalog early-out with the emit suppressed (the body
+    // pre-sets `provider`): no new toast, and the record is nulled too.
+    await harness.hookCallbacks[1](
+      steeredEvent({
+        sessionID: "s2",
+        body: { model: "acme/alpha", messages: [{ role: "user", content: "hi" }], provider: { order: ["acme"] } },
+      }),
+    )
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+    expect(state.appliedSteering.s2 === null || state.appliedSteering.s2 === undefined).toBe(true)
   })
 
   test("a non-alias request with no steering data emits nothing (the gate stays alias-scoped)", async () => {
@@ -1376,11 +1419,12 @@ describe("response capture hook", () => {
     response: Response
     sessionID?: string
     kind?: string
+    model?: ModelRef
   }): HookEvent {
     return {
       sessionID: opts.sessionID ?? "s1",
       agent: "build",
-      model: { providerID: "openrouter", id: "model-compare/price" },
+      model: opts.model ?? { providerID: "openrouter", id: "model-compare/price" },
       kind: opts.kind ?? "primary",
       request: new Request(REQUEST_URL),
       response: opts.response,
@@ -1522,6 +1566,23 @@ describe("response capture hook", () => {
     await hookCallbacks[2](event)
 
     expect(event.response).toBe(original)
+    expect(state().lastEndpoints).toEqual({})
+  })
+
+  test("a non-alias primary response is not wrapped and records nothing (the gate stays alias-scoped)", async () => {
+    const { hookCallbacks, state } = await wired()
+    const event = responseEvent({
+      response: streamResponse([DATA]),
+      model: { providerID: "openrouter", id: "z-ai/glm-5.3-flash" },
+    })
+    const original = event.response
+
+    await hookCallbacks[2](event)
+
+    // No wrap side-effects observable: the original Response object survives
+    // and its body passes through byte-for-byte — and nothing is recorded.
+    expect(event.response).toBe(original)
+    await expect((event.response as Response).text()).resolves.toBe(DATA)
     expect(state().lastEndpoints).toEqual({})
   })
 

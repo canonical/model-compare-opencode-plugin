@@ -574,13 +574,24 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
   // rest of the body flows byte-for-byte) to read the served `provider` and
   // `model`, and the session's lastEndpoints record is written per-event from
   // the event's OWN sessionID (hook invocations interleave concurrently —
-  // never write from a shared "current session"). Only primary responses
-  // update the capture; any body the peek cannot parse passes through
-  // unmodified, uncaptured; every error is swallowed — the capture is
-  // best-effort and must never break the response itself.
+  // never write from a shared "current session"). Only primary responses of
+  // alias-bound sessions update the capture — a non-alias model ref returns
+  // before any wrap (zero modification, the anti-goal); any body the peek
+  // cannot parse passes through unmodified, uncaptured; every error is
+  // swallowed — the capture is best-effort and must never break the response
+  // itself.
   await ctx.session.hook("http.response", async (event) => {
     try {
       if (event.kind !== "primary") return
+      // Alias-scoped (the spec's binding constraint): capture fires only when
+      // the session's model is one of the three alias refs. A non-alias
+      // session — a direct pick, another agent, any provider — gets ZERO
+      // modification: no wrap, no peek, no capture. The request-side half of
+      // the binding (the request's model equals that alias's current pick) is
+      // inherited via appliedSteering, which only the injection hook's
+      // injecting paths set to a non-empty order; a disabled alias's session
+      // carries its concrete fallback ref here and captures nothing.
+      if (parseAliasRef(event.model) === null) return
       const response = event.response
       if (response === undefined) return
       const body = response.body
@@ -662,7 +673,11 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       })
       // Re-create the Response around the pass-through stream (mirror of the
       // request hook's re-creation): the original body is owned by the chain
-      // and never consumed by the plugin.
+      // and never consumed by the plugin. Deliberate deviation from the spike
+      // recipe: the spike DELETED content-length/content-encoding — that was
+      // REQUEST-side hygiene for a re-created body — while here the body
+      // passes through unchanged, so the response's exact headers are kept
+      // verbatim for byte-identical passthrough.
       event.response = new Response(body.pipeThrough(transform), {
         status: response.status,
         statusText: response.statusText,

@@ -77,7 +77,7 @@ Commands:
 | Key | Action |
 |---|---|
 | `alt+m` | picks dialog — all three priorities with their current picks |
-| `alt+e` | toast the last response's served endpoint (`!` prefix flags a downgrade — not in the steering order) |
+| `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
 | `alt+shift+m` | report dialog — the top-5 table; `return` switches the session to the highlighted model |
 | `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
@@ -140,11 +140,11 @@ The rules, and the exceptions:
 
 **Which endpoint served a call.** Three ways to check:
 
-- The `alt+e` toast (see [Keyboard shortcuts](#keyboard-shortcuts)) — the current session's last primary response's served endpoint: `last response served by <endpoint>`, or `! served by <endpoint> — not in steering order` when the served provider matched no entry of the steering order actually applied. The report dialog's footer carries the same capture as `last response: <model> @ <endpoint>`, under the note `routing steered to <quant> endpoints (aliases only)`.
+- The `alt+e` toast (see [Keyboard shortcuts](#keyboard-shortcuts)) — the current session's last primary alias response's served endpoint: `last response served by <endpoint>`, or `! served by <endpoint> — not in steering order` when the served provider matched no entry of the steering order actually applied. The report dialog's footer carries the same capture as `last response: <model> @ <endpoint>`, under the note `routing steered to <quant> endpoints (aliases only)`.
 - The response body — every OpenRouter response names its serving endpoint in the `provider` field.
 - OpenRouter's dashboard — per-request endpoint records.
 
-The alt+e capture is best-effort by design: the plugin peeks at only the first 4 KB of the response body — a pass-through read; the body itself flows byte-for-byte. Streaming responses carry `provider` in the first chunk, so the peek normally catches them; a non-streaming response whose `provider` field sits beyond the peek window is forwarded uncaptured, and `alt+e` then toasts nothing. The response body's `provider` field and OpenRouter's dashboard remain the authoritative verification paths.
+The alt+e capture is best-effort by design, and alias-scoped: only a session whose model is one of the three aliases has responses peeked and recorded — a direct pick's or another agent's response is never read, let alone modified. The plugin peeks at only the first 4 KB of the response body — a pass-through read; the body itself flows byte-for-byte. Streaming responses carry `provider` in the first chunk, so the peek normally catches them; a non-streaming response whose `provider` field sits beyond the peek window is forwarded uncaptured, and `alt+e` then toasts nothing. The response body's `provider` field and OpenRouter's dashboard remain the authoritative verification paths.
 
 
 ## Data sources

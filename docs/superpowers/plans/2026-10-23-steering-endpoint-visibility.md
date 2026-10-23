@@ -116,7 +116,7 @@
 **Spike wiring notes (Task 1, recorded 2026-10-23 — see the findings section at the bottom for full evidence):**
 - Fact 2 (mechanism verified live 4/4, including a compaction request): read via `event.request.clone().text()` → `JSON.parse` → set `body.provider = steering` (the `provider` SUB-OBJECT only; never the block's top-level `model`) → `event.request = new Request(event.request.url, { method, headers, body: JSON.stringify(modified) })` with `content-length` and `content-encoding` DELETED from the copied headers (the runtime re-derives content-length). The mutated request survived the real path and OpenRouter honored the routing (unsteered control landed on ignore-list endpoints; every steered alias run landed on an order entry — `Novita` = `novita/fp8`, 3/3).
 - Fact 4a: a SECOND `http.request` hook in the SAME plugin coexists with the first (both fired on every request, spike-verified) — the injection hook can be registered alongside the guard's hook without conflict.
-- Fact 4b: OpenCode NEVER sets a `provider` key in the request body itself (0/14 observed requests across all kinds and bindings) — the no-clobber guard is a safety net, not a live conflict. Body keys observed: primary `model, messages, tools, stream, stream_options, store, prompt_cache_key, usage`; title adds `reasoning`; no `models` array, no `route`.
+- Fact 4b: OpenCode NEVER sets a `provider` key in the request body itself (0/13 observed requests across all kinds and bindings) — the no-clobber guard is a safety net, not a live conflict. Body keys observed: primary `model, messages, tools, stream, stream_options, store, prompt_cache_key, usage`; title adds `reasoning`; no `models` array, no `route`.
 - Scoping confirmations: alias-bound refs arrive for primary AND compaction kinds (no request-kind filter is correct); the title kind's ref is its own agent's concrete model (naturally excluded). The disabled-alias/fallback world delivers the fallback concrete ref — no injection (fail-open to default routing), matching the Q2 ruling's expectation.
 
 - [x] **Step 1: Write the failing wiring test** — using the existing harness's fake session context: a request whose event model is the alias ref (`openrouter/model-compare/price`) gets its JSON body's `provider` set to the steering object; a DIRECTLY-PICKED request whose model id equals the current pick's id is untouched (the anti-goal case); a request with a pre-set `provider` is untouched; a non-alias request is untouched; a hook that throws is swallowed (the original request proceeds).
@@ -363,7 +363,7 @@ endpoint moved into the steering order:
   hook was also live (the spike plugin registered first; the guard's hook ran
   after; requests proceeded). Task 4's second registration is safe.
 - The request body NEVER carried a `provider` key: `hasProviderKey:false` on
-  all 14 observed requests (primary/title/compaction × all bindings × both
+  all 13 observed requests (primary/title/compaction × all bindings × both
   fixture phases). OpenCode does not set `provider` itself — the injection's
   no-clobber guard is a pure safety net, not a live conflict.
 - Body keys observed (primary, build agent): `model, messages, tools, stream,

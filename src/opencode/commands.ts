@@ -85,7 +85,9 @@ export type ReportContext = {
 // a disabled alias's pick is excluded from both the union and the check, and
 // an empty quantizations list contributes nothing without withholding. No
 // enabled aliases → no note. Steering shipped with the Q2 verdict PASS, so
-// the note renders purely per this data rule.
+// the note renders purely per this data rule. (That data-only rule holds
+// because steering injection IS wired — Q2 PASS; in the hypothetical Q2 FAIL
+// world the note's suppression would be a code change, not a data condition.)
 export function steeringNote(
   doc: Catalog,
   picks: Partial<Record<Priority, AliasTarget>> = {},
