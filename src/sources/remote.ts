@@ -14,6 +14,7 @@ import {
   writeCachedDoc,
   type Storage,
 } from "../opencode/storage"
+import { dropWarningsFromRaw } from "./drops"
 
 // The cache is revalidated after six hours (design §8).
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
@@ -98,7 +99,7 @@ async function fetchAndValidate(
   doFetch: typeof fetch,
   now: () => number,
   timeoutMs: number,
-): Promise<{ ok: true; sourced: Sourced } | { ok: false; reason: string }> {
+): Promise<{ ok: true; sourced: Sourced & { warnings: string[] } } | { ok: false; reason: string }> {
   const signal = AbortSignal.timeout(timeoutMs)
   let current = url
   for (let hops = 0; ; hops++) {
@@ -145,7 +146,7 @@ async function fetchAndValidate(
 async function acceptResponse(
   response: Response,
   now: () => number,
-): Promise<{ ok: true; sourced: Sourced } | { ok: false; reason: string }> {
+): Promise<{ ok: true; sourced: Sourced & { warnings: string[] } } | { ok: false; reason: string }> {
   if (!response.ok) {
     return { ok: false, reason: `HTTP status ${response.status}` }
   }
@@ -172,7 +173,10 @@ async function acceptResponse(
   if (!validated.ok) {
     return { ok: false, reason: `invalid catalog document: ${validated.reason}` }
   }
-  return { ok: true, sourced: { doc: validated.catalog, acquiredAt: now() } }
+  return {
+    ok: true,
+    sourced: { doc: validated.catalog, acquiredAt: now(), warnings: dropWarningsFromRaw(raw) },
+  }
 }
 
 // Fetch the remote catalog with a persisted six-hour cache (design §5, §8):
@@ -184,7 +188,7 @@ export async function fetchRemote(
   url: string,
   storage: Storage,
   deps: RemoteDeps = {},
-): Promise<Sourced & { fromCache: boolean }> {
+): Promise<Sourced & { fromCache: boolean; warnings?: string[] }> {
   const doFetch = deps.fetch ?? globalThis.fetch
   const now = deps.now ?? Date.now
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS
@@ -192,14 +196,17 @@ export async function fetchRemote(
   const identity = remoteIdentity(url)
   const cached = await readCachedDoc(storage, identity)
   if (cached !== null && now() - cached.acquiredAt < ttlMs) {
+    // A TTL-fresh cache hit carries no warnings: the cached record is the
+    // projected catalog (no raw pool), and re-warning on every cache read
+    // would turn one shrink into an alarm on each 30-minute tick.
     return { ...cached, fromCache: true }
   }
 
   const attempt = await fetchAndValidate(url, doFetch, now, deps.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS)
   if (attempt.ok) {
-    const { doc, acquiredAt } = attempt.sourced
+    const { doc, acquiredAt, warnings } = attempt.sourced
     await writeCachedDoc(storage, identity, { doc, acquiredAt })
-    return { doc, acquiredAt, fromCache: false }
+    return { doc, acquiredAt, warnings, fromCache: false }
   }
   if (cached !== null) return { ...cached, fromCache: true }
   throw new Error(`remote source failed: ${attempt.reason}`)

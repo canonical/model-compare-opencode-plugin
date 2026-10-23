@@ -169,6 +169,38 @@ describe("runLocalScript", () => {
     expect(sourced.acquiredAt).toBeLessThanOrEqual(after)
   })
 
+  test("a stub whose pool lost models at the endpoint stage reports the shrink in warnings", async () => {
+    const doc = {
+      schema_version: 3,
+      generated_at: "2026-10-09T00:00:00+00:00",
+      // context rides along: the by-design funnel drops must not trigger or
+      // inflate the endpoint-stage warning.
+      pool: { dropped: { endpoint_fetch_failed: 2, context: 275 } },
+      models: [],
+    }
+    const stub = join(mkdtempSync(join(tmpdir(), "local-source-drops-")), "stub.py")
+    writeFileSync(stub, `import json, sys\njson.dump(${JSON.stringify(doc)}, sys.stdout)\n`)
+    const sourced = await runLocalScript(stub)
+    expect(sourced.warnings).toEqual([
+      "catalog pool shrunk: 2 model(s) dropped at the endpoint stage (endpoint_fetch_failed: 2)",
+    ])
+  })
+
+  test("the healthy funnel shape (endpoint_fetch_failed: 0, normal drops nonzero) emits no warning", async () => {
+    // Deterministic inline stub — STUB_CATALOG fetches live upstream data, so
+    // its dropped map is not stable across cache states.
+    const doc = {
+      schema_version: 3,
+      generated_at: "2026-10-09T00:00:00+00:00",
+      pool: { dropped: { endpoint_fetch_failed: 0, context: 275, "not ZDR": 64 } },
+      models: [],
+    }
+    const stub = join(mkdtempSync(join(tmpdir(), "local-source-clean-")), "stub.py")
+    writeFileSync(stub, `import json, sys\njson.dump(${JSON.stringify(doc)}, sys.stdout)\n`)
+    const sourced = await runLocalScript(stub)
+    expect(sourced.warnings).toEqual([])
+  })
+
   test("a stub exiting 1 rejects with the exit code and the stderr tail", async () => {
     const reason = await rejectionOf(runLocalScript("tests/fixtures/stub-exit-1.py"))
     expect(reason).toContain("local source failed")

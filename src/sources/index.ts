@@ -57,19 +57,28 @@ export async function acquire(cfg: Config, deps: AcquireDeps): Promise<Acquired>
   // fromCache flag is lifted to the result; sourced itself stays a plain
   // Sourced (§5).
   if (cfg.source === "remote") {
-    const { doc, acquiredAt, fromCache } = await doFetch(cfg.catalogURL, deps.storage)
+    const { doc, acquiredAt, fromCache, warnings: remoteWarnings } = await doFetch(
+      cfg.catalogURL,
+      deps.storage,
+    )
     return {
       sourced: { doc, acquiredAt },
       source: "remote",
       identity: remoteIdentity(cfg.catalogURL),
       fromCache,
-      warnings: [],
+      warnings: remoteWarnings ?? [],
     }
   }
 
   if (cfg.source === "local") {
     const sourced = await runLocal(scriptPath)
-    return { sourced, source: "local", identity: localIdentity(cfg.scriptPath), fromCache: false, warnings: [] }
+    return {
+      sourced,
+      source: "local",
+      identity: localIdentity(cfg.scriptPath),
+      fromCache: false,
+      warnings: sourced.warnings ?? [],
+    }
   }
 
   // Auto: probe first; a usable python gets one local attempt. Either
@@ -84,7 +93,7 @@ export async function acquire(cfg: Config, deps: AcquireDeps): Promise<Acquired>
         source: "local",
         identity: localIdentity(cfg.scriptPath),
         fromCache: false,
-        warnings: [],
+        warnings: sourced.warnings ?? [],
       }
     } catch (error) {
       const cause = asReason(error).replace(LOCAL_PREFIX, "")
@@ -94,13 +103,16 @@ export async function acquire(cfg: Config, deps: AcquireDeps): Promise<Acquired>
     warnings.push(`${probed.reason}; using remote catalog`)
   }
 
-  const { doc, acquiredAt, fromCache } = await doFetch(cfg.catalogURL, deps.storage)
+  const { doc, acquiredAt, fromCache, warnings: remoteWarnings } = await doFetch(
+    cfg.catalogURL,
+    deps.storage,
+  )
   return {
     sourced: { doc, acquiredAt },
     source: "remote",
     identity: remoteIdentity(cfg.catalogURL),
     fromCache,
-    warnings,
+    warnings: [...warnings, ...(remoteWarnings ?? [])],
   }
 }
 

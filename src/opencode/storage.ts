@@ -16,6 +16,7 @@ export type Storage = {
 // Reads a versioned record. Returns null — never throws — when the key is
 // missing, the value is not a JSON object, or `v` is missing or not 1 (§7.2:
 // corrupt or unknown-version entries are discarded and treated as absent).
+// The doc-cache layer adds its own field checks (readCachedDoc below).
 export async function readRecord<T extends { v: number }>(
   storage: Storage,
   key: string,
@@ -60,7 +61,11 @@ export async function readCachedDoc(storage: Storage, identity: string): Promise
   const record = await readRecord<DocCacheRecord>(storage, docCacheKey(identity))
   if (record === null) return null
   if (record.source !== identity) return null
-  if (typeof record.acquiredAt !== "number") return null
+  // acquiredAt must be a FINITE number, mirroring isValidPin (src/index.ts):
+  // JSON.parse("1e999") parses to Infinity, and now() - Infinity < ttlMs is
+  // always true — an unchecked Infinity would be served as perpetually fresh
+  // and never re-fetched under this identity (final-review BUG-04).
+  if (typeof record.acquiredAt !== "number" || !Number.isFinite(record.acquiredAt)) return null
   const validated = validateStoredCatalog(record.doc)
   if (!validated.ok) {
     console.warn("[model-compare]", `discarding the cached catalog: ${validated.reason}`)

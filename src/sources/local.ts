@@ -10,6 +10,7 @@ import { execFile as execFileCallback } from "node:child_process"
 import { promisify } from "node:util"
 import { validateCatalog } from "../core/catalog"
 import type { Sourced } from "../core/types"
+import { dropWarningsFromRaw } from "./drops"
 
 const execFile = promisify(execFileCallback)
 
@@ -120,11 +121,14 @@ export async function probePython(
 
 // Run the script (an explicit path — resolving the vendored default is the
 // caller's job), validate its stdout, and stamp the plugin's own acquisition
-// time on the document (design §5, §9).
+// time on the document (design §5, §9). The raw document's pool.dropped map
+// (models the vendored script dropped at its endpoint stage) travels as
+// acquisition warnings — the projection discards it, so this is the only
+// place the shrink can be observed.
 export async function runLocalScript(
   scriptPath: string,
   timeoutMs = 60_000,
-): Promise<Sourced> {
+): Promise<Sourced & { warnings?: string[] }> {
   let stdout: string
   try {
     const result = await execFile("python3", [scriptPath, "--catalog"], {
@@ -171,5 +175,5 @@ export async function runLocalScript(
   if (!validated.ok) {
     throw new Error(`local source failed: invalid catalog document: ${validated.reason}`)
   }
-  return { doc: validated.catalog, acquiredAt: Date.now() }
+  return { doc: validated.catalog, acquiredAt: Date.now(), warnings: dropWarningsFromRaw(raw) }
 }

@@ -226,7 +226,7 @@ describe("fetchRemote", () => {
 
     const expected = validateCatalog(raw)
     if (!expected.ok) throw new Error(`test document is invalid: ${expected.reason}`)
-    expect(result).toEqual({ doc: expected.catalog, acquiredAt: NOW, fromCache: false })
+    expect(result).toEqual({ doc: expected.catalog, acquiredAt: NOW, fromCache: false, warnings: [] })
     expect(fetcher.calls()).toBe(1)
     // The record must be durable storage, i.e. written under doc/cache.
     expect(map.get(DOC_CACHE_KEY)).toEqual({
@@ -265,7 +265,7 @@ describe("fetchRemote", () => {
 
     const expected = validateCatalog(fresh)
     if (!expected.ok) throw new Error(`test document is invalid: ${expected.reason}`)
-    expect(result).toEqual({ doc: expected.catalog, acquiredAt: NOW + TTL, fromCache: false })
+    expect(result).toEqual({ doc: expected.catalog, acquiredAt: NOW + TTL, fromCache: false, warnings: [] })
     expect(fetcher.calls()).toBe(1)
     expect(map.get(DOC_CACHE_KEY)).toEqual({
       v: 1,
@@ -525,5 +525,49 @@ describe("fetchRemote https-only redirect guard (Ruling 9)", () => {
     expect(reason).toMatch(/redirect/i)
     // Exactly 6: MAX_REDIRECT_HOPS(5) followed hops, then the self-redirect is refused.
     expect(calls).toBe(6)
+  })
+})
+
+describe("pool-drop warnings (final-review BUG-02)", () => {
+  test("a fresh fetch whose pool lost models at the endpoint stage warns with the count", async () => {
+    // context: 275 rides along deliberately: the by-design funnel drops must
+    // not trigger (or even inflate) the endpoint-stage warning.
+    const raw = { ...doc(), pool: { dropped: { endpoint_fetch_failed: 2, context: 275 } } }
+    const { fetch } = fetchReturns(JSON.stringify(raw))
+    const result = await fetchRemote(REMOTE_URL, memoryStorage().storage, { fetch, now: () => NOW })
+    expect(result.fromCache).toBe(false)
+    expect(result.warnings).toEqual([
+      "catalog pool shrunk: 2 model(s) dropped at the endpoint stage (endpoint_fetch_failed: 2)",
+    ])
+  })
+
+  test("the healthy funnel shape (endpoint_fetch_failed: 0, normal drops nonzero) emits no warning", async () => {
+    // The recorded healthy run's shape: 468 listed → 71 candidates, with 397
+    // by-design funnel drops and zero endpoint failures.
+    const raw = {
+      ...doc(),
+      pool: { dropped: { endpoint_fetch_failed: 0, context: 275, "not ZDR": 64, batch: 47 } },
+    }
+    const { fetch } = fetchReturns(JSON.stringify(raw))
+    const result = await fetchRemote(REMOTE_URL, memoryStorage().storage, { fetch, now: () => NOW })
+    expect(result.warnings).toEqual([])
+  })
+
+  test("a document without a pool emits no warning", async () => {
+    const { fetch } = fetchReturns(JSON.stringify(doc()))
+    const result = await fetchRemote(REMOTE_URL, memoryStorage().storage, { fetch, now: () => NOW })
+    expect(result.warnings).toEqual([])
+  })
+
+  test("a TTL-fresh cache hit never re-warns (cached records carry no pool)", async () => {
+    const { storage } = memoryStorage()
+    await seedCache(storage, NOW)
+    const { fetch, calls } = fetchReturns(
+      JSON.stringify({ ...doc(), pool: { dropped: { endpoint_fetch_failed: 2 } } }),
+    )
+    const result = await fetchRemote(REMOTE_URL, storage, { fetch, now: () => NOW, ttlMs: TTL })
+    expect(result.fromCache).toBe(true)
+    expect(calls()).toBe(0)
+    expect(result.warnings).toBeUndefined()
   })
 })
