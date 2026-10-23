@@ -18,7 +18,7 @@ import {
   writeCachedDoc,
 } from "../../src/opencode/storage"
 import type { Acquired } from "../../src/sources"
-import { wire, type PluginCtx, type WireDeps } from "../../src/index"
+import { wire, type PluginCtx, type WireDeps, type WireState } from "../../src/index"
 
 const NOW = Date.now()
 const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
@@ -126,6 +126,8 @@ type HookEvent = {
   model: ModelRef
   kind: string
   request: unknown
+  // The response event's body (http.response only; absent on http.request).
+  response?: unknown
 }
 
 type CommandDef = {
@@ -265,7 +267,10 @@ function makeCtx() {
       })),
     },
     session: {
-      hook: vi.fn(async (_name: "http.request", cb: (event: HookEvent) => Promise<void>) => {
+      hook: vi.fn(async (
+        _name: "http.request" | "http.response",
+        cb: (event: HookEvent) => Promise<void>,
+      ) => {
         hookCallbacks.push(cb)
         return { dispose: vi.fn(async () => {}) }
       }),
@@ -992,9 +997,10 @@ describe("guard hook", () => {
   test("disabled alias + alias-configured agent → throws the exact message", async () => {
     const { ctx, hookCallbacks } = makeCtx()
     await wire(ctx, deps(vi.fn(), fakeTimers()))
-    // Two registrations now: [0] the guard, [1] the steering injection hook
-    // (spike fact 4a: a second http.request hook in the same plugin coexists).
-    expect(hookCallbacks).toHaveLength(2)
+    // Three registrations now: [0] the guard, [1] the steering injection hook
+    // (spike fact 4a: a second http.request hook in the same plugin
+    // coexists), and [2] the response capture hook.
+    expect(hookCallbacks).toHaveLength(3)
 
     await expect(hookCallbacks[0](primaryEvent())).rejects.toThrow(
       "model-compare: no ranking data for openrouter/model-compare/quality; set options.fallback or check the data source",
@@ -1030,7 +1036,7 @@ describe("steering injection hook", () => {
 
   // wire() with the steered catalog seeded and the price pick resolved to the
   // steered model. The injection hook is the SECOND registration ([1], after
-  // the guard's).
+  // the guard's); the response capture hook is the third ([2]).
   async function wired() {
     const harness = makeCtx()
     await writeCachedDoc(harness.ctx.storage, localIdentity(null), {
@@ -1040,7 +1046,7 @@ describe("steering injection hook", () => {
     await seedPin(harness.ctx.storage, STEERED_DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
     await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
     await drain()
-    expect(harness.hookCallbacks).toHaveLength(2)
+    expect(harness.hookCallbacks).toHaveLength(3)
     return harness
   }
 
@@ -1197,6 +1203,250 @@ describe("steering injection hook", () => {
     const event = steeredEvent({ request: broken })
     await expect(hookCallbacks[1](event)).resolves.toBeUndefined()
     expect(event.request).toBe(broken)
+  })
+})
+
+// ---- response capture hook -------------------------------------------------
+
+describe("response capture hook", () => {
+  // The SSE shape the spike observed: chunk 0 may be a COMMENT line (warmup-B
+  // saw `: OPENROUTER PROCESSING`) before the first `data:` chunk — the peek
+  // must tolerate leading comment/blank lines before concluding anything.
+  // The data chunk carries the served `provider` (a DISPLAY name or a tagged
+  // slug) and the concrete `model`, plus multi-byte content proving the
+  // bytes are forwarded byte-for-byte.
+  const COMMENT = ": OPENROUTER PROCESSING\n\n"
+  const DATA =
+    'data: {"id":"gen-1","provider":"streamlake/fp8","model":"moonshotai/kimi-k3.1-fp8","choices":[{"delta":{"content":"héllo 🌍"}}]}\n\n'
+  const SSE_BODY = COMMENT + DATA
+  const REQUEST_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+  // Must match src/index.ts's peek bound: the padded provider in the
+  // beyond-the-window test sits past it.
+  const PEEK_MAX_BYTES = 4096
+
+  // wire() with the steered catalog seeded (the price pick resolves to the
+  // steered model) and the live WireState handle from the onState seam. The
+  // response capture hook is the THIRD registration ([2], after the guard's
+  // [0] and the steering injection's [1]).
+  async function wired() {
+    const harness = makeCtx()
+    let state!: WireState
+    await writeCachedDoc(harness.ctx.storage, localIdentity(null), {
+      doc: STEERED_DOC,
+      acquiredAt: NOW,
+    })
+    await seedPin(harness.ctx.storage, STEERED_DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
+    // A gated acquire parks the background first refresh forever: its failure
+    // path would otherwise log a console.error (noise for the tests below
+    // that assert the hook's error swallowing), and a resolving acquire would
+    // overwrite the seeded steered state. The gate is never released.
+    let release!: (value: Acquired) => void
+    const gate = new Promise<Acquired>((resolve) => {
+      release = resolve
+    })
+    const acquire = vi.fn(async () => gate)
+    await wire(harness.ctx, {
+      ...deps(acquire, fakeTimers()),
+      onState: (s) => {
+        state = s
+      },
+    })
+    await drain()
+    expect(harness.hookCallbacks).toHaveLength(3)
+    return { ...harness, state: () => state }
+  }
+
+  // A Response whose body streams the given text chunks, then ends.
+  function streamResponse(chunks: string[]): Response {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        controller.close()
+      },
+    })
+    return new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })
+  }
+
+  function responseEvent(opts: {
+    response: Response
+    sessionID?: string
+    kind?: string
+  }): HookEvent {
+    return {
+      sessionID: opts.sessionID ?? "s1",
+      agent: "build",
+      model: { providerID: "openrouter", id: "model-compare/price" },
+      kind: opts.kind ?? "primary",
+      request: new Request(REQUEST_URL),
+      response: opts.response,
+    }
+  }
+
+  // Fires the steering injection hook for s1 (alias-scoped request whose body
+  // model matches the pick) so the response hook reads a non-empty applied
+  // order from the appliedSteering record.
+  async function injectForS1(
+    hookCallbacks: Array<(event: HookEvent) => Promise<void>>,
+  ): Promise<void> {
+    await hookCallbacks[1]({
+      sessionID: "s1",
+      agent: "build",
+      model: { providerID: "openrouter", id: "model-compare/price" },
+      kind: "primary",
+      request: new Request(REQUEST_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "acme/alpha",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+    })
+  }
+
+  test("an SSE response captures provider and model, tolerates a leading comment chunk, and forwards the body byte-for-byte", async () => {
+    const { hookCallbacks, state } = await wired()
+    const event = responseEvent({ response: streamResponse([COMMENT, DATA]) })
+    const original = event.response as Response
+
+    await hookCallbacks[2](event)
+
+    // The response is re-created around a pass-through stream — the original
+    // object is replaced, and the full body (comment + data + multi-byte
+    // content) survives the wrap untouched.
+    const wrapped = event.response as Response
+    expect(wrapped).not.toBe(original)
+    await expect(wrapped.text()).resolves.toBe(SSE_BODY)
+
+    // Nothing was injected for s1 → the order is null → recorded, no verdict.
+    expect(state().lastEndpoints).toEqual({
+      s1: {
+        sessionID: "s1",
+        endpoint: "streamlake/fp8",
+        model: "moonshotai/kimi-k3.1-fp8",
+        downgrade: false,
+        at: NOW,
+      },
+    })
+  })
+
+  test("the order the request hook actually applied drives the downgrade verdict", async () => {
+    const { hookCallbacks, state } = await wired()
+    await injectForS1(hookCallbacks)
+    const event = responseEvent({ response: streamResponse([DATA]) })
+
+    await hookCallbacks[2](event)
+    await (event.response as Response).text()
+
+    // streamlake/fp8 matches none of the applied order ["novita/fp8",
+    // "deepinfra/fp8"] → the `!` downgrade flag fires.
+    expect(state().lastEndpoints.s1).toEqual({
+      sessionID: "s1",
+      endpoint: "streamlake/fp8",
+      model: "moonshotai/kimi-k3.1-fp8",
+      downgrade: true,
+      at: NOW,
+    })
+  })
+
+  test("two sessions' captures do not clobber each other (per-event sessionID)", async () => {
+    const { hookCallbacks, state } = await wired()
+    const e1 = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](e1)
+    await (e1.response as Response).text()
+
+    const MOONSHOT =
+      'data: {"id":"gen-2","provider":"Moonshot AI","model":"moonshotai/kimi-k3.1-fp8","choices":[]}\n\n'
+    const e2 = responseEvent({ response: streamResponse([MOONSHOT]), sessionID: "s2" })
+    await hookCallbacks[2](e2)
+    await (e2.response as Response).text()
+
+    expect(Object.keys(state().lastEndpoints).sort()).toEqual(["s1", "s2"])
+    expect(state().lastEndpoints.s1.endpoint).toBe("streamlake/fp8")
+    expect(state().lastEndpoints.s2.endpoint).toBe("Moonshot AI")
+    expect(state().lastEndpoints.s2.sessionID).toBe("s2")
+  })
+
+  test("a second capture for the same session overwrites the first (last-writer-wins)", async () => {
+    const { hookCallbacks, state } = await wired()
+    const e1 = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](e1)
+    await (e1.response as Response).text()
+
+    const DEEPINFRA =
+      'data: {"id":"gen-3","provider":"DeepInfra","model":"acme/alpha","choices":[]}\n\n'
+    const e2 = responseEvent({ response: streamResponse([DEEPINFRA]) })
+    await hookCallbacks[2](e2)
+    await (e2.response as Response).text()
+
+    expect(Object.keys(state().lastEndpoints)).toEqual(["s1"])
+    expect(state().lastEndpoints.s1.endpoint).toBe("DeepInfra")
+    expect(state().lastEndpoints.s1.model).toBe("acme/alpha")
+  })
+
+  test("a response whose body never parses updates nothing (and passes through byte-for-byte)", async () => {
+    const { hookCallbacks, state } = await wired()
+    const GARBAGE = "\u0000\u0001not json at all\n\x7f\x00"
+    const event = responseEvent({ response: streamResponse([GARBAGE]) })
+
+    await hookCallbacks[2](event)
+    await expect((event.response as Response).text()).resolves.toBe(GARBAGE)
+    expect(state().lastEndpoints).toEqual({})
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  test("a JSON body whose provider lies beyond the peek window is not captured and passes through untouched", async () => {
+    const { hookCallbacks, state } = await wired()
+    const pad = "x".repeat(PEEK_MAX_BYTES + 100)
+    const BODY = `{"id":"x","pad":"${pad}","provider":"Novita","model":"moonshotai/kimi-k3.1-fp8"}`
+    const event = responseEvent({ response: streamResponse([BODY]) })
+
+    await hookCallbacks[2](event)
+    // Clean byte-for-byte pass-through: the full body survives the wrap.
+    await expect((event.response as Response).text()).resolves.toBe(BODY)
+    expect(state().lastEndpoints).toEqual({})
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  test("a non-primary response is not even wrapped", async () => {
+    const { hookCallbacks, state } = await wired()
+    const event = responseEvent({ response: streamResponse([DATA]), kind: "compaction" })
+    const original = event.response
+
+    await hookCallbacks[2](event)
+
+    expect(event.response).toBe(original)
+    expect(state().lastEndpoints).toEqual({})
+  })
+
+  test("a response the hook cannot touch is swallowed: no capture, response left untouched", async () => {
+    const { hookCallbacks, state } = await wired()
+    const broken = {
+      get body(): ReadableStream<Uint8Array> | null {
+        throw new Error("boom")
+      },
+    } as unknown as Response
+    const event = responseEvent({ response: broken })
+
+    await expect(hookCallbacks[2](event)).resolves.toBeUndefined()
+    expect(event.response).toBe(broken)
+    expect(state().lastEndpoints).toEqual({})
+  })
+
+  test("a bodyless response is left untouched", async () => {
+    const { hookCallbacks, state } = await wired()
+    const empty = new Response(null)
+    const event = responseEvent({ response: empty })
+
+    await hookCallbacks[2](event)
+    expect(event.response).toBe(empty)
+    expect(state().lastEndpoints).toEqual({})
   })
 })
 

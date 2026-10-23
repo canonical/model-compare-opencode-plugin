@@ -18,8 +18,8 @@ import { Plugin } from "@opencode/plugin"
 import { parseConfig } from "./config"
 import { pinKey, type Pin } from "./core/pins"
 import { effectiveWeights, rankModels } from "./core/rank"
-import type { Catalog, ModelEntry, Priority, Sourced } from "./core/types"
-import { injectSteering, steeringFor } from "./core/steering"
+import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced } from "./core/types"
+import { captureEndpoint, injectSteering, steeringFor } from "./core/steering"
 import { formatReport, humanizeAge, reportEntries } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
@@ -63,6 +63,70 @@ function bodyModelOf(body: unknown): string | undefined {
   return typeof model === "string" ? model : undefined
 }
 
+// ---- response capture helpers ----------------------------------------------
+
+// The bounded peek (global constraint: never buffer or consume a response
+// stream to inspect it — only a bounded first-chunk peek through a
+// pass-through transform, the rest forwarding byte-for-byte). At most this
+// many BYTES of a response stream are decoded for inspection; everything past
+// the bound is untouched. Sized so a first SSE data chunk (a comment line
+// plus one data event in the spike's observations) always fits.
+const PEEK_MAX_BYTES = 4096
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+// A response field that must be a string, else null (a numeric/absent
+// `provider` or `model` is nothing to capture).
+function stringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key]
+  return typeof value === "string" ? value : null
+}
+
+// The served `provider`/`model` pair carried by a response's first bytes, or
+// null while the prefix is not yet conclusive (the peek keeps going). Two
+// shapes the spike observed:
+//   - SSE (streaming): data lines — the first parseable one decides, and
+//     `data: [DONE]` concludes without a capture. Leading comment or blank
+//     lines (`: OPENROUTER PROCESSING`, spike fact 5/warmup-B) carry neither,
+//     so the peek simply continues to the next chunk rather than concluding
+//     anything from them.
+//   - plain JSON (non-streaming): the whole prefix parses to an object. A
+//     prefix whose JSON is still truncated (e.g. the `provider` key beyond
+//     the peek window) stays inconclusive — the body passes through
+//     uncaptured rather than being buffered.
+function extractServedFields(
+  prefix: string,
+): { provider: string | null; model: string | null } | null {
+  let sawData = false
+  for (const line of prefix.split("\n")) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith("data:")) continue
+    sawData = true
+    const payload = trimmed.slice("data:".length).trim()
+    if (payload === "[DONE]") return { provider: null, model: null }
+    try {
+      const parsed = JSON.parse(payload) as unknown
+      if (isPlainObject(parsed)) {
+        return { provider: stringField(parsed, "provider"), model: stringField(parsed, "model") }
+      }
+    } catch {
+      // A line split across a chunk boundary — keep peeking.
+    }
+  }
+  if (sawData) return null
+  try {
+    const parsed = JSON.parse(prefix) as unknown
+    if (isPlainObject(parsed)) {
+      return { provider: stringField(parsed, "provider"), model: stringField(parsed, "model") }
+    }
+  } catch {
+    // Not (yet) JSON — keep peeking.
+  }
+  return null
+}
+
 // ---- the slice of the OpenCode v2 plugin context the plugin touches --------
 
 type Registration = { dispose: () => Promise<void> }
@@ -101,14 +165,19 @@ export type CommandDefinition = {
   execute: (input: { sessionID: string; prompt: { text: string } }) => Promise<void>
 }
 
-// The `http.request` event (§9): the guard keys on the requesting agent, not
-// on event.model, which already shows the effective (fallback) reference.
+// The `http.request` / `http.response` event (§9): the guard keys on the
+// requesting agent, not on event.model, which already shows the effective
+// (fallback) reference. `response` is present only on http.response events
+// (the real SDK carries both hook events' shapes; only the response's hook
+// receives one) — and it must stay MUTABLE: the capture hook re-creates the
+// Response around a pass-through stream and writes it back.
 export type HttpEvent = {
   sessionID: string
   agent: string
   model: ModelRef
   kind: "primary" | "compaction" | "title" | "generate"
   request: unknown
+  response?: Response
 }
 
 export type ModelListEntry = { id: string; providerID: string; enabled: boolean }
@@ -132,7 +201,7 @@ export type PluginCtx = {
   }
   session: {
     hook(
-      name: "http.request",
+      name: "http.request" | "http.response",
       callback: (event: HttpEvent) => Promise<void> | void,
     ): Promise<Registration>
     switchModel(input: { sessionID: string; model: ModelRef }): Promise<void>
@@ -158,6 +227,11 @@ export type WireDeps = {
   now?: () => number
   // Per-tick hard deadline (F-01); tests shrink it.
   deadlineMs?: number
+  // State-observation seam (tests): hands the LIVE WireState object to the
+  // caller once setup finishes wiring it — every later mutation (steering
+  // records, endpoint captures) lands on the same object, so the holder sees
+  // the updates in real time. Nothing in production passes it.
+  onState?: (state: WireState) => void
 }
 
 // ---- captured state and small helpers --------------------------------------
@@ -186,6 +260,14 @@ export type AliasPlan = {
 // `provider`, or any failure — fail open). The response hook consumes it as
 // captureEndpoint's `order`, so the `!` downgrade flag fires only when a
 // non-empty order was really applied. Last request per session wins.
+//
+// `lastEndpoints[sessionID]` records the served-endpoint capture for that
+// session's most recent primary response: the served `provider` string
+// verbatim, the response's concrete `model` id, the downgrade verdict, and
+// the wall-clock moment of the capture. Last-writer-wins WITHIN a session
+// (hook invocations interleave concurrently — every write is per-event, from
+// the event's own sessionID); stale entries for ended sessions are
+// acceptable (no session-removal hook exists to prune them).
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -194,6 +276,7 @@ export type WireState = {
   plan: AliasPlan
   registryDisabled: Partial<Record<Priority, boolean>>
   appliedSteering: Record<string, string[] | null>
+  lastEndpoints: Record<string, EndpointCapture>
 }
 
 // readRecord only guarantees a v=1 object; the pin fields are checked so a
@@ -273,7 +356,11 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     plan: { picks: {}, enabled: {} },
     registryDisabled: {},
     appliedSteering: {},
+    lastEndpoints: {},
   }
+  // Test seam: hand the live state object out BEFORE any registration can
+  // mutate it — the reference never changes, only its contents do.
+  deps.onState?.(state)
 
   // Seed state from storage (§8 startup) BEFORE registering the transform:
   // OpenCode applies transforms at registration time (design-spike-verified),
@@ -417,6 +504,111 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // Fail open: any error leaves the original request proceeding
       // untouched, and records that nothing was injected.
       state.appliedSteering[event.sessionID] = null
+    }
+  })
+
+  // The response capture (design §Steering visibility): a primary response's
+  // first few bytes are peeked THROUGH a pass-through transform (never
+  // buffered or consumed — the peeked chunks are forwarded untouched, so the
+  // rest of the body flows byte-for-byte) to read the served `provider` and
+  // `model`, and the session's lastEndpoints record is written per-event from
+  // the event's OWN sessionID (hook invocations interleave concurrently —
+  // never write from a shared "current session"). Only primary responses
+  // update the capture; any body the peek cannot parse passes through
+  // unmodified, uncaptured; every error is swallowed — the capture is
+  // best-effort and must never break the response itself.
+  await ctx.session.hook("http.response", async (event) => {
+    try {
+      if (event.kind !== "primary") return
+      const response = event.response
+      if (response === undefined) return
+      const body = response.body
+      if (body === null) return
+
+      // Read ONCE, per-event, from the event's own sessionID. Task 4's
+      // last-wins-per-session sequencing assumption applies: this order is
+      // the session's most recent REQUEST's order, assumed to precede its
+      // response — a same-session response arriving after a NEWER request's
+      // injection would read the newer order (accepted; the capture stays
+      // best-effort, and non-injection paths null the record so a stale read
+      // degrades to "no verdict", never a wrong downgrade).
+      const order = state.appliedSteering[event.sessionID] ?? null
+
+      const decoder = new TextDecoder()
+      let captured = ""
+      let peekedBytes = 0
+      let done = false
+      const record = (provider: string | null, model: string | null) => {
+        done = true
+        // Nothing to show (no provider at all, or a name with no provider
+        // part): treat as no capture — captureEndpoint's endpoint === null
+        // means exactly that.
+        if (provider === null) return
+        const verdict = captureEndpoint(provider, order)
+        if (verdict.endpoint === null) return
+        state.lastEndpoints[event.sessionID] = {
+          sessionID: event.sessionID,
+          endpoint: verdict.endpoint,
+          // The spike established OpenRouter responses always carry `model`;
+          // an outlier without one still records the endpoint (the capture's
+          // point), with an empty id standing in for the missing field.
+          model: model ?? "",
+          downgrade: verdict.downgrade,
+          at: now(),
+        }
+      }
+      const inspect = () => {
+        const peek = extractServedFields(captured)
+        if (peek !== null) record(peek.provider, peek.model)
+      }
+      const transform = new TransformStream<Uint8Array, Uint8Array>({
+        transform: (chunk, controller) => {
+          try {
+            if (!done) {
+              // The peek is byte-bounded: only the first PEEK_MAX_BYTES
+              // bytes of the stream are ever decoded for inspection — a
+              // chunk that crosses the bound contributes only its head, and
+              // the rest is never decoded (it still passes through
+              // untouched, below).
+              const take = Math.min(chunk.byteLength, PEEK_MAX_BYTES - peekedBytes)
+              if (take > 0) captured += decoder.decode(chunk.subarray(0, take), { stream: true })
+              peekedBytes += take
+              // Extraction runs on every peeked chunk: a first chunk that is
+              // only a comment line must not conclude anything — the data
+              // line may arrive in a later chunk (spike fact 5).
+              inspect()
+              if (peekedBytes >= PEEK_MAX_BYTES) done = true
+            }
+          } catch {
+            // Inspection never breaks the stream: give up on the peek, keep
+            // forwarding.
+            done = true
+          }
+          controller.enqueue(chunk)
+        },
+        flush: () => {
+          try {
+            if (!done) {
+              // The stream ended before the bound: flush any held-back
+              // multi-byte tail and make one final extraction attempt.
+              captured += decoder.decode()
+              inspect()
+            }
+          } catch {
+            done = true
+          }
+        },
+      })
+      // Re-create the Response around the pass-through stream (mirror of the
+      // request hook's re-creation): the original body is owned by the chain
+      // and never consumed by the plugin.
+      event.response = new Response(body.pipeThrough(transform), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      })
+    } catch {
+      // Fail open: any error leaves the response untouched and uncaptured.
     }
   })
 

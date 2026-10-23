@@ -59,3 +59,19 @@ export const DEFAULT_WEIGHTS: Record<Priority, Weights> = {
 // A validated catalog plus when the plugin itself accepted it. The plugin's
 // own clock, not `generated_at`, is the data age (design §5, §9).
 export type Sourced = { doc: Catalog; acquiredAt: number }
+
+// The served-endpoint capture record (design §Steering visibility): what the
+// http.response hook wrote for one session's most recent primary response.
+// `endpoint` is the served `provider` string verbatim (a display name like
+// "Novita" or a tagged slug like "novita/fp8" — spike fact 3); `model` is the
+// response's concrete model id, captured alongside it (the spike confirmed
+// OpenRouter responses carry both). `downgrade` is captureEndpoint's verdict
+// — true ONLY when a non-empty steering order was actually applied to the
+// request and the served provider matches none of it.
+export type EndpointCapture = {
+  sessionID: string
+  endpoint: string
+  model: string
+  downgrade: boolean
+  at: number
+}
