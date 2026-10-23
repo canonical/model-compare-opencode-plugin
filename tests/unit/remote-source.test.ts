@@ -523,6 +523,7 @@ describe("fetchRemote https-only redirect guard (Ruling 9)", () => {
     )
     expect(reason).toContain("remote source failed")
     expect(reason).toMatch(/redirect/i)
-    expect(calls).toBeLessThanOrEqual(10)
+    // Exactly 6: MAX_REDIRECT_HOPS(5) followed hops, then the self-redirect is refused.
+    expect(calls).toBe(6)
   })
 })

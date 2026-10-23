@@ -114,7 +114,7 @@ async function fetchAndValidate(
         return { ok: false, reason: `too many redirects (more than ${MAX_REDIRECT_HOPS} hops)` }
       }
       const location = response.headers?.get("location")
-      if (location === null || location === "") {
+      if (location === null || location.trim() === "") {
         return {
           ok: false,
           reason: `redirect response ${response.status} without a Location header`,
