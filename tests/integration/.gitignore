@@ -4,7 +4,8 @@ wire.jsonl
 *.log
 project-fixture*
 server.out
-# Per-suite-run scratch OpenCode homes (fresh kv database + seeded auth copy),
+# Per-suite-run scratch OpenCode homes (fresh kv database; no credential copy —
+# the openrouter key is passed as an env export only),
 # created by harness.mjs and removed in finalCleanup.
 data/
 
