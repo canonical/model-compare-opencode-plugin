@@ -54,6 +54,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -67,7 +68,7 @@ OPENROUTER_ZDR_URL = "https://openrouter.ai/api/v1/endpoints/zdr"
 # (legacy endpoints 410 after 2026-11-04; see
 # https://artificialanalysis.ai/data-api/migrate-v2-data).
 AA_API_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
-VERSION = "0.3.1"
+VERSION = "0.4.0"
 USER_AGENT = f"model-compare/{VERSION} (https://github.com/canonical/model-compare)"
 
 # opencode expects provider-qualified model ids: openrouter/<provider/model>.
@@ -86,11 +87,15 @@ PRIORITY_WEIGHTS = {
     "quality": {"quality": 0.60, "price": 0.20, "context": 0.10, "age": 0.10},
 }
 
-CATALOG_SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 3
 
 # The drop-reason keys build_candidates counts, verbatim -- keep in sync with
 # its drop() call sites. pool.dropped lists all of them zero-filled so the
-# contract is self-describing.
+# contract is self-describing. The last two come from the endpoint stage
+# (apply_endpoint_pricing's drop sites), not build_candidates: snake_case
+# while the older reasons are human phrases. The mixed naming convention is
+# a deliberate, documented extension -- machine-readable reasons for the
+# endpoint-stage drops the publish drop-rate gate keys on.
 CATALOG_DROP_REASONS = (
     "malformed id",
     "context",
@@ -104,10 +109,73 @@ CATALOG_DROP_REASONS = (
     "tool calling",
     "expired",
     "age",
+    "no_baseline_eligible_endpoint",
+    "endpoint_fetch_failed",
+)
+
+# The only reasons the endpoint stage itself produces (the last two
+# CATALOG_DROP_REASONS entries) -- the empty-pool warning keys on them;
+# web/publish.py keeps its own copy of this tuple by design.
+ENDPOINT_DROP_REASONS = (
+    "no_baseline_eligible_endpoint",
+    "endpoint_fetch_failed",
 )
 
 PAREN_RE = re.compile(r"\([^)]*\)")
 PROVIDER_PREFIX_RE = re.compile(r"^[^:\s]{1,30}:\s*")
+
+# Quantization precision ladder: label -> rank, highest fidelity first. The
+# ladder ordering in the design doc is authoritative: fp6 > int8 is strict,
+# and formats within one fidelity tier share the same rank. "unknown" never
+# enters the ladder -- it only routes through the first-party eligibility
+# carve-out, never through rank comparison.
+PRECISION_LADDER: dict[str, int] = {
+    "fp32": 4,
+    "bf16": 3,
+    "fp16": 3,
+    "fp8": 2,
+    "mxfp8": 2,
+    "fp6": 1,
+    "int8": 0,
+    "fp4": -1,
+    "mxfp4": -1,
+    "nvfp4": -1,
+    "int4": -2,
+}
+
+# Every quantization value an endpoint may report: the ladder keys plus the
+# "unknown" sentinel. Whether a recorded value is recognized at all is
+# membership here, not ladder rank.
+QUANTIZATION_ENUM: frozenset[str] = frozenset(PRECISION_LADDER) | {"unknown"}
+
+# Official partner hosts that serve closed labs' models: an endpoint on one
+# of these providers counts as first-party for the eligibility carve-out
+# even though it is not the maker itself. Entries are compared after
+# normalize_provider (casefold + strip non-alphanumerics), so the slugs here
+# are display forms -- "aws-bedrock" and "AWS Bedrock" both hit. Extend only
+# with live-data evidence (e.g. an endpoint tag matching <lab>-official).
+FIRST_PARTY_HOSTS = frozenset(
+    {"bedrock", "azure", "vertex", "azure-ai", "google-vertex", "aws-bedrock"}
+)
+
+# Explicit first-party alias pairs that normalization alone cannot bridge
+# (design §4.2): makers that self-name differently than their OpenRouter
+# author slug. Key = the exact live provider_name string, value = the
+# author slug the pair is first-party FOR; both sides are compared
+# normalized (case/punctuation variants match), and the alias only fires
+# when the model's author equals the value. Verified against live data
+# 2026-10-20 (task-13-fix-report.md section 8b; endpoints fetched fresh,
+# every endpoint quantization "unknown", status 0):
+#   ("Amazon Bedrock", "amazon")   -- amazon/nova-2-lite-v1, 2 endpoints
+#   ("Google AI Studio", "google") -- google/gemini-2.5-pro-preview, 3 endpoints
+#   ("Mistral", "mistralai")       -- mistralai/mistral-large-4-0, 3 endpoints
+# Add entries only after the same live verification -- never pin an
+# unverified string.
+FIRST_PARTY_ALIASES: dict[str, str] = {
+    "Amazon Bedrock": "amazon",
+    "Google AI Studio": "google",
+    "Mistral": "mistralai",
+}
 
 
 def warn(msg: str) -> None:
@@ -116,6 +184,44 @@ def warn(msg: str) -> None:
 
 def norm_key(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+# ---------------------------------------------------------------------------
+# Provider normalization + first-party detection
+# ---------------------------------------------------------------------------
+
+
+def normalize_provider(name: str) -> str:
+    """Casefold a provider name and strip ALL non-alphanumeric characters.
+
+    "Z.AI", "z-ai" and "z ai" all normalize to "zai", so a live-recorded
+    maker name matches its author slug regardless of punctuation or case.
+    None or empty input normalizes to "".
+    """
+    return re.sub(r"[^a-z0-9]+", "", (name or "").casefold())
+
+
+def is_first_party(provider_name: str, author: str) -> bool:
+    """True iff the provider is the model's own maker or a partner host.
+
+    Criterion 1: the normalized provider name equals the normalized author
+    slug. Criterion 2: it matches a normalized FIRST_PARTY_HOSTS entry, or
+    a FIRST_PARTY_ALIASES key whose value equals the normalized author slug
+    (the §4.2 alias pairs: a maker self-naming differently than its author
+    slug is first-party only for that author). Everything else is
+    third-party.
+    """
+    provider = normalize_provider(provider_name)
+    if provider == normalize_provider(author):
+        return True
+    if provider in {normalize_provider(host) for host in FIRST_PARTY_HOSTS}:
+        return True
+    author_slug = normalize_provider(author)
+    return any(
+        provider == normalize_provider(alias_provider)
+        and author_slug == normalize_provider(alias_author)
+        for alias_provider, alias_author in FIRST_PARTY_ALIASES.items()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +328,872 @@ def save_cache(name: str, payload) -> None:
         os.replace(tmp_path, path)
     except OSError as exc:
         warn(f"could not write cache: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter endpoints (per-model provider list)
+# ---------------------------------------------------------------------------
+
+
+OPENROUTER_ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{id}/endpoints"
+
+
+def load_cache_expired(name: str) -> dict | None:
+    """Return the cached payload regardless of age; None when absent/corrupt.
+
+    load_cache drops payloads past their TTL; this variant serves them anyway
+    so a dropped model's last known endpoint annotations can still be shown
+    (marked stale by the caller). Never used for ranking.
+    """
+    path = cache_path(name)
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            blob = json.load(fh)
+        return blob["payload"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def parse_endpoints(payload) -> list[dict]:
+    """Keep the verified per-endpoint fields of an endpoints response.
+
+    The live GET /api/v1/models/{id}/endpoints response nests the list one
+    level below the usual envelope: `data` is the model object (id, name,
+    architecture, ...) and the per-provider entries live in
+    `data["endpoints"]`. `pricing` keeps prompt/completion (parsed through
+    parse_price) and the raw `overrides` list -- the tiered-pricing
+    machinery parses the entries itself. Fields beyond the verified
+    per-entry shape are dropped, and the parse keeps `status` as-is (the
+    caller filters).
+    """
+    # Task 13 lesson: the first unit fixtures fed the models/find shape
+    # ({"data": [entry, ...]}) -- a list directly under "data" -- so the
+    # suite stayed green while every live parse returned [] and the whole
+    # pool died as no_baseline_eligible_endpoint. Pin the live envelope:
+    # the list is read ONLY from data["endpoints"], and every other shape
+    # parses to [] (no compat branch for the wrong fixture shape).
+    data = payload.get("data") if isinstance(payload, dict) else None
+    entries = data.get("endpoints") if isinstance(data, dict) else None
+    endpoints = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("pricing")
+        raw_pricing = raw if isinstance(raw, dict) else {}
+        endpoints.append(
+            {
+                "provider_name": entry.get("provider_name"),
+                "tag": entry.get("tag"),
+                "quantization": entry.get("quantization"),
+                "pricing": {
+                    "prompt": parse_price(raw_pricing.get("prompt")),
+                    "completion": parse_price(raw_pricing.get("completion")),
+                    "overrides": raw_pricing.get("overrides"),
+                },
+                "context_length": entry.get("context_length"),
+                "status": entry.get("status"),
+                "service_tier": entry.get("service_tier"),
+            }
+        )
+    return endpoints
+
+
+def fetch_model_endpoints(model_id: str, args) -> list[dict]:
+    """Fetch + parse one model's endpoint list, cached per model.
+
+    The cache name flattens the model id ("/" -> "_") to keep the cache
+    files flat. Fetches retry 3 times (4 attempts total) via fetch_json,
+    which raises at once on 4xx and after the retries on 5xx/network
+    errors -- the caller owns the fail-closed policy.
+    """
+    cache_name = f"endpoints:{model_id.replace('/', '_')}"
+    if not args.no_cache:
+        cached = load_cache(cache_name, args.cache_ttl)
+        if cached:
+            return cached
+    payload = fetch_json(
+        OPENROUTER_ENDPOINTS_URL.format(id=model_id), timeout=30, retries=3
+    )
+    endpoints = parse_endpoints(payload)
+    save_cache(cache_name, endpoints)
+    return endpoints
+
+
+def is_variant_endpoint(endpoint) -> bool:
+    """True iff the endpoint is a :free/:batch variant or entirely free.
+
+    Variant iff its slug or tag carries a `:free`/`:batch` marker OR both
+    input and output prices are zero. `:batch` is cheaper-but-restricted,
+    not zero-priced -- only the marker test catches it. Missing or
+    unparseable prices are not zero.
+    """
+    for field in ("slug", "tag"):
+        marker = endpoint.get(field)
+        if isinstance(marker, str) and (":free" in marker or ":batch" in marker):
+            return True
+    pricing = endpoint.get("pricing")
+    prices = pricing if isinstance(pricing, dict) else {}
+    return (
+        parse_price(prices.get("prompt")) == 0.0
+        and parse_price(prices.get("completion")) == 0.0
+    )
+
+
+def endpoint_schedule_ok(endpoint, args) -> bool:
+    """False iff the endpoint's pricing.overrides fails the v2 schedule rule.
+
+    Reuses effective_pricing in full: the gate fires on malformed windows,
+    exactly-one-of utc_start/utc_end pairs, bad utc_days, combined
+    token+time entries and missing inheritance -- not just non-tiling
+    windows. An endpoint without overrides has no schedule to fail.
+    """
+    result = effective_pricing(
+        endpoint.get("pricing"), args.min_context, args.input_share
+    )
+    return not result["schedule_error"]
+
+
+# Schedule gate for args-less callers: effective_pricing's schedule_error
+# depends only on the SHAPE of pricing.overrides (malformed windows, bad
+# utc_days, ...), never on min_context/input_share -- those only affect the
+# resolved prices. derive_default_precision has no args parameter (pinned
+# interface), so it gates through this fixed stand-in; any args would give
+# the same schedule_error verdict.
+_SCHEDULE_GATE_ARGS = argparse.Namespace(min_context=0, input_share=0.75)
+
+
+def _baseline_universe(endpoints: list[dict], args=None) -> list[dict]:
+    """The shared derivation universe (design section 4.1).
+
+    Live (status == 0), not a variant endpoint (:free/:batch marker or
+    zero-priced), and passing the schedule gate. Schedule-broken endpoints
+    must not pin the default that governs healthy endpoints, same rationale
+    as the variant exclusion. args defaults to the structural stand-in
+    (see _SCHEDULE_GATE_ARGS); callers with real args pass them.
+    """
+    if args is None:
+        args = _SCHEDULE_GATE_ARGS
+    return [
+        endpoint
+        for endpoint in endpoints
+        if endpoint.get("status") == 0
+        and not is_variant_endpoint(endpoint)
+        and endpoint_schedule_ok(endpoint, args)
+    ]
+
+
+def derive_default_precision(endpoints: list[dict], author: str) -> str | None:
+    """Derive a model's default precision from its endpoint list (section 4.1).
+
+    Universe: live non-variant schedule-passing endpoints (_baseline_universe).
+    Primary rule: the highest-ranked KNOWN quantization among the maker's
+    endpoints -- matched by normalized author-slug equality only, so partner
+    hosts never pin the maker's default (section 4.2 criterion 2 does not
+    apply here). Fallback: when the maker has no known quantization, the
+    highest-ranked known quantization across the FULL universe (partners
+    included -- best-available). None when no endpoint in the universe has a
+    known quantization (the all-unknown closed-model case): eligibility then
+    relies solely on the first-party carve-out.
+
+    Known means a PRECISION_LADDER key: "unknown" and unparseable/absent
+    values never enter the ladder. An endpoint whose provider_name is
+    absent/empty (or normalizes to empty) is skipped for maker matching
+    (never first-party -- fail-closed), but still feeds the fallback
+    universe.
+    """
+    universe = _baseline_universe(endpoints, _SCHEDULE_GATE_ARGS)
+    maker = normalize_provider(author)
+    maker_best = None
+    fallback_best = None
+    for endpoint in universe:
+        quantization = endpoint.get("quantization")
+        if not isinstance(quantization, str) or quantization not in PRECISION_LADDER:
+            continue  # "unknown", null, unrecognized: no rank, no pinning
+        rank = PRECISION_LADDER[quantization]
+        if fallback_best is None or rank > fallback_best[0]:
+            fallback_best = (rank, quantization)
+        # Maker matching only: a provider_name that normalizes to nothing
+        # must never match an (equally empty) author slug.
+        provider_slug = (
+            normalize_provider(endpoint.get("provider_name"))
+            if isinstance(endpoint.get("provider_name"), str)
+            else ""
+        )
+        if (
+            provider_slug
+            and provider_slug == maker
+            and (maker_best is None or rank > maker_best[0])
+        ):
+            maker_best = (rank, quantization)
+    return (maker_best or fallback_best or (None, None))[1]
+
+
+def baseline_eligible(endpoint, default_precision, author, args) -> bool:
+    """Baseline-eligibility rule (design section 4.3, fail-closed).
+
+    True iff the endpoint is live (status == 0), not a variant, passes the
+    schedule gate, and then either:
+
+    * its quantization is a known ladder label with rank >=
+      rank(default_precision) -- provider-blind (default_routing considers
+      every endpoint OpenRouter may send traffic to), or
+    * its quantization is "unknown" or null AND the endpoint is first-party
+      (the D3 carve-out: the maker or a partner host).
+
+    When default_precision is None (all-unknown model) the rank comparison is
+    meaningless -- only the carve-out applies. A provider_name that is
+    absent/empty (or normalizes to empty) is never first-party, so such an
+    endpoint can only qualify through the rank branch. An unrecognized
+    quantization string (neither a ladder label nor "unknown"/null) is a
+    schema anomaly: no rank comparison and no carve-out -- fail-closed
+    (fleet-wide new-label drift is what the publish drop-rate gate exists
+    to catch).
+    """
+    if (
+        endpoint.get("status") != 0
+        or is_variant_endpoint(endpoint)
+        or not endpoint_schedule_ok(endpoint, args)
+    ):
+        return False
+    quantization = endpoint.get("quantization")
+    if isinstance(quantization, str) and quantization in PRECISION_LADDER:
+        # Known quantization: the rank branch, provider-blind.
+        if default_precision is None:
+            return False
+        return PRECISION_LADDER[quantization] >= PRECISION_LADDER[default_precision]
+    # Unverifiable: the carve-out applies to "unknown" and null only --
+    # an unrecognized string fails closed. A provider_name that normalizes
+    # to nothing is never first-party (fail-closed; the literal
+    # is_first_party("", "") iff is guarded out here).
+    provider_name = endpoint.get("provider_name")
+    provider_slug = (
+        normalize_provider(provider_name) if isinstance(provider_name, str) else ""
+    )
+    return (
+        (quantization is None or quantization == "unknown")
+        and bool(provider_slug)
+        and is_first_party(provider_name, author)
+    )
+
+
+def pick_baseline(
+    endpoints: list[dict], eligible_flags: list[bool], args
+) -> dict | None:
+    """Pick the baseline endpoint among the eligible ones (design section 4.5).
+
+    Cheapest blended per-token price wins, computed from effective_pricing
+    with the args' min_context and input_share (the shared --input-share
+    convention). Ties broken by (normalized provider name, tag), then --
+    still tied -- first in list order (deterministic; Python's sort is
+    stable and the endpoints list order is the API's). Returns None when no
+    eligible endpoint has a usable price (the caller owns the drop).
+    """
+    candidates = []
+    for endpoint, eligible in zip(endpoints, eligible_flags):
+        if not eligible:
+            continue
+        eff = effective_pricing(
+            endpoint.get("pricing"), args.min_context, args.input_share
+        )
+        price_in, price_out = eff["price_in"], eff["price_out"]
+        if (
+            price_in is None
+            or price_out is None
+            or not math.isfinite(price_in)
+            or not math.isfinite(price_out)
+        ):
+            continue  # unpriceable: no executable blended price
+        blended = args.input_share * price_in + (1 - args.input_share) * price_out
+        provider_name = endpoint.get("provider_name")
+        candidates.append(
+            (
+                blended,
+                normalize_provider(provider_name)
+                if isinstance(provider_name, str)
+                else "",
+                endpoint.get("tag") or "",
+                endpoint,
+            )
+        )
+    if not candidates:
+        return None
+    return min(candidates, key=lambda candidate: candidate[:3])[3]
+
+
+def _blended_price(endpoint, args) -> float | None:
+    """Blended per-token price of one endpoint (pick_baseline's price rule).
+
+    effective_pricing with the args' min_context and input_share, then
+    input_share * price_in + (1 - input_share) * price_out. None when either
+    resolved price is missing or non-finite -- no executable blended price,
+    the same skip pick_baseline applies. A zero result is returned as-is:
+    zero-priced endpoints are variants (already excluded upstream), so the
+    callers apply their own zero guards defensively.
+    """
+    eff = effective_pricing(endpoint.get("pricing"), args.min_context, args.input_share)
+    price_in, price_out = eff["price_in"], eff["price_out"]
+    if (
+        price_in is None
+        or price_out is None
+        or not math.isfinite(price_in)
+        or not math.isfinite(price_out)
+    ):
+        return None
+    blended = args.input_share * price_in + (1 - args.input_share) * price_out
+    return blended if math.isfinite(blended) else None
+
+
+def _flag_list(endpoints: list[dict], eligible_flags: list[bool]):
+    """Zip endpoints with their parallel eligibility flags, hardened.
+
+    eligible_flags is a parallel list to endpoints (the baseline_eligible
+    verdict per endpoint, same order -- Task 4 contract). A length mismatch
+    must raise, never truncate silently (Task 4 review ruling).
+    """
+    if len(endpoints) != len(eligible_flags):
+        raise ValueError(
+            "eligible_flags must be a parallel list to endpoints: "
+            f"{len(endpoints)} endpoints, {len(eligible_flags)} flags"
+        )
+    return zip(endpoints, eligible_flags, strict=True)
+
+
+def NON_ELIGIBLE_UNIVERSE(endpoints: list[dict], eligible_flags: list[bool]) -> list:
+    """The shared annotations universe (design section 4.6).
+
+    Live (status == 0), non-variant endpoints that are NOT baseline-eligible:
+    sub-default known quantization, third-party unknown/null quantization, or
+    schedule-gate-failed. All annotations derive from this one universe.
+    Eligibility comes from the parallel eligible_flags list (the
+    baseline_eligible verdicts); variants and non-live endpoints are excluded
+    even though they too are not eligible -- unlike the steering `ignore`
+    list, which includes live variants (section 4.7).
+
+    Raises ValueError when eligible_flags does not match endpoints in length.
+    """
+    return [
+        endpoint
+        for endpoint, eligible in _flag_list(endpoints, eligible_flags)
+        if endpoint.get("status") == 0
+        and not is_variant_endpoint(endpoint)
+        and not eligible
+    ]
+
+
+def build_annotations(
+    endpoints: list[dict],
+    eligible_flags: list[bool],
+    baseline,
+    catalog_context,
+    args,
+) -> dict:
+    """Per-model endpoint annotations (design section 4.6).
+
+    All four annotations derive from one shared universe -- the live
+    non-variant endpoints that are not baseline-eligible
+    (NON_ELIGIBLE_UNIVERSE):
+
+    * price_spread: cheapest non-eligible blended price divided by the
+      cheapest eligible blended price, both blended with the args'
+      min_context and input_share (the shared --input-share convention).
+      None when the universe is empty -- generalized to None when either
+      side has no priceable member at all -- and None when either cheapest
+      price is 0 (zero-priced endpoints are variants by definition, so the
+      zero half of the guard is defensive only). Unpriceable endpoints are
+      skipped when looking for a cheapest price.
+    * cheapest_quantized: {provider, quantization, price} of the cheapest
+      member of the quantization-caused subset of the universe -- endpoints
+      non-eligible due to quantization only (sub-default known quantization
+      or third-party unknown/null), NOT schedule-gate-failed ones, which are
+      excluded even when cheaper. Unpriceable subset members are skipped
+      (defensively also non-positive ones, matching the repo-wide treatment
+      of negative prices as malformed); None when the subset has no
+      priceable member. Price ties keep the first in list order
+      (deterministic).
+    * risk_flag: True iff the sum of 1/blended**2 over the universe strictly
+      exceeds the sum over the baseline-eligible endpoints (exact tie ->
+      False). Any endpoint whose blended price is 0/None (defensively also
+      negative) is skipped from BOTH sums -- variants are already excluded,
+      so this only guards malformed data, and the flag stays deterministic.
+    * baseline_context_below_catalog: True iff the baseline endpoint's
+      context_length is smaller than the catalog context (the models-API
+      value). A None baseline -- or missing context on either side -- yields
+      False: the caveat marks a positive finding, never missing data.
+
+    Raises ValueError when eligible_flags does not match endpoints in length.
+    """
+    universe = NON_ELIGIBLE_UNIVERSE(endpoints, eligible_flags)
+
+    universe_prices = []
+    for endpoint in universe:
+        price = _blended_price(endpoint, args)
+        if price is not None:
+            universe_prices.append(price)
+    eligible_prices = []
+    for endpoint, eligible in _flag_list(endpoints, eligible_flags):
+        if not eligible:
+            continue
+        price = _blended_price(endpoint, args)
+        if price is not None:
+            eligible_prices.append(price)
+    cheapest_non_eligible = min(universe_prices) if universe_prices else None
+    cheapest_eligible = min(eligible_prices) if eligible_prices else None
+    price_spread = (
+        cheapest_non_eligible / cheapest_eligible
+        if cheapest_non_eligible is not None
+        and cheapest_eligible is not None
+        and cheapest_non_eligible > 0
+        and cheapest_eligible > 0
+        else None
+    )
+
+    quantized_best = None
+    for endpoint in universe:
+        if not endpoint_schedule_ok(endpoint, args):
+            continue  # schedule-gate-failed: not a quantization-caused exclusion
+        price = _blended_price(endpoint, args)
+        if price is None or price <= 0:
+            continue  # unpriceable/non-positive: no comparable price
+        if quantized_best is None or price < quantized_best[0]:
+            quantized_best = (price, endpoint)  # ties keep the first in list order
+    if quantized_best is None:
+        cheapest_quantized = None
+    else:
+        price, endpoint = quantized_best
+        cheapest_quantized = {
+            "provider": endpoint.get("provider_name"),
+            "quantization": endpoint.get("quantization"),
+            "price": price,
+        }
+
+    non_eligible_weight = 0.0
+    for endpoint in universe:
+        price = _blended_price(endpoint, args)
+        if price is None or price <= 0:
+            continue  # skipped from BOTH sums, deterministically
+        non_eligible_weight += 1.0 / (price * price)
+    eligible_weight = 0.0
+    for endpoint, eligible in _flag_list(endpoints, eligible_flags):
+        if not eligible:
+            continue
+        price = _blended_price(endpoint, args)
+        if price is None or price <= 0:
+            continue
+        eligible_weight += 1.0 / (price * price)
+    risk_flag = non_eligible_weight > eligible_weight
+
+    baseline_context = baseline.get("context_length") if baseline is not None else None
+    baseline_context_below_catalog = (
+        baseline_context is not None
+        and catalog_context is not None
+        and baseline_context < catalog_context
+    )
+
+    return {
+        "price_spread": price_spread,
+        "cheapest_quantized": cheapest_quantized,
+        "risk_flag": risk_flag,
+        "baseline_context_below_catalog": baseline_context_below_catalog,
+    }
+
+
+def build_steering(
+    model_id: str,
+    endpoints: list[dict],
+    eligible_flags: list[bool],
+    default_precision: str | None,
+    args,
+) -> dict:
+    """OpenRouter provider steering object (design section 4.7).
+
+    {"model": model_id, "provider": {"order": [...], "ignore": [...],
+    "quantizations": [...], "allow_fallbacks": True}}.
+
+    * order: tags of the baseline-eligible endpoints, cheapest blended first
+      (blended price asc, ties broken by (normalized provider name, tag) --
+      the same comparator as pick_baseline, stable so the final tie is list
+      order). Eligible endpoints whose blended price is unpriceable cannot
+      be price-ranked; they are appended after the ranked ones (still
+      (provider, tag)-ordered) so every eligible endpoint keeps a place --
+      ranked last, never silently left to default priority.
+    * ignore: tags of EVERY live endpoint that is not baseline-eligible --
+      sub-default quantization, third-party unknown/null, schedule-gate-
+      failed AND variants (variants are live but not eligible; the universal
+      quantifier includes them). Non-live (status != 0) endpoints are never
+      listed. List order (the API's).
+    * quantizations: sorted KNOWN quantizations (PRECISION_LADDER labels)
+      with rank >= rank(default_precision) among live non-variant endpoints,
+      deduplicated -- no schedule or eligibility filter. OMITTED from the
+      provider dict entirely when default_precision is None -- never an
+      empty list (OpenRouter semantics would filter out every endpoint).
+    * allow_fallbacks: True.
+
+    Signature deviation from the plan (controller ruling at Task 5 spawn):
+    args is a required parameter -- the order ranking is real pricing math
+    (effective_pricing via min_context/input_share), and reusing the
+    shape-only _SCHEDULE_GATE_ARGS stand-in for pricing was explicitly
+    ruled out in the Task 4 review.
+
+    Raises ValueError when eligible_flags does not match endpoints in length.
+    """
+    ignore = []
+    ranked = []  # (blended, normalized provider name, tag) -- pick_baseline order
+    unranked = []  # (normalized provider name, tag) -- eligible but unpriceable
+    for endpoint, eligible in _flag_list(endpoints, eligible_flags):
+        if endpoint.get("status") == 0 and not eligible:
+            ignore.append(endpoint.get("tag") or "")
+        if not eligible:
+            continue
+        provider_name = endpoint.get("provider_name")
+        provider_key = (
+            normalize_provider(provider_name) if isinstance(provider_name, str) else ""
+        )
+        tag = endpoint.get("tag") or ""
+        price = _blended_price(endpoint, args)
+        if price is None:
+            unranked.append((provider_key, tag))
+        else:
+            ranked.append((price, provider_key, tag))
+    ranked.sort()  # stable: the final tie is list order, as in pick_baseline
+    order = [tag for _, _, tag in ranked] + [tag for _, tag in sorted(unranked)]
+
+    provider = {"order": order, "ignore": ignore}
+    if default_precision is not None:
+        default_rank = PRECISION_LADDER[default_precision]
+        quants = set()
+        for endpoint in endpoints:
+            if endpoint.get("status") != 0 or is_variant_endpoint(endpoint):
+                continue
+            quantization = endpoint.get("quantization")
+            if (
+                not isinstance(quantization, str)
+                or quantization not in PRECISION_LADDER
+            ):
+                continue  # "unknown"/null/unrecognized: not a known quantization
+            if PRECISION_LADDER[quantization] >= default_rank:
+                quants.add(quantization)
+        provider["quantizations"] = sorted(quants)
+    provider["allow_fallbacks"] = True
+    return {"model": model_id, "provider": provider}
+
+
+def _stale_filtered_annotations(model_id, catalog_context, args):
+    """Annotations for a dropped model's filtered entry, or None.
+
+    Built from the model's last cached endpoint list (load_cache_expired --
+    TTL ignored), never from a fresh fetch: the model is out of the ranking,
+    so the block is marked "stale": True for display in the filtered section
+    only (design section 4.9). Same builders as the live stage: eligibility
+    and baseline are re-derived from the cached list, so the shape matches a
+    ranked candidate's annotations. A model whose cache holds no endpoint
+    list at all yields None (the entry carries the drop reason alone).
+    """
+    cached = load_cache_expired(f"endpoints:{model_id.replace('/', '_')}")
+    if not isinstance(cached, list):
+        return None
+    author = model_id.partition("/")[0]
+    try:
+        default_precision = derive_default_precision(cached, author)
+        eligible_flags = [
+            baseline_eligible(endpoint, default_precision, author, args)
+            for endpoint in cached
+        ]
+        baseline = pick_baseline(cached, eligible_flags, args)
+        annotations = build_annotations(
+            cached, eligible_flags, baseline, catalog_context, args
+        )
+    except Exception:
+        # Display-only block for an already-dropped model: never fail the run.
+        return None
+    annotations["stale"] = True
+    return annotations
+
+
+def _endpoint_stage_drop(extra_dropped, filtered, cand, reason, args):
+    """Count one endpoint-stage drop and append its filtered entry.
+
+    Same validated entry shape as build_candidates' drop() plus the optional
+    stale annotations block (absent cache -> reasons only).
+    """
+    extra_dropped[reason] = extra_dropped.get(reason, 0) + 1
+    entry = {"id": cand["id"], "name": cand["name"] or cand["id"], "reasons": [reason]}
+    annotations = _stale_filtered_annotations(cand["id"], cand.get("context"), args)
+    if annotations is not None:
+        entry["annotations"] = annotations
+    filtered.append(entry)
+
+
+def apply_endpoint_pricing(candidates, args, filtered):
+    """Reprice every candidate at its baseline endpoint (design section 4.9).
+
+    The CLI stage between build_candidates and resolve_quality. Endpoint
+    fetches run concurrently (ThreadPoolExecutor, 8 workers) through
+    fetch_model_endpoints' per-model cache, but the results are applied PER
+    CANDIDATE ID in the original candidates order -- never in completion
+    order -- so the stage is deterministic.
+
+    Per candidate: endpoints = fetch. On fetch failure after fetch_json's
+    internal retries the model is dropped "endpoint_fetch_failed" and removed
+    from the returned list. With endpoints, default_precision is derived,
+    every endpoint scored for baseline eligibility and the baseline picked;
+    no usable baseline drops the model "no_baseline_eligible_endpoint"
+    (the stale-annotations filtered-entry rule covers both drop reasons).
+    Otherwise the candidate is mutated in place: the pricing block
+    (price_in/price_out/blended/base_*/tier/schedule/notes) is replaced with
+    the baseline endpoint's effective_pricing outputs scaled per-1M exactly
+    like build_candidates, and the additive keys "endpoints", "default_precision",
+    "annotations" (catalog context = the candidate's existing "context"),
+    "advertised_pricing" (the models-API scalars the candidate carried before
+    the mutation, source-tagged) and "steering" are attached.
+
+    A baseline whose prices are missing/non-finite counts as unusable
+    (pick_baseline's blended-price skip is authoritative for the top-level
+    effective prices). The same bar applies to the base prices the mutation
+    would publish: parse_price returns float | None, so a None base price
+    (tier-over-None-base endpoint) is reachable -- the isinstance(..., float)
+    half of the guard is load-bearing for None, not a redundant type check.
+    Returns (surviving candidates in the original order, dropped counts for
+    the two new reasons).
+    """
+    extra_dropped: dict[str, int] = {}
+    if not candidates:
+        return candidates, extra_dropped
+    endpoints_by_id: dict[str, list] = {}
+    failed_ids: set[str] = set()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {}
+        for cand in candidates:
+            # Duplicate ids fetch once and share the result.
+            futures.setdefault(
+                cand["id"], pool.submit(fetch_model_endpoints, cand["id"], args)
+            )
+        for cand_id, future in futures.items():
+            try:
+                endpoints_by_id[cand_id] = future.result()
+            except Exception:
+                # fetch_json already retried 3 times; the caller owns the
+                # fail-closed policy.
+                failed_ids.add(cand_id)
+    survivors = []
+    for cand in candidates:
+        cand_id = cand["id"]
+        if cand_id in failed_ids:
+            _endpoint_stage_drop(
+                extra_dropped, filtered, cand, "endpoint_fetch_failed", args
+            )
+            continue
+        endpoints = endpoints_by_id[cand_id]
+        author = cand_id.partition("/")[0]
+        default_precision = derive_default_precision(endpoints, author)
+        eligible_flags = [
+            baseline_eligible(endpoint, default_precision, author, args)
+            for endpoint in endpoints
+        ]
+        baseline = pick_baseline(endpoints, eligible_flags, args)
+        eff = (
+            effective_pricing(
+                baseline.get("pricing"), args.min_context, args.input_share
+            )
+            if baseline is not None
+            else None
+        )
+        if baseline is None or not all(
+            isinstance(eff[key], float) and math.isfinite(eff[key])
+            for key in ("price_in", "price_out", "base_price_in", "base_price_out")
+        ):
+            _endpoint_stage_drop(
+                extra_dropped, filtered, cand, "no_baseline_eligible_endpoint", args
+            )
+            continue
+        # The advertised models-API scalars, captured before the mutation.
+        advertised_pricing = {
+            "input_per_1m": cand["price_in"],
+            "output_per_1m": cand["price_out"],
+            "blended_per_1m": cand["blended"],
+            "source": "models-api",
+        }
+        # Replace the pricing block with the baseline endpoint's outputs,
+        # scaled per-1M exactly like build_candidates.
+        cand["price_in"] = eff["price_in"] * 1_000_000.0
+        cand["price_out"] = eff["price_out"] * 1_000_000.0
+        cand["blended"] = (
+            args.input_share * cand["price_in"]
+            + (1.0 - args.input_share) * cand["price_out"]
+        )
+        cand["base_price_in"] = eff["base_price_in"] * 1_000_000.0
+        cand["base_price_out"] = eff["base_price_out"] * 1_000_000.0
+        cand["tier_prompt_tokens"] = eff["tier_prompt_tokens"]
+        cand["tiers"] = eff["tiers"]
+        cand["schedule"] = eff["schedule"]
+        cand["max_discount"] = eff["max_discount"]
+        cand["tier_note"] = fmt_tier_note(eff["tier_prompt_tokens"])
+        cand["sched_note"] = fmt_sched_note(eff["max_discount"])
+        cand["sched_detail"] = fmt_sched_detail(eff["schedule"], eff["peak_blended"])
+        cand["endpoints"] = endpoints
+        cand["default_precision"] = default_precision
+        cand["annotations"] = build_annotations(
+            endpoints, eligible_flags, baseline, cand["context"], args
+        )
+        cand["advertised_pricing"] = advertised_pricing
+        cand["steering"] = build_steering(
+            cand_id, endpoints, eligible_flags, default_precision, args
+        )
+        survivors.append(cand)
+    return survivors, extra_dropped
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter session-cost dataset (per-task cost, outside the score)
+# ---------------------------------------------------------------------------
+
+
+SESSION_COST_URL = "https://openrouter.ai/api/v1/datasets/session-cost"
+SESSION_COST_HARNESS_SLUG = "hermes-agent"
+# The turn range the catalog/CLI surfaces (Task 8).
+SESSION_COST_DISPLAY_TURN_RANGE = "10-49-turns"
+# The dataset's four turn ranges (brainstorm section 2.6) -- the catalog
+# contract's closed set (web/build_site_data.py pins the same tuple).
+# Cells naming anything else are dropped: an unknown range is dataset
+# drift, and the block must never fail the publish (design section 4.8).
+SESSION_COST_TURN_RANGES = ("1-turn", "2-9-turns", "10-49-turns", "50-plus-turns")
+SESSION_COST_ATTRIBUTION = "Data © OpenRouter, CC BY 4.0"
+
+
+def strip_permaslug_date(permaslug: str) -> str:
+    """Permaslug without its trailing -YYYYMMDD (undated ids map to themselves)."""
+    match = re.match(r"^(.*)-(\d{8})$", permaslug)
+    return match.group(1) if match else permaslug
+
+
+def fetch_session_cost(args) -> dict | None:
+    """Per-task session-cost medians from OpenRouter's dataset, or None.
+
+    A separate published dimension (design section 4.8): the median USD
+    cost of real sessions through the pinned published harness -- never
+    part of the weighted score. One bulk paginated fetch per invocation
+    (?app_slug=<harness>&limit=500&offset=k) regardless of the model list;
+    pagination stops on a page shorter than the limit or once the next
+    offset would exceed the API's 5000 cap. Cells key on dated permaslugs
+    (z-ai/glm-5.3-flash-20260826), stripped to the bare catalog id with
+    strip_permaslug_date; when several strip to the same id, the latest
+    date wins each turn-range cell (same rule as build_aa_benchmarks).
+
+    Returns None (graceful degradation, design section 4.9) when no key is
+    configured (the --openrouter-api-key flag, else OPENROUTER_API_KEY),
+    when the fetch fails after fetch_json's retries, or when the response
+    shape is unexpected -- a malformed payload must never crash the run.
+    The merged result is cached under "session-cost" with the standard TTL.
+    """
+    api_key = args.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    if not args.no_cache:
+        cached = load_cache("session-cost", args.cache_ttl)
+        if isinstance(cached, dict) and isinstance(cached.get("medians"), dict):
+            return cached
+    cells = []
+    # The API caps limit at 500 and offset at 5000 (11 full pages max).
+    offset = 0
+    while offset <= 5000:
+        try:
+            payload = fetch_json(
+                f"{SESSION_COST_URL}?app_slug={SESSION_COST_HARNESS_SLUG}"
+                f"&limit=500&offset={offset}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30,
+                retries=3,
+            )
+        except Exception as exc:
+            warn(f"session-cost dataset request failed ({exc})")
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            warn("session-cost dataset returned an unexpected response shape")
+            return None
+        cells.extend(cell for cell in data if isinstance(cell, dict))
+        if len(data) < 500:
+            break
+        offset += 500
+    medians: dict[str, dict[str, float]] = {}
+    seen_date: dict[tuple[str, str], str] = {}
+
+    def accept(bare, date, turn_range, median):
+        key = (bare, turn_range)
+        if key in seen_date and seen_date[key] >= date:
+            return
+        seen_date[key] = date
+        medians.setdefault(bare, {})[turn_range] = median
+
+    for cell in cells:
+        permaslug = cell.get("model_permaslug")
+        turn_range = cell.get("turn_range")
+        raw = cell.get("median_session_cost_usd")
+        if not (
+            isinstance(permaslug, str)
+            and permaslug
+            and isinstance(turn_range, str)
+            and turn_range
+        ):
+            continue
+        # Closed contract set: a cell naming a new turn range is dropped,
+        # never published (the catalog validator rejects unknown ranges,
+        # and session cost must never fail the publish).
+        if turn_range not in SESSION_COST_TURN_RANGES:
+            continue
+        # Non-finite medians would serialize as NaN and poison the catalog.
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            continue
+        try:
+            median = float(raw)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
+        if not math.isfinite(median):
+            continue
+        match = re.match(r"^(.*)-(\d{8})$", permaslug)
+        accept(
+            strip_permaslug_date(permaslug),
+            match.group(2) if match else "",
+            turn_range,
+            median,
+        )
+    if not medians:
+        warn("session-cost dataset returned no usable cells")
+        return None
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    if not isinstance(meta, dict):
+        warn("session-cost dataset returned an unexpected response shape")
+        return None
+    as_of = meta.get("as_of")
+    window_days = meta.get("window_days")
+    window_end_date = meta.get("window_end_date")
+    # The catalog validator demands non-empty as_of/window_end_date strings
+    # and a positive integer window_days; anything else is dataset drift.
+    # Degrade to None (block omitted, "not available this refresh") rather
+    # than emit a block the validator would reject -- session cost must
+    # never fail the publish (design section 4.8).
+    if not (
+        isinstance(as_of, str)
+        and as_of
+        and isinstance(window_end_date, str)
+        and window_end_date
+        and isinstance(window_days, int)
+        and not isinstance(window_days, bool)
+        and window_days > 0
+    ):
+        warn("session-cost dataset returned malformed meta; omitting the block")
+        return None
+    result = {
+        "attribution": SESSION_COST_ATTRIBUTION,
+        "app_slug": SESSION_COST_HARNESS_SLUG,
+        "as_of": as_of,
+        "window_days": window_days,
+        "window_end_date": window_end_date,
+        "medians": medians,
+    }
+    save_cache("session-cost", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1413,6 +2385,48 @@ def fmt_discount(value) -> str:
     return f"{value:.0%}" if has_discount(value) else "--"
 
 
+def fmt_prec(cand) -> str:
+    """PREC cell: the precision the ranked price is quoted at.
+
+    The maker's default precision when disclosed, the best available
+    otherwise, "n/a" when none could be derived; "!" flags default routing
+    that favors cheaper sub-default endpoints (annotations.risk_flag).
+    Candidates that never went through the endpoint stage degrade to "n/a".
+    """
+    cell = cand.get("default_precision") or "n/a"
+    if (cand.get("annotations") or {}).get("risk_flag"):
+        cell += "!"
+    return cell
+
+
+def fmt_quant_note(annotations: dict) -> str | None:
+    """One-line note on the cheapest sub-default endpoint (PREC tooltip).
+
+    The exact string the site shows (Task 11 renders it verbatim), so the
+    format is pinned by test. None when there is no non-eligible live
+    endpoint -- nothing cheaper to route to. cheapest_quantized.price is
+    stored per-token, the way build_annotations leaves it; the note shows
+    USD per 1M like every other price the CLI prints. A missing spread
+    (defensive) drops the parenthetical. A null quantization (third-party
+    null == "unknown" for eligibility) and a null provider_name on
+    malformed data render the design's "unknown" sentinel, never Python's
+    None repr.
+    """
+    quant = (annotations or {}).get("cheapest_quantized")
+    if not quant:
+        return None
+    quantization = quant["quantization"] or "unknown"
+    provider = quant["provider"] or "unknown"
+    note = (
+        f"cheapest non-baseline: {quantization} @ {provider}, "
+        f"${fmt_price(quant['price'] * 1_000_000)}/M"
+    )
+    spread = (annotations or {}).get("price_spread")
+    if spread is not None:
+        note += f" in ({spread:.2f}x baseline)"
+    return note
+
+
 def print_table(top, total_candidates, weights, quality_note):
     headers = [
         "RANK",
@@ -1421,6 +2435,7 @@ def print_table(top, total_candidates, weights, quality_note):
         "$IN/M",
         "$OUT/M",
         "DISC",
+        "PREC",
         "TIER",
         "CTX",
         "AGE",
@@ -1436,6 +2451,7 @@ def print_table(top, total_candidates, weights, quality_note):
                 fmt_price(cand["price_in"]),
                 fmt_price(cand["price_out"]),
                 fmt_discount(cand["discount"]),
+                fmt_prec(cand),
                 cand["tier_note"] or cand["sched_note"] or "--",
                 fmt_context(cand["context"]),
                 fmt_age(cand["age_days"]),
@@ -1482,6 +2498,12 @@ def print_table(top, total_candidates, weights, quality_note):
         "schedule whose discount is under 1%. --json lists each model's "
         "schedule."
     )
+    print(
+        "PREC = precision the ranked price is quoted at (maker's default when "
+        "disclosed, best available otherwise; ! = default routing favors "
+        "cheaper sub-default endpoints); prices are the cheapest live endpoint "
+        "at that precision."
+    )
 
 
 def print_json(top):
@@ -1518,6 +2540,31 @@ def print_json(top):
             "age_days": round(cand["age_days"], 1)
             if cand["age_days"] is not None
             else None,
+            # Additive keys (Task 9's ROW_KEYS extension pins this exact
+            # key set and order). Risk/spread come from the annotations
+            # block; session_cost_usd is run()'s per-candidate slice of the
+            # Task 7 envelope, shown for the display turn range (run()
+            # attaches it before any output path). Candidates that never
+            # went through either stage (historical test paths) degrade to
+            # null, as does a model the dataset covers only in other turn
+            # ranges.
+            "default_precision": cand.get("default_precision"),
+            "risk_flag": (cand.get("annotations") or {}).get("risk_flag"),
+            "price_spread": (cand.get("annotations") or {}).get("price_spread"),
+            "session_cost_usd": (cand.get("session_cost") or {}).get(
+                SESSION_COST_DISPLAY_TURN_RANGE
+            ),
+            # The cheapest-sub-default note, exactly as the CLI prints it
+            # (Task 11 shows it verbatim). Emit-first: Task 9's ROW_KEYS
+            # pins this key last; pre-endpoint candidates degrade to None.
+            "quant_note": fmt_quant_note(cand.get("annotations")),
+            # One extra row key AFTER quant_note -- steering is NOT in
+            # ROW_KEYS. build_site_data's row check is missing-key-only, so
+            # extras pass through (tier_note precedent) and the site
+            # ignores it. The OpenRouter provider routing object (design
+            # section 4.7) the plugin contract reads; pre-endpoint
+            # candidates degrade to None.
+            "steering": cand.get("steering"),
         }
         for cand in top
     ]
@@ -1535,6 +2582,8 @@ def build_catalog(
     aa_source,
     aa_by_id,
     quality_source_by_id,
+    session_cost=None,
+    session_cost_mode="skipped",
 ):
     """Assemble the full-catalog document (see README "Catalog output").
 
@@ -1542,6 +2591,11 @@ def build_catalog(
     component scores) and never mutates them. Deterministic apart from
     generated_at: models sort by (-overall.balanced, id), filtered by id,
     and age uses date precision so two runs in the same UTC day match.
+
+    session_cost is the Task 7 fetch envelope (verbatim, medians included)
+    or None; session_cost_mode is run()'s resolution of the key-presence
+    fact ("ok" / "unavailable" / "skipped") -- build_catalog stays pure and
+    never fetches or inspects the environment itself.
     """
     now = datetime.now(timezone.utc)
     weights = catalog_weights(candidates, quality_by_id)
@@ -1655,6 +2709,19 @@ def build_catalog(
                 "quality": cand["quality"],
                 "quality_match": quality_source_by_id.get(cand["id"]),
                 "scores": {**scores, "overall": overall},
+                # Additive provider-aware blocks (schema v3), verbatim from
+                # the candidate. Candidates that never went through the
+                # endpoint stage (historical test paths) degrade to null --
+                # .get() with null defaults for these NEW keys only; the
+                # pre-existing keys above stay direct-indexed.
+                "endpoints": cand.get("endpoints"),
+                "default_precision": cand.get("default_precision"),
+                "advertised_pricing": cand.get("advertised_pricing"),
+                "annotations": cand.get("annotations"),
+                # The OpenRouter provider routing object (design section
+                # 4.7) the plugin contract reads -- same null-default
+                # degradation shape as the blocks above.
+                "steering": cand.get("steering"),
             }
         )
     entries.sort(key=lambda e: (-e["scores"]["overall"]["balanced"], e["id"]))
@@ -1692,7 +2759,19 @@ def build_catalog(
             },
             "zdr": "skipped" if args.no_zdr else "ok",
             "discounts": "ok" if discounts else "unavailable",
+            # The endpoint stage always ran before build_catalog is reached;
+            # its failures surface as pool.dropped counts
+            # (endpoint_fetch_failed / no_baseline_eligible_endpoint), never
+            # as source state -- so this is deterministic "ok".
+            "endpoints": "ok",
+            # "ok" (envelope fetched) / "unavailable" (key configured, fetch
+            # failed) / "skipped" (no key) -- resolved in run().
+            "session_cost": session_cost_mode,
         },
+        # Per-task session-cost medians (Task 7), verbatim from the fetch
+        # envelope. Omitted entirely when unavailable: consumers branch on
+        # key presence, never on a null shape.
+        **({"session_cost": session_cost} if session_cost is not None else {}),
         "pool": {
             "listed": len(models),
             "candidates": len(candidates),
@@ -1788,6 +2867,11 @@ def parse_args(argv=None):
         help="Artificial Analysis API key (or set AA_API_KEY; free at artificialanalysis.ai)",
     )
     parser.add_argument(
+        "--openrouter-api-key",
+        default=None,
+        help="OpenRouter API key (or set OPENROUTER_API_KEY; free at openrouter.ai/keys)",
+    )
+    parser.add_argument(
         "--no-require-tools",
         action="store_true",
         help="do not require tool-calling support (coding agents want it)",
@@ -1862,17 +2946,53 @@ def run(args, models, or_cached) -> int:
 
     filtered = []
     candidates, dropped = build_candidates(models, args, discounts, zdr_ids, filtered)
+    # The provider-aware stage: every surviving candidate is repriced at its
+    # baseline endpoint (or dropped fail-closed) before any scoring runs.
+    candidates, extra_dropped = apply_endpoint_pricing(candidates, args, filtered)
+    dropped.update(extra_dropped)
     if not candidates:
-        warn(
-            f"no models satisfy the filters (min-context={args.min_context}, "
-            f"tools={'off' if args.no_require_tools else 'required'}); relax them and retry"
-        )
+        # When the endpoint stage wiped the pool, naming the filter knobs is
+        # misleading (they passed; the drops came after) -- warn with the
+        # endpoint-stage drop counts instead (both reasons, zero-filled).
+        counts = {r: extra_dropped.get(r, 0) for r in ENDPOINT_DROP_REASONS}
+        if any(counts.values()):
+            bits = ", ".join(f"{k}={v}" for k, v in counts.items())
+            warn(f"no models after the endpoint stage: {bits}")
+        else:
+            warn(
+                f"no models satisfy the filters (min-context={args.min_context}, "
+                f"tools={'off' if args.no_require_tools else 'required'}); "
+                "relax them and retry"
+            )
         return 2
 
     quality_by_id, quality_source_by_id = resolve_quality(
         candidates, aa_by_id, exact, fuzzy, aa_source
     )
     weights = compute_scores(candidates, args, quality_by_id)
+
+    # Per-task session-cost medians (Task 7): one fetch per invocation, but
+    # only on the output paths that surface it (--catalog block, --json
+    # rows; publish runs --json per priority, so the cache makes the repeat
+    # cost free). A keyed --best/plain run skips the paginated fetch
+    # entirely -- the medians never reach those outputs. Keyless,
+    # fetch_session_cost returns None before any network or cache access.
+    if args.catalog or args.json:
+        session_cost = fetch_session_cost(args)
+        # The key-presence fact distinguishes "skipped" from "unavailable";
+        # same expression fetch_session_cost uses for its own guard.
+        session_cost_mode = (
+            "skipped"
+            if not (args.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY"))
+            else ("ok" if session_cost else "unavailable")
+        )
+    else:
+        session_cost = None
+        session_cost_mode = "skipped"
+    # run() owns the per-candidate attachment (build_catalog stays pure);
+    # print_json reads it for the session_cost_usd display cell.
+    for cand in candidates:
+        cand["session_cost"] = (session_cost or {}).get("medians", {}).get(cand["id"])
 
     if args.catalog:
         print_catalog(
@@ -1887,6 +3007,8 @@ def run(args, models, or_cached) -> int:
                 aa_source,
                 aa_by_id,
                 quality_source_by_id,
+                session_cost,
+                session_cost_mode,
             )
         )
         return 0
