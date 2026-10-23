@@ -831,6 +831,31 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     expect(active.session.create).not.toHaveBeenCalled()
     expect(active.navigate).not.toHaveBeenCalled()
   })
+
+  // The Q2 fallback (Task 6): the server hook's once-per-session cannot-steer
+  // event surfaces as a toast with the exact fallback copy.
+  test("the cannot-steer event toasts the fallback message", async () => {
+    active = await activate()
+    expect(active.listenCallbacks).toHaveLength(2) // the report listener + the cannot-steer listener
+
+    active.listenCallbacks[1]({
+      details: { type: "rpc.model-compare.cannotSteer", data: { sessionID: "s1" } },
+    })
+
+    expect(active.toasts).toEqual([
+      { message: "cannot steer this session; OpenRouter default routing applies", variant: "success" },
+    ])
+    // No dialog was opened by this event.
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("a non-cannot-steer event is ignored by the cannot-steer listener", async () => {
+    active = await activate()
+    active.listenCallbacks[1]({
+      details: { type: "rpc.model-compare.report", data: { sessionID: "s1" } },
+    })
+    expect(active.toasts).toEqual([])
+  })
 })
 
 // ---- dialog presentation and viewport fitting (the palette's behavior) -----

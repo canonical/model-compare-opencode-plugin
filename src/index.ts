@@ -268,6 +268,14 @@ export type AliasPlan = {
 // (hook invocations interleave concurrently — every write is per-event, from
 // the event's own sessionID); stale entries for ended sessions are
 // acceptable (no session-removal hook exists to prune them).
+//
+// `cannotSteerToasted[sessionID]` records that the Q2 fallback's cannot-steer
+// event was already emitted for that session: when a steerable alias request
+// (alias ref + a current pick) finds NO steering data — no catalog source,
+// `sourced === null` — the injection hook emits the event exactly ONCE PER
+// SESSION (never once per request), leaving the request body untouched. The
+// flag is never re-armed: a session that has seen the toast keeps it for its
+// lifetime.
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -277,6 +285,7 @@ export type WireState = {
   registryDisabled: Partial<Record<Priority, boolean>>
   appliedSteering: Record<string, string[] | null>
   lastEndpoints: Record<string, EndpointCapture>
+  cannotSteerToasted: Record<string, boolean>
 }
 
 // readRecord only guarantees a v=1 object; the pin fields are checked so a
@@ -357,6 +366,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     registryDisabled: {},
     appliedSteering: {},
     lastEndpoints: {},
+    cannotSteerToasted: {},
   }
   // Test seam: hand the live state object out BEFORE any registration can
   // mutate it — the reference never changes, only its contents do.
@@ -427,6 +437,13 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
   // transform from the captured state, so any replay applies the current pick.
   await ctx.model.transform((editor) => applyAliases(state, editor))
 
+  // The RPC registration (below, before the commands) is the event bridge
+  // the steering hook emits the cannot-steer fallback through; the binding is
+  // hoisted here so the hook's closure sees it declared. No request can
+  // arrive before setup completes, and the emit site guards on the
+  // registration being ready anyway (fail open).
+  let rpcRegistration: RpcRegistration | undefined
+
   // The guard (§9): a primary request whose agent is configured with a
   // DISABLED alias aborts with the exact error; everything else passes. The
   // agent lookup is wrapped — a missing agent must not break the request path.
@@ -455,8 +472,31 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // Cheap gate before any body read (the guard's parseAliasRef rule;
       // steeringFor re-checks variant-blind): concrete refs — title kinds,
       // direct picks, fallback-bound sessions — skip the body entirely.
-      if (parseAliasRef(event.model) === null || state.sourced === null) {
+      const p = parseAliasRef(event.model)
+      if (p === null) {
         state.appliedSteering[event.sessionID] = null
+        return
+      }
+      // The Q2 fallback (Task 6): a steerable alias request (alias ref + a
+      // current pick) with NO steering data — no catalog source,
+      // `sourced === null` — proceeds untouched, but the TUI is told so it
+      // can toast the fallback: exactly ONCE PER SESSION (the
+      // cannotSteerToasted flag), never once per request. A disabled alias
+      // (no pick) stays silent — that is the guard's domain, not a toast.
+      // The body is never read, let alone touched.
+      if (state.sourced === null) {
+        state.appliedSteering[event.sessionID] = null
+        const pick = state.picks[p]
+        if (
+          pick !== undefined &&
+          pick.id !== null &&
+          state.cannotSteerToasted[event.sessionID] !== true
+        ) {
+          state.cannotSteerToasted[event.sessionID] = true
+          if (rpcRegistration !== undefined) {
+            await rpcRegistration.events.emit("cannotSteer", { sessionID: event.sessionID })
+          }
+        }
         return
       }
       const request = event.request as Request
@@ -617,7 +657,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
   // drift), and the registration carries the report EVENT the command emits
   // so the TUI half can open the report as an instant selectable dialog.
   // Registered BEFORE the commands: the command's execute emits through it.
-  const rpcRegistration = await ctx.rpc.register(ModelCompare, {
+  rpcRegistration = await ctx.rpc.register(ModelCompare, {
     report: async () => {
       const ranks = reportRanks()
       if (state.sourced === null || ranks === null) {

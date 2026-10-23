@@ -81,6 +81,11 @@ const PACKAGE_FRAGMENT = "model-compare-opencode-plugin"
 // The RPC event the /model-compare command emits (see src/rpc.ts; the wire
 // name is prefixed with the RPC's id).
 const REPORT_EVENT = "rpc.model-compare.report"
+// The event the runtime hook emits once per session when it would have
+// steered a request but has no steering data (no catalog source) — the Q2
+// fallback's runtime notification. The toast copy below is the whole message.
+const CANNOT_STEER_EVENT = "rpc.model-compare.cannotSteer"
+const CANNOT_STEER_COPY = "cannot steer this session; OpenRouter default routing applies"
 
 // The list dialogs' lifecycle token (see showListDialog): a module-scope
 // generation counter, bumped every time a dialog is armed, plus the armed
@@ -768,6 +773,16 @@ export default Plugin.define({
       })
     })
 
+    // The cannot-steer fallback (Task 6): the runtime hook emits this event
+    // once per session when a steerable alias request finds no steering data
+    // (no catalog source). The TUI surfaces it as a toast with the exact
+    // fallback copy; headless shows nothing — like every TUI-coupled surface.
+    const offCannotSteerEvent = context.data.listen(({ details }) => {
+      const event = details as { type?: unknown }
+      if (event.type !== CANNOT_STEER_EVENT) return
+      notify(CANNOT_STEER_COPY)
+    })
+
     createRoot((dispose) => {
       disposeRoot = dispose
 
@@ -992,6 +1007,7 @@ export default Plugin.define({
       if (resyncTimer !== undefined) clearInterval(resyncTimer)
       context.renderer.off("resize", onRendererResize)
       offReportEvent()
+      offCannotSteerEvent()
       disposeRoot()
       disposeAppSlot()
       disposeHomeFooter()

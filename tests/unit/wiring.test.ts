@@ -1204,6 +1204,58 @@ describe("steering injection hook", () => {
     await expect(hookCallbacks[1](event)).resolves.toBeUndefined()
     expect(event.request).toBe(broken)
   })
+
+  // The Q2 fallback (Task 6): a steerable alias request with NO steering data
+  // (no catalog source — state.sourced is null) proceeds untouched, but the
+  // TUI is told ONCE PER SESSION so it can toast the fallback. The scenario
+  // is the cold start with a runnable fallback: aliases are enabled pointing
+  // at the fallback (a current pick exists), while no catalog was ever
+  // acquired — so no steering block can exist.
+  test("an alias request with no steering data emits the cannot-steer event once per session and leaves the body untouched", async () => {
+    const harness = makeCtx()
+    // Cold start with a runnable fallback: aliases enabled, sourced stays null.
+    harness.raw.options = { fallback: "openrouter/zeta/fallback" }
+    harness.raw.model.list.mockReturnValue({
+      location: {},
+      data: [{ id: "zeta/fallback", providerID: "openrouter", enabled: true }],
+    })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    expect(harness.hookCallbacks).toHaveLength(3)
+
+    const event = steeredEvent()
+    const original = event.request as Request
+    await harness.hookCallbacks[1](event)
+
+    // Exactly one event for the first request, and the body is untouched.
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+    const [name, data] = harness.rpcEmit.mock.calls[0]!
+    expect(name).toBe("cannotSteer")
+    expect(data).toEqual({ sessionID: "s1" })
+    expect(event.request).toBe(original)
+    expect(Object.hasOwn(await bodyOf((original as Request).clone()), "provider")).toBe(false)
+
+    // A second request for the SAME session does not re-toast.
+    await harness.hookCallbacks[1](steeredEvent())
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+
+    // A DIFFERENT session gets its own once-only emit.
+    await harness.hookCallbacks[1](steeredEvent({ sessionID: "s2" }))
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(2)
+    const [secondName, secondData] = harness.rpcEmit.mock.calls[1]!
+    expect(secondName).toBe("cannotSteer")
+    expect(secondData).toEqual({ sessionID: "s2" })
+  })
+
+  test("a non-alias request with no steering data emits nothing (the gate stays alias-scoped)", async () => {
+    const harness = makeCtx()
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+
+    const event = steeredEvent({ model: { providerID: "openrouter", id: "z-ai/glm-5.3-flash" } })
+    await harness.hookCallbacks[1](event)
+    expect(harness.rpcEmit).not.toHaveBeenCalled()
+  })
 })
 
 // ---- response capture hook -------------------------------------------------
