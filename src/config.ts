@@ -21,7 +21,7 @@ export type Config = {
   weights: Partial<Record<Priority, Partial<Weights>>>
   pinDays: number // default 14
   minLead: number // default 0.03
-  catalogURL: string // default "https://canonical.github.io/model-compare/catalog.json"
+  catalogURL: string // default "https://model-compare.dev/catalog.json"
   scriptPath: string | null // null → vendored copy
 }
 
@@ -29,7 +29,10 @@ const SOURCES = ["auto", "local", "remote"] as const
 const PRIORITIES = ["balanced", "price", "quality"] as const
 const WEIGHT_KEYS = ["quality", "price", "context", "age"] as const
 
-const DEFAULT_CATALOG_URL = "https://canonical.github.io/model-compare/catalog.json"
+// The published catalog's direct https URL — no redirect involved (the old
+// canonical.github.io home redirected to a plaintext http target, which
+// fetchRemote now refuses; see Ruling 9).
+const DEFAULT_CATALOG_URL = "https://model-compare.dev/catalog.json"
 const FALLBACK_PREFIX = "openrouter/"
 
 // True for plain config objects. Arrays are excluded: their index keys are

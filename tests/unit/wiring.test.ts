@@ -55,7 +55,7 @@ function pinKeyFor(doc: Catalog, p: Priority): string {
 }
 
 // The identity the stubbed acquire reports (the default config's catalogURL).
-const REMOTE_IDENTITY = remoteIdentity("https://canonical.github.io/model-compare/catalog.json")
+const REMOTE_IDENTITY = remoteIdentity("https://model-compare.dev/catalog.json")
 
 function sourced(acquiredAt: number): Sourced {
   return { doc: DOC, acquiredAt }

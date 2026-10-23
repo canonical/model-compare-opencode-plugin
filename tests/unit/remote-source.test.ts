@@ -445,3 +445,84 @@ describe("fetchRemote body cap (hostile catalogURL hardening)", () => {
     expect(result).toEqual({ doc: seeded, acquiredAt: NOW - 10 * TTL, fromCache: true })
   })
 })
+
+describe("fetchRemote https-only redirect guard (Ruling 9)", () => {
+  // A fake fetch that answers every call with the same redirect response and
+  // records each request it received: the guard must fetch with
+  // redirect: "manual" and must NOT issue a second request when a redirect's
+  // target leaves https — the plaintext target is never contacted.
+  function redirectingFetch(status: number, location: string) {
+    const requests: Array<{ url: string; redirect?: string }> = []
+    const impl: typeof fetch = async (input, init) => {
+      requests.push({ url: String(input), redirect: init?.redirect })
+      return new Response(null, { status, headers: { location } })
+    }
+    return { fetch: impl, requests: () => requests }
+  }
+
+  test("a redirect to an http target is refused, and the plaintext target is never fetched", async () => {
+    const { storage } = memoryStorage()
+    const red = redirectingFetch(301, "http://models.example.com/catalog.json")
+    const reason = await rejectionOf(
+      fetchRemote(REMOTE_URL, storage, { fetch: red.fetch, now: () => NOW }),
+    )
+    expect(reason).toContain("remote source failed")
+    expect(reason).toMatch(/https/i)
+    // Fail closed BEFORE the second hop: one request total — the original
+    // https URL, requested in manual-redirect mode.
+    expect(red.requests()).toEqual([{ url: REMOTE_URL, redirect: "manual" }])
+  })
+
+  test("a redirect that stays on https is followed to the document", async () => {
+    const { storage } = memoryStorage()
+    let calls = 0
+    const impl: typeof fetch = async () => {
+      calls++
+      if (calls === 1) {
+        return new Response(null, {
+          status: 301,
+          headers: { location: "https://models.example.com/moved/catalog.json" },
+        })
+      }
+      return new Response(JSON.stringify(doc()), { status: 200 })
+    }
+    const result = await fetchRemote(REMOTE_URL, storage, { fetch: impl, now: () => NOW })
+    expect(result.fromCache).toBe(false)
+    expect(result.doc.models.map((m) => m.id)).toEqual(["acme/mini"])
+    expect(calls).toBe(2)
+  })
+
+  test("a redirect without a Location header is refused", async () => {
+    const { storage } = memoryStorage()
+    const requests: string[] = []
+    const impl: typeof fetch = async (input) => {
+      requests.push(String(input))
+      // A 302 carrying no Location header at all.
+      return new Response(null, { status: 302 })
+    }
+    const reason = await rejectionOf(
+      fetchRemote(REMOTE_URL, storage, { fetch: impl, now: () => NOW }),
+    )
+    expect(reason).toContain("remote source failed")
+    expect(reason).toMatch(/Location/i)
+    expect(requests).toHaveLength(1)
+  })
+
+  test("a https redirect loop is cut off, not followed forever", async () => {
+    const { storage } = memoryStorage()
+    let calls = 0
+    const impl: typeof fetch = async () => {
+      calls++
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://models.example.com/hop-${calls}` },
+      })
+    }
+    const reason = await rejectionOf(
+      fetchRemote(REMOTE_URL, storage, { fetch: impl, now: () => NOW }),
+    )
+    expect(reason).toContain("remote source failed")
+    expect(reason).toMatch(/redirect/i)
+    expect(calls).toBeLessThanOrEqual(10)
+  })
+})

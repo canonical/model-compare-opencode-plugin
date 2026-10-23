@@ -100,7 +100,7 @@ const suite = skipReason === null ? describe : describe.skip
 // files must stay independent — importing a test file would re-register its
 // suite.)
 
-const CATALOG_URL = "https://canonical.github.io/model-compare/catalog.json"
+const CATALOG_URL = "https://model-compare.dev/catalog.json"
 const DELEGATION_PROMPT =
   "Use the subagent tool to launch the 'mc-sub' subagent with the prompt " +
   "'reply with exactly: pong'. Then report its answer, or the exact error " +

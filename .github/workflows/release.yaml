@@ -69,6 +69,12 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node scripts/pack-smoke.mjs
+      # Live-remote canary gate: the release must not stage while the
+      # published catalog is not the accepted schema (Global Constraint #3,
+      # previously enforced only by hand). canary-check.mjs fails closed —
+      # a non-zero exit aborts the workflow before anything is staged.
+      - name: Live-remote canary gate (published catalog must be schema v3)
+        run: curl -fsSL https://model-compare.dev/catalog.json | node scripts/canary-check.mjs
       # Stages the package for maintainer approval (see header). Provenance
       # is automatic under trusted publishing.
       - run: npm stage publish

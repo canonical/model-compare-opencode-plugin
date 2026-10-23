@@ -35,7 +35,7 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
-const PUBLISHED_URL = "https://canonical.github.io/model-compare/catalog.json"
+const PUBLISHED_URL = "https://model-compare.dev/catalog.json"
 const PRIORITIES = ["balanced", "price", "quality"] // the plugin's Priority (src/core/types.ts)
 const TOP = 5
 const TIE = 0.005 // near-ties at or below this overall delta are tolerated (design §6)

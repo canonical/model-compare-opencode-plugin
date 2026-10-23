@@ -4,7 +4,7 @@
 // parseConfig never throws, whatever shape arrives.
 import { parseConfig, type Config } from "../../src/config"
 
-const DEFAULT_CATALOG_URL = "https://canonical.github.io/model-compare/catalog.json"
+const DEFAULT_CATALOG_URL = "https://model-compare.dev/catalog.json"
 
 function defaults(): Config {
   return {

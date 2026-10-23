@@ -99,7 +99,7 @@ Options live under `plugins[].options`:
 | `weights` | upstream | Partial overrides per named priority (`quality`, `price`, `context`, `age`), merged with upstream's weights and renormalized to sum 1 |
 | `pinDays` | `14` | Age in days after which a pick is re-evaluated |
 | `minLead` | `0.03` | Score lead needed to replace a pinned pick |
-| `catalogURL` | published catalog | Remote source URL. The catalog is published at `https://model-compare.dev/catalog.json` (`https://canonical.github.io/model-compare/catalog.json` — the plugin's built-in default — redirects there). Only point it at a source you trust: it decides which models can be picked |
+| `catalogURL` | published catalog | Remote source URL. The catalog is published at `https://model-compare.dev/catalog.json` — the plugin's built-in default, fetched directly over https. (The old `https://canonical.github.io/model-compare/catalog.json` home redirects to a plaintext `http://` target; the plugin fails closed on any redirect that leaves https.) Only point it at a source you trust: it decides which models can be picked |
 | `scriptPath` | vendored copy | Development override for a local `model_compare.py` |
 
 A present-but-invalid value logs a warning and applies the default (`weights` drop invalid entries individually; the valid remainder applies). Absent options apply defaults silently. Setup never throws; the aliases stay functional.
@@ -126,6 +126,8 @@ Resolution order: pin (if runnable) → best runnable candidate → `fallback` (
 The last validated catalog is persisted, so ranking and `/model-compare` work offline after a restart. The cache is keyed by source (URL or script path), so changing the source never serves the previous source's data. Script exit code 2 means "no candidates" *or* an argparse usage error — never read it as "no candidates" alone.
 
 **Vendored pin:** `vendor/model_compare.py` is byte-identical to upstream `v0.4.0` (`vendor/UPSTREAM.json` records repo, tag, commit, sha256). Since upstream 0.4.0 the catalog is schema v3: `pricing` carries tier and schedule structure alongside the flat scalars, and `parameters` carries the published ranking weights. The plugin accepts schema v3 ONLY — `validateCatalog` rejects anything else — and releases are gated on the live remote serving v3 (the release-gate check pipes `https://model-compare.dev/catalog.json` through `scripts/canary-check.mjs`, which fails closed when the served document is not the expected schema). Effective-tier pricing semantics still apply: `pricing` scalars hold effective-tier values — the tier in effect at 1M-token prompts — so models with OpenRouter price overrides are ranked at what a long session actually pays.
+
+**Vendored 0.4.0 cold-cache network profile:** since 0.4.0 the vendored script performs per-model endpoint-pricing fetches when building a fresh catalog (71 in the recorded run). Each fetch fails closed per model — after the script's internal retries, a failed endpoint fetch drops that model and the catalog shrinks silently (429-class responses raise without retry) — so a degraded network mostly costs time rather than correctness. A cold cache under a slow network can exceed the plugin's 60-second local budget, in which case the plugin warns and falls back (`auto` → remote, `local` → its cached document).
 
 **Upgrading the pin** — reviewed PRs only; nothing merges automatically:
 

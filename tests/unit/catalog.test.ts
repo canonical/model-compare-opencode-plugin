@@ -65,19 +65,11 @@ test("rejects schema_version 1 (dropped: the plugin never shipped, so no stored 
   expect(result.reason).toMatch(/schema_version/)
 })
 
-test("validateCatalog rejects a v2 document", () => {
-  const doc = { schema_version: 2, generated_at: "2026-10-19T00:00:00+00:00", models: [] }
-  const result = validateCatalog(doc)
-  expect(result.ok).toBe(false)
-  if (result.ok) return
-  expect(result.reason).toMatch(/must be 3, got 2/)
-})
-
 test("rejects schema_version 2 (dropped: the plugin goes v3-only with upstream 0.4.0)", () => {
   const result = validateCatalog({ ...doc(), schema_version: 2 })
   expect(result.ok).toBe(false)
   if (result.ok) return
-  expect(result.reason).toMatch(/schema_version/)
+  expect(result.reason).toMatch(/must be 3, got 2/)
 })
 
 test("rejects a model without scores", () => {

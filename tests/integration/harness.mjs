@@ -53,13 +53,12 @@
 import { spawn, execFileSync } from "node:child_process"
 import net from "node:net"
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
   closeSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
@@ -100,25 +99,41 @@ export const SERVER_PASSWORD = "integration-only"
 // module instance — vitest runs the two integration files sequentially, each
 // with a fresh module graph, so each file's phases share one scratch store
 // while the two files stay isolated from each other and from live state.
-// One exception is seeded deliberately: the run's scratch data dir gets a
-// copy of the live auth.json (read-only use), and its openrouter key is also
-// exported as OPENROUTER_API_KEY to the suite's processes — the fresh scratch
-// database's legacy credential import does not populate the credential table
-// under opencode 2.0.16 (migrations record applied; the table stays empty),
-// and without a resolvable key the openrouter provider materializes ZERO
-// models, so every model call would fail. The real auth.json is only ever
-// READ; the copy never leaves the run's git-ignored scratch dir, which
-// finalCleanup removes.
+// One seeding is deliberate: the run's OPENROUTER_API_KEY env export (server
+// and run clients, see runDirs) — the fresh scratch database's legacy
+// credential import does not populate the credential table under opencode
+// 2.0.16, and without a resolvable key the openrouter provider materializes
+// ZERO models, so every model call would fail. A/B-verified 2026-10-22 under
+// scratch data+config dirs: the env export alone materializes the provider
+// (372 models, warmup completes); a copy of the live auth.json alone
+// materializes none — so NO auth.json copy is made, keeping the live
+// credential out of the scratch tree entirely.
 export const RUN_SCRATCH_ROOT = path.join(HERE, "data")
 
 let runDirsCache = null
 function runDirs() {
   if (runDirsCache === null) {
+    // Sweep stale run-* scratch roots before creating this run's: a SIGKILLed
+    // run (or a harness crash) never reaches finalCleanup and leaves its
+    // scratch store behind. Safe under the suite's single-session constraint
+    // — no other run may be live (Ruling: the suite must run from ONE session
+    // at a time per worktree).
+    if (existsSync(RUN_SCRATCH_ROOT)) {
+      for (const entry of readdirSync(RUN_SCRATCH_ROOT)) {
+        if (entry.startsWith("run-")) {
+          rmSync(path.join(RUN_SCRATCH_ROOT, entry), { recursive: true, force: true })
+        }
+      }
+    }
     const root = path.join(RUN_SCRATCH_ROOT, `run-${process.pid}-${randomUUID().slice(0, 8)}`)
     const data = path.join(root, "data")
     const config = path.join(root, "config")
     mkdirSync(path.join(data, "opencode"), { recursive: true })
     mkdirSync(config, { recursive: true })
+    // The only credential the scratch setup needs is the openrouter API key,
+    // exported as OPENROUTER_API_KEY to the server and run clients (see the
+    // header's seeding note — the auth.json copy is NOT load-bearing). The
+    // live auth.json is only ever READ here; nothing of it lands on disk.
     const liveData = path.join(
       process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share"),
       "opencode",
@@ -126,16 +141,14 @@ function runDirs() {
     const authSrc = path.join(liveData, "auth.json")
     let openrouterApiKey
     if (existsSync(authSrc)) {
-      copyFileSync(authSrc, path.join(data, "opencode", "auth.json"))
-      chmodSync(path.join(data, "opencode", "auth.json"), 0o600)
       try {
         const entry = JSON.parse(readFileSync(authSrc, "utf8")).openrouter
         if (entry?.type === "api" && typeof entry.key === "string" && entry.key !== "") {
           openrouterApiKey = entry.key
         }
       } catch {
-        // An unparseable auth copy leaves the provider unauthenticated; the
-        // suite's model calls fail visibly rather than silently.
+        // An unparseable live auth file leaves the provider unauthenticated;
+        // the suite's model calls fail visibly rather than silently.
       }
     }
     runDirsCache = { root, data, config, openrouterApiKey }
@@ -657,8 +670,8 @@ export async function setFixture(shape) {
 export async function finalCleanup() {
   await stopServer()
   removeGeneratedConfig()
-  // The run's scratch OpenCode home (fresh kv database + seeded auth copy)
-  // goes with it: nothing of the run survives on disk.
+  // The run's scratch OpenCode home (fresh kv database) goes with it:
+  // nothing of the run survives on disk.
   if (runDirsCache !== null) {
     rmSync(runDirsCache.root, { recursive: true, force: true })
     runDirsCache = null

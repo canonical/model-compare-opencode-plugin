@@ -83,18 +83,69 @@ export type RemoteDeps = {
 // HTTP status, the body parse, and the document each get their own reason).
 // Network errors surface with their own message; non-OK statuses name the
 // status code.
+//
+// Redirects are followed MANUALLY (Ruling 9): a redirect target is not
+// re-checked by the config's https-only catalogURL rule, so a 301 to a
+// plaintext http URL would otherwise deliver the catalog unencrypted. Every
+// hop's resolved target must be https — the first non-https target fails the
+// attempt BEFORE that request is made — and one signal bounds the whole
+// chain.
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+const MAX_REDIRECT_HOPS = 5
+
 async function fetchAndValidate(
   url: string,
   doFetch: typeof fetch,
   now: () => number,
   timeoutMs: number,
 ): Promise<{ ok: true; sourced: Sourced } | { ok: false; reason: string }> {
-  let response: Response
-  try {
-    response = await doFetch(url, { signal: AbortSignal.timeout(timeoutMs) })
-  } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  const signal = AbortSignal.timeout(timeoutMs)
+  let current = url
+  for (let hops = 0; ; hops++) {
+    let response: Response
+    try {
+      response = await doFetch(current, { signal, redirect: "manual" })
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+    if (REDIRECT_STATUSES.has(response.status)) {
+      await response.body?.cancel().catch(() => {})
+      if (hops >= MAX_REDIRECT_HOPS) {
+        return { ok: false, reason: `too many redirects (more than ${MAX_REDIRECT_HOPS} hops)` }
+      }
+      const location = response.headers?.get("location")
+      if (location === null || location === "") {
+        return {
+          ok: false,
+          reason: `redirect response ${response.status} without a Location header`,
+        }
+      }
+      let target: URL
+      try {
+        target = new URL(location, current)
+      } catch {
+        return {
+          ok: false,
+          reason: `redirect response ${response.status} with an unparseable Location header`,
+        }
+      }
+      if (target.protocol !== "https:") {
+        return {
+          ok: false,
+          reason: `refusing redirect that leaves https (${target.href})`,
+        }
+      }
+      current = target.href
+      continue
+    }
+    return await acceptResponse(response, now)
   }
+}
+
+async function acceptResponse(
+  response: Response,
+  now: () => number,
+): Promise<{ ok: true; sourced: Sourced } | { ok: false; reason: string }> {
   if (!response.ok) {
     return { ok: false, reason: `HTTP status ${response.status}` }
   }
