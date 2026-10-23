@@ -148,6 +148,11 @@ export function checkRankings(catalog) {
 
 async function fetchBytes(url, what) {
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  // Ruling 9's policy extends to this tooling: a redirect chain that lands on
+  // http delivers the body over plaintext — refuse it rather than validate it.
+  if (!res.url.startsWith("https://")) {
+    throw new Error(`${what}: landed on non-https (${res.url}); refusing the body`)
+  }
   if (!res.ok) throw new Error(`${what}: HTTP ${res.status} for ${url}`)
   return Buffer.from(await res.arrayBuffer())
 }

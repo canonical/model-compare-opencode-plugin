@@ -22,6 +22,11 @@ const rawURL = (ref, file) => `https://raw.githubusercontent.com/${REPO}/${ref}/
 
 async function fetchOK(url, what) {
   const res = await fetch(url)
+  // Same policy as src/sources/remote.ts: never accept a body that traveled
+  // over plaintext, wherever a redirect chain happens to land.
+  if (!res.url.startsWith("https://")) {
+    throw new Error(`fetching ${what}: landed on non-https (${res.url}); refusing the body`)
+  }
   if (!res.ok) throw new Error(`fetching ${what}: HTTP ${res.status} for ${url}`)
   return res
 }
@@ -75,6 +80,9 @@ async function sync(tag) {
   writeFileSync(META_FILE, `${JSON.stringify({ repo: REPO, tag, commit, sha256: current }, null, 2)}\n`)
 
   const changelog = await fetch(rawURL(commit, "CHANGELOG.md"))
+  if (!changelog.url.startsWith("https://")) {
+    throw new Error(`CHANGELOG fetch landed on non-https (${changelog.url}); refusing the body`)
+  }
   if (!changelog.ok) {
     console.log(`no CHANGELOG.md at ${tag} (HTTP ${changelog.status})`)
     return
