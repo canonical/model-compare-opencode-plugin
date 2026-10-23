@@ -109,14 +109,13 @@ const REFUSAL_TEXT =
   "model-compare: openrouter/model-compare/quality is currently disabled " +
   "(no ranking data); not switching"
 const GUARD_ERROR = "model-compare: no ranking data for openrouter/model-compare/quality"
-// The model the zero-models-state baseline runs pin with --model. The root
-// default there is the disabled quality alias, so OpenCode falls back to its
-// own built-in choice (meta/muse-wonder) — which this OpenRouter account's
-// data-policy guardrails refuse at the provider level (ZDR: account settings
-// + workspace guardrail), killing the run before the plugin behavior under
-// test is reached. The pin applies only to the plain/delegating parent run:
+// The model the zero-models-state baseline runs pin with --model: the shared
+// healthy baseline (see BASELINE_MODEL in harness.mjs — its note covers why
+// EVERY unpinned run in this suite is pinned). The root default here is the
+// disabled quality alias, so without the pin OpenCode would fall to its own
+// built-in choice. The pin applies only to the plain/delegating parent run:
 // agent-scoped models (mc-sub's alias) are configured per agent and untouched.
-const BASELINE_MODEL = "openrouter/z-ai/glm-5.3-flash"
+const BASELINE_MODEL = h.BASELINE_MODEL
 
 function context(result) {
   return JSON.stringify(
@@ -328,12 +327,14 @@ function docCacheRowCount() {
   return Number(sqlite(`SELECT count(*) FROM kv WHERE key LIKE '${DOC_CACHE_KV_PREFIX}%';`).trim())
 }
 
-function deleteDocCacheRow() {
+async function deleteDocCacheRow() {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     sqlite(`DELETE FROM kv WHERE key LIKE '${DOC_CACHE_KV_PREFIX}%';`)
     if (docCacheRowCount() === 0) return
     console.warn(`[model-compare integration] doc/cache row still present (attempt ${attempt})`)
-    void h.sleep(500)
+    // The pause is the point: a setup-triggered plugin tick can re-write the
+    // row while this case runs, and the retries exist to land after it.
+    await h.sleep(500)
   }
   throw new Error(`could not delete ${DOC_CACHE_KV_PREFIX}* from ${h.opencodeDbPath()}`)
 }
@@ -645,7 +646,7 @@ suite("model-compare integration: commands, failure and degradation (spec §13)"
       const cacheSnapshot = docCacheRows()
       try {
         await h.stopServer()
-        deleteDocCacheRow()
+        await deleteDocCacheRow()
         breakStub()
         writeVariantConfig({ source: "auto", scriptPath: h.STUB_FILE })
         await h.startServer()

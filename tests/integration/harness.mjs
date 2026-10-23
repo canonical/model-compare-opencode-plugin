@@ -167,17 +167,26 @@ const RUN_TIMEOUT_MS = 150_000 // B-phase runs block through the 90-105s reload 
 const SETUP_TIMEOUT_MS = 120_000 // post-restart alias flips observed at 90-105s
 const PORT_TIMEOUT_MS = 30_000
 
+// The suite's healthy baseline model — the id every unpinned run is pinned
+// to, shared by the warmup (harness) and the baseline runs (ops-cases). ONE
+// source of truth: the literal's validity depends on the live OpenRouter
+// catalog, and the two comment blocks that used to describe the unpinned
+// fallback disagreed (the muse-wonder text here predates the 2026-10-22
+// opencode-2.0.16 isolation work — experiment-verified since: an UNPINNED
+// request falls to OpenCode's own default, `available[0]`, currently the
+// opencode provider's flint-40b-free, whose endpoint 503s and is retried
+// with backoff for minutes SERVER-SIDE; a killed client does not stop the
+// retries, which then hang the next server's graceful shutdown and cascade
+// into port-contention failures). Pinning the warmup and the baseline runs
+// to this healthy model costs nothing — the probe logs even guard-aborted
+// requests — and keeps shutdowns clean.
+export const BASELINE_MODEL = "openrouter/z-ai/glm-5.3-flash"
+
 // The warmup run's model (waitReady). The phase's own alias may be ABSENT
-// (cold start) or DISABLED (guard phase) when the warmup fires, and an
-// UNPINNED request then falls to OpenCode's own default — `available[0]`,
-// currently the opencode provider's flint-40b-free, whose endpoint 503s and
-// is retried with backoff for minutes SERVER-SIDE (a killed client does not
-// stop the retries, which then hang the next server's graceful shutdown and
-// cascade into port-contention failures). The warmup only needs to activate
-// the plugins and produce the observations — the probe logs even
-// guard-aborted requests — so pinning it to the healthy baseline model the
-// suite already relies on costs nothing and keeps shutdowns clean.
-const WARMUP_MODEL = "openrouter/z-ai/glm-5.3-flash"
+// (cold start) or DISABLED (guard phase) when the warmup fires — exactly the
+// unpinned situation BASELINE_MODEL's note above describes; the warmup only
+// needs to activate the plugins and produce the observations.
+const WARMUP_MODEL = BASELINE_MODEL
 
 // ---- prerequisites ----------------------------------------------------------
 
