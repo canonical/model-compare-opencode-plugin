@@ -674,10 +674,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // Re-create the Response around the pass-through stream (mirror of the
       // request hook's re-creation): the original body is owned by the chain
       // and never consumed by the plugin. Deliberate deviation from the spike
-      // recipe: the spike DELETED content-length/content-encoding — that was
-      // REQUEST-side hygiene for a re-created body — while here the body
-      // passes through unchanged, so the response's exact headers are kept
-      // verbatim for byte-identical passthrough.
+      // recipe: the spike DELETED content-length/content-encoding on BOTH the
+      // request and the response re-creation, while here the body passes
+      // through unchanged, so the response's exact headers are kept verbatim
+      // for byte-identical passthrough.
       event.response = new Response(body.pipeThrough(transform), {
         status: response.status,
         statusText: response.statusText,

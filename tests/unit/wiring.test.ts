@@ -1036,15 +1036,16 @@ describe("steering injection hook", () => {
 
   // wire() with the steered catalog seeded and the price pick resolved to the
   // steered model. The injection hook is the SECOND registration ([1], after
-  // the guard's); the response capture hook is the third ([2]).
-  async function wired() {
+  // the guard's); the response capture hook is the third ([2]). An optional
+  // onState seam exposes the live WireState for record-level assertions.
+  async function wired(opts: { onState?: (s: WireState) => void } = {}) {
     const harness = makeCtx()
     await writeCachedDoc(harness.ctx.storage, localIdentity(null), {
       doc: STEERED_DOC,
       acquiredAt: NOW,
     })
     await seedPin(harness.ctx.storage, STEERED_DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
-    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await wire(harness.ctx, { ...deps(vi.fn(), fakeTimers()), onState: opts.onState })
     await drain()
     expect(harness.hookCallbacks).toHaveLength(3)
     return harness
@@ -1301,7 +1302,9 @@ describe("steering injection hook", () => {
   // `state.sourced === null` early-out, both when its Q2 toast fires and when
   // the pre-existing-provider exclusion suppresses the emit — so if `sourced`
   // ever transitioned non-null → null, a session's stale order could never
-  // surface as a false `!` downgrade verdict.
+  // surface as a false `!` downgrade verdict. The assertions pin EXACT null
+  // (`toBeNull`): an absent key would read `undefined`, so deleting a null
+  // write fails the test instead of passing it vacuously.
   test("appliedSteering is nulled after the no-catalog early-out and the Q2 cannot-steer path", async () => {
     const harness = makeCtx()
     let state!: WireState
@@ -1321,10 +1324,11 @@ describe("steering injection hook", () => {
     await drain()
     expect(harness.hookCallbacks).toHaveLength(3)
 
-    // The Q2 cannot-steer path (the toast fires): the record is nulled.
+    // The Q2 cannot-steer path (the toast fires): the record is EXACTLY
+    // null — a deleted write (absent key → undefined) must fail here.
     await harness.hookCallbacks[1](steeredEvent({ sessionID: "s1" }))
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
-    expect(state.appliedSteering.s1 === null || state.appliedSteering.s1 === undefined).toBe(true)
+    expect(state.appliedSteering.s1).toBeNull()
 
     // The same no-catalog early-out with the emit suppressed (the body
     // pre-sets `provider`): no new toast, and the record is nulled too.
@@ -1335,7 +1339,43 @@ describe("steering injection hook", () => {
       }),
     )
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
-    expect(state.appliedSteering.s2 === null || state.appliedSteering.s2 === undefined).toBe(true)
+    expect(state.appliedSteering.s2).toBeNull()
+  })
+
+  // The transition vector (Task 4 Step 1's pinned promise): the write and
+  // null paths INTERACT within one session — an injecting request sets the
+  // record to the actually-applied order, and the NEXT request for the same
+  // session whose body pre-sets `provider` (the no-clobber exclusion) must
+  // null it again. Exact assertions only: a stale order surviving the second
+  // request, or an absent key standing in for the null write, both fail —
+  // a later response could otherwise match the stale order and surface a
+  // false `!` downgrade verdict.
+  test("an injecting request followed by a pre-set-provider request leaves the record exactly null", async () => {
+    let state!: WireState
+    const { hookCallbacks } = await wired({
+      onState: (s) => {
+        state = s
+      },
+    })
+
+    // First request: the injection path — the record is the REAL order
+    // (non-empty, matching the fixture's steering block).
+    await hookCallbacks[1](steeredEvent({ sessionID: "s1" }))
+    expect(state.appliedSteering.s1).toEqual(STEERING.order)
+
+    // Second request, SAME session, body pre-sets `provider`: the record is
+    // EXACTLY null — never the first request's stale order.
+    await hookCallbacks[1](
+      steeredEvent({
+        sessionID: "s1",
+        body: {
+          model: "acme/alpha",
+          messages: [{ role: "user", content: "hi" }],
+          provider: { order: ["acme"] },
+        },
+      }),
+    )
+    expect(state.appliedSteering.s1).toBeNull()
   })
 
   test("a non-alias request with no steering data emits nothing (the gate stays alias-scoped)", async () => {
