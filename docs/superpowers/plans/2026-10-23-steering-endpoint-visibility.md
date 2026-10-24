@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Alias requests carry the catalog's per-model OpenRouter `provider` steering object (so the paid price matches the ranked price), and the plugin records + surfaces (alt+e toast, report-dialog footer) which endpoint actually served each response.
+**Goal:** Alias requests carry the catalog's per-model OpenRouter `provider` steering object (so the paid price matches the ranked price), and the plugin records + surfaces (alt+e toast, report-dialog footer) which endpoint actually served each alias response.
 
-**Architecture:** Two `session.hook` registrations on the existing wire — `http.request` injects the steering block into the JSON body of alias-scoped requests; `http.response` peeks the response body's first chunks through a pass-through transform stream (never buffering) to capture the `provider` and `model` fields in a per-session capture map (keyed by sessionID). The capture state lives on the existing mutable `WireState`. The steering block is projected through `validateCatalog` with the pricing-split posture (malformed fields → absent per field, never a document rejection). A throwaway spike (Task 1) settles the four open facts in the spec before any wiring task is written in full.
+**Architecture:** Two `session.hook` registrations on the existing wire — `http.request` injects the steering block into the JSON body of alias-scoped requests; `http.response` peeks the response body's first chunks through a pass-through transform stream (never buffering) to capture the `provider` and `model` fields of alias-scoped responses in a per-session capture map (keyed by sessionID). The capture state lives on the existing mutable `WireState`. The steering block is projected through `validateCatalog` with the pricing-split posture (malformed fields → absent per field, never a document rejection). A throwaway spike (Task 1) settles the four open facts in the spec before any wiring task is written in full.
 
 **Tech Stack:** TypeScript, OpenCode plugin SDK (`session.hook`, `effect/registration`), no new dependencies.
 
@@ -24,7 +24,7 @@
 
 - **A request body already carrying a `provider` key:** the plugin must not inject (never clobber user/provider-configured routing). Test: injection hook on a body that pre-sets `provider` leaves it byte-identical. → Task 4.
 - **A response body that is not parseable JSON/SSE** (binary, empty, or malformed): capture must leave the stream byte-for-byte untouched and record nothing — never throw, never stall the stream. Test: capture hook against a malformed/chunked body. → Task 5.
-- **A session whose model is NOT an alias** (directly-picked model): zero modification of request or response — the hook must be a no-op. Test: same hooks with a non-alias model ref. → Task 4.
+- **A session whose model is NOT an alias** (directly-picked model): zero modification of request or response — the hook must be a no-op. Test: same hooks with a non-alias model ref. → Task 4, Task 5.
 - **The no-signal world (Q2 ruling):** if the spike's signal fails, the "cannot steer" toast path must fire instead of silently doing nothing. Test: wiring under a forced no-signal state emits the cannot-steer event and the TUI toasts. → Task 6.
 - **The report dialog footer with no capture** (no session yet, or a session that never made an alias call): the footer line is omitted entirely (not rendered as `last response: -`). Test: report entries with an empty capture state. → Task 7.
 
@@ -47,6 +47,8 @@
 - [x] **Step 3: Record the verdict** on the Q2 gate — does `event.model` read as the alias ref reliably across root-default/`--model`/frontmatter bindings? **Verdict: PASS** (see the findings section at the bottom) — the PASS branch applies: Tasks 2–9 proceed as written. Branch:
   - **PASS** → proceed with Tasks 2-9 as written.
   - **FAIL** → steering injection does NOT ship. Task 4 is skipped; Task 3 ships `captureEndpoint` only (`steeringFor`/`injectSteering` are not wired); Task 6 ships ONLY the cannot-steer toast — the Q2 ruling's fallback notification — its emit re-homed onto its own `http.request` registration (Task 4's hook does not exist), fired on the best available partial signal; Task 5 proceeds with capture scoped by the best available partial signal (direct-pick false positives accepted, documented in the ledger); Task 7 ships the alt+e toast + footer but the steering note MUST NOT render (nothing is steered); Task 8 documents default routing + the observability paths only (no steering claims); Task 9 records the branch in the ledger.
+
+  Either branch's no-signal behavior is testable without a live re-verdict: the tests FORCE the no-signal state at the wiring seam (Task 6 Step 1 pins the construction) and assert the cannot-steer toast path explicitly — the exact copy `cannot steer this session; OpenRouter default routing applies`, verbatim.
 
 - [x] **Step 4: Delete the spike script** — never committed; findings live in the plan/ledger only. (Deleted: `scripts/spike-steering/`, `scripts/spike-steering-driver.mjs`.)
 
@@ -111,7 +113,7 @@
 
 **Interfaces:**
 - Consumes: `steeringFor`/`injectSteering` (Task 3), the guard's existing registration pattern (`ctx.session.hook`), `parseAliasRef` for alias identification from the event's model ref (spike fact 1 confirms its reliability across binding styles).
-- Produces: a registered `http.request` hook that, for alias-scoped requests with a resolvable steering block and no pre-existing `provider` key, re-creates the Request with the injected body. Fails open.
+- Produces: a registered `http.request` hook that, for alias-scoped requests with a resolvable steering block and no pre-existing `provider` key, re-creates the Request with the injected body. Fails open. The hook also maintains the session's applied-order record (`state.appliedSteering`, the steering `order` Task 5's capture consumes): the injected `order` when injection happens, explicitly NULLED — never left stale — on every non-injection path (a non-alias request, no steering data for the pick, a pre-existing body `provider` key, an unparseable body, or any error), so a later response can never match a stale order left by an earlier request.
 
 **Spike wiring notes (Task 1, recorded 2026-10-23 — see the findings section at the bottom for full evidence):**
 - Fact 2 (mechanism verified live 4/4, including a compaction request): read via `event.request.clone().text()` → `JSON.parse` → set `body.provider = steering` (the `provider` SUB-OBJECT only; never the block's top-level `model`) → `event.request = new Request(event.request.url, { method, headers, body: JSON.stringify(modified) })` with `content-length` and `content-encoding` DELETED from the copied headers (the runtime re-derives content-length). The mutated request survived the real path and OpenRouter honored the routing (unsteered control landed on ignore-list endpoints; every steered alias run landed on an order entry — `Novita` = `novita/fp8`, 3/3).
@@ -119,11 +121,11 @@
 - Fact 4b: OpenCode NEVER sets a `provider` key in the request body itself (0/13 observed requests across all kinds and bindings) — the no-clobber guard is a safety net, not a live conflict. Body keys observed: primary `model, messages, tools, stream, stream_options, store, prompt_cache_key, usage`; title adds `reasoning`; no `models` array, no `route`.
 - Scoping confirmations: alias-bound refs arrive for primary AND compaction kinds (no request-kind filter is correct); the title kind's ref is its own agent's concrete model (naturally excluded). The disabled-alias/fallback world delivers the fallback concrete ref — no injection (fail-open to default routing), matching the Q2 ruling's expectation.
 
-- [x] **Step 1: Write the failing wiring test** — using the existing harness's fake session context: a request whose event model is the alias ref (`openrouter/model-compare/price`) gets its JSON body's `provider` set to the steering object; a DIRECTLY-PICKED request whose model id equals the current pick's id is untouched (the anti-goal case); a request with a pre-set `provider` is untouched; a non-alias request is untouched; a hook that throws is swallowed (the original request proceeds).
+- [x] **Step 1: Write the failing wiring test** — using the existing harness's fake session context: a request whose event model is the alias ref (`openrouter/model-compare/price`) gets its JSON body's `provider` set to the steering object; a DIRECTLY-PICKED request whose model id equals the current pick's id is untouched (the anti-goal case); a request with a pre-set `provider` is untouched; a non-alias request is untouched; a hook that throws is swallowed (the original request proceeds); and the applied-order record is written ONLY on the injecting path and NULLED on every non-injection path (non-alias request, no steering data, pre-set `provider`) — an injecting request followed by one with a pre-set `provider` leaves the record null, so a later response can never match the earlier, stale order.
 
 - [x] **Step 2: Run the test** — expect FAIL.
 
-- [x] **Step 3: Implement** the hook in `wire`. Per the spike: read the body, decide, re-create the Request only when injecting, and swallow every error (spec anti-goal).
+- [x] **Step 3: Implement** the hook in `wire`. Per the spike: read the body, decide, re-create the Request only when injecting (recording the applied `order`), null the applied-order record on every non-injection path, and swallow every error (spec anti-goal).
 
 - [x] **Step 4: Run the test** — expect PASS.
 
@@ -139,14 +141,14 @@
 - Test: `tests/unit/wiring.test.ts` (extend; the fake's hook signature pins `_name: "http.request"` and must accept the response hook too)
 
 **Interfaces:**
-- Consumes: `captureEndpoint` (Task 3), the pass-through transform pattern, and the steering `order` actually applied to the request — passed as `null` whenever nothing was injected (no steering data, a pre-existing body `provider`, or the Q2 FAIL branch), so `!` only ever asserts "despite the steering" when a non-empty order was actually applied (spec: endpoint membership rule).
-- Produces: a per-session capture map `lastEndpoints: Record<string, { endpoint: string; model: string; downgrade: boolean; at: number }>` keyed by sessionID — one entry per session, last-writer-wins WITHIN a session; stale entries for ended sessions are acceptable (or pruned on session removal if a hook exists). The capture record itself is `{ sessionID: string; endpoint: string; model: string; downgrade: boolean; at: number } | null` — `model` is the response's `model` field, captured alongside `provider` (spike fact 3 establishes both are present). Only primary responses update it.
+- Consumes: `captureEndpoint` (Task 3), the pass-through transform pattern, the alias scoping decision (`parseAliasRef` on the event's model ref — the same alias identification Task 4 uses), and the steering `order` actually applied to the request (Task 4's `state.appliedSteering` record) — passed as `null` whenever nothing was injected (no steering data, a pre-existing body `provider`, or the Q2 FAIL branch), so `!` only ever asserts "despite the steering" when a non-empty order was actually applied (spec: endpoint membership rule).
+- Produces: a per-session capture map `lastEndpoints: Record<string, { endpoint: string; model: string; downgrade: boolean; at: number }>` keyed by sessionID — one entry per session, last-writer-wins WITHIN a session; stale entries for ended sessions are acceptable (or pruned on session removal if a hook exists). The capture record itself is `{ sessionID: string; endpoint: string; model: string; downgrade: boolean; at: number } | null` — `model` is the response's `model` field, captured alongside `provider` (spike fact 3 establishes both are present). The capture hook is ALIAS-SCOPED (spec: constraints): it fires only when the request's model reference matches one of the three aliases' current picks — the session's model is one of the three alias refs AND the request's model equals that alias's current pick. A response to a non-alias request (a directly-picked model, another agent's model) is never captured — not wrapped, not peeked, not recorded. Only primary responses update it.
 
-- [x] **Step 1: Write the failing wiring test** — a streaming SSE response whose first chunk carries `"provider": "streamlake/fp8"` updates `state.lastEndpoints` with the right session, endpoint, and the captured response `model` alongside the endpoint; two different sessions' captures do not clobber each other; a response whose first chunk is not parseable updates nothing; a non-streaming JSON body whose `provider` key lies beyond the peek window → no capture, clean byte-for-byte pass-through, no error; a non-primary kind updates nothing; the stream's bytes are forwarded byte-for-byte (assert the full body content survives the wrap).
+- [x] **Step 1: Write the failing wiring test** — a streaming SSE response whose first chunk carries `"provider": "streamlake/fp8"` updates `state.lastEndpoints` with the right session, endpoint, and the captured response `model` alongside the endpoint; two different sessions' captures do not clobber each other; a response to a NON-ALIAS request (a directly-picked concrete model ref) is NOT captured — the response is not even wrapped and `state.lastEndpoints` stays empty; a response whose first chunk is not parseable updates nothing; a non-streaming JSON body whose `provider` key lies beyond the peek window → no capture, clean byte-for-byte pass-through, no error; a non-primary kind updates nothing; the stream's bytes are forwarded byte-for-byte (assert the full body content survives the wrap).
 
 - [x] **Step 2: Run the test** — expect FAIL.
 
-- [x] **Step 3: Implement** the hook — (a) widen the structural `session.hook` name union in `src/index.ts` (currently the literal `"http.request"`) to also accept `"http.response"`; (b) extend `HttpEvent` with the response field (the real SDK supports both hooks and the integration probe already registers `http.response` against the real context — only the repo's structural types need widening); (c) wrap `event.response.body` in a `TransformStream` that peeks at most the first few chunks, extracts `provider` (SSE or plain JSON), then forwards everything untouched. Swallow every error.
+- [x] **Step 3: Implement** the hook — (a) widen the structural `session.hook` name union in `src/index.ts` (currently the literal `"http.request"`) to also accept `"http.response"`; (b) extend `HttpEvent` with the response field (the real SDK supports both hooks and the integration probe already registers `http.response` against the real context — only the repo's structural types need widening); (c) gate on alias scope first (a non-alias response returns before any wrap) and wrap `event.response.body` in a `TransformStream` that peeks at most the first few chunks, extracts `provider` (SSE or plain JSON), then forwards everything untouched. Swallow every error.
 
 - [x] **Step 4: Run the test** — expect PASS.
 
@@ -157,15 +159,15 @@
 ### Task 6: Q2 fallback — the cannot-steer toast
 
 **Files:**
-- Modify: `src/index.ts` (the hook emits the cannot-steer rpc event when the alias-binding signal is absent but a request arrives that would have been steered)
+- Modify: `src/index.ts` (the hook emits the cannot-steer rpc event when steering cannot be applied — the alias-binding signal absent (the Q2 FAIL world) or no steering data for the pick (no catalog source) — but a request arrives that would have been steered)
 - Modify: `src/tui.tsx` (a listener on the rpc events bridge that calls `context.ui.toast.show`)
 - Test: `tests/unit/wiring.test.ts`, `tests/unit/tui.test.ts` (extend)
 
 **Interfaces:**
 - Consumes: the spike's verdict on the signal (Task 1), the existing rpc-event → TUI bridge (`rpcRegistration.events.emit` → the TUI's toast — the report-events pattern). The toast cannot be emitted from `src/index.ts`: `PluginCtx` has no ui domain; `context.ui.toast.show` exists only in the TUI plugin.
-- Produces: when the signal is absent, the hook emits a single event per session (not per request) and the TUI toasts `cannot steer this session; OpenRouter default routing applies`. Headless (no TUI) shows nothing — acceptable, matching the existing TUI-coupled surfaces.
+- Produces: when steering cannot be applied (the alias-binding signal absent or no steering data for the pick), the hook emits a single event per session (not per request) and the TUI toasts `cannot steer this session; OpenRouter default routing applies`. Headless (no TUI) shows nothing — acceptable, matching the existing TUI-coupled surfaces.
 
-- [x] **Step 1: Write the failing tests** — with the signal forced absent, a steerable alias request emits the cannot-steer event exactly once for that session and the request body is untouched; the `src/tui.tsx` listener turns the event into `context.ui.toast.show` with the right copy.
+- [x] **Step 1: Write the failing tests** — the no-signal state is FORCED at the wiring seam, never awaited from a live run: wire with no catalog source ever acquired (`state.sourced` stays `null`) — the cold start with a runnable fallback, where the aliases are enabled on the fallback so a current pick exists and a steerable alias request arrives, but no steering block can exist. With that state forced, assert: a steerable alias request emits the cannot-steer event (`cannotSteer`, `{ sessionID }`) exactly once for that session (a second request for the same session is silent; a different session gets its own emit) and the request body is untouched (no `provider` added, the Request not re-created); a body that pre-sets `provider` suppresses the emit WITHOUT consuming the once-flag (a later provider-free request still toasts); a non-alias request emits nothing (the gate stays alias-scoped). The toast path itself is explicitly testable: the `src/tui.tsx` listener turns the event into `context.ui.toast.show` with the exact copy `cannot steer this session; OpenRouter default routing applies` (assert the string VERBATIM — "the right copy" is no assertion), and toasts nothing for a foreign directory or a non-current session.
 
 - [x] **Step 2: Run the test** — expect FAIL.
 
@@ -189,14 +191,14 @@
 **Interfaces:**
 - Consumes: `state.lastEndpoints` (Task 5), looked up by the CURRENT session's id, the catalog's `ModelEntry` map (the current picks' steering blocks' `quantizations` lists resolve from the pick ids through it), the existing keybind registration pattern (`alt+m`, `alt+shift+m`), the existing toast pattern.
 - Produces:
-  - `alt+e` → toast `last response served by <endpoint>` or, when `downgrade`, `! served by <endpoint> — not in steering order`; nothing when nothing was captured.
+  - `alt+e` → toast `last response served by <endpoint>` or, when `downgrade`, `! served by <endpoint> — not in steering order`; nothing when nothing was captured. The toast covers ALIAS responses only (the capture is alias-scoped, Task 5) — the README Keyboard shortcuts row must say so, never imply it reports every response.
   - Report footer: `last response: <model> @ <endpoint>` when captured, omitted otherwise — `<model>` is the captured response `model` from Task 5's record. The steering note `routing steered to <quant> endpoints (aliases only)` derives from the union of the current picks' steering blocks' `quantizations` lists (resolved via the catalog's `ModelEntry` map) across the three ENABLED aliases; it renders only when EVERY enabled alias's current pick carries `quantizations` data (omitted when any is missing — no steering data, offline) and shows that union when so. The note renders only when steering shipped (Task 1's Q2 verdict PASS) — in the FAIL branch it never renders.
 
 - [x] **Step 1: Write the failing tests** — the TUI keybind fires the toast with the right copy in both the normal and downgrade cases and nothing with no capture; alt+e and the footer read the CURRENT session's capture; the report entries carry the footer fields only when capture exists; the steering note derives from the quantizations union across the enabled aliases' current picks and is omitted when ANY enabled alias's pick lacks `quantizations` (partial-data vector: one alias's pick without `quantizations` → note omitted) and when steering did not ship; an enabled/disabled-alias vector (a disabled alias's pick is excluded from the union).
 
 - [x] **Step 2: Run the tests** — expect FAIL.
 
-- [x] **Step 3: Implement** the keybind, the toast, and the report-dialog footer (option C from the mockup), and add the `alt+e` row to the README's Keyboard shortcuts table.
+- [x] **Step 3: Implement** the keybind, the toast, and the report-dialog footer (option C from the mockup), and add the `alt+e` row to the README's Keyboard shortcuts table — the row's wording scopes the endpoint toast to ALIAS responses only (the last alias response's served endpoint, e.g. "toast the last response's served endpoint, alias responses only"), never all responses.
 
 - [x] **Step 4: Run the tests** — expect PASS.
 

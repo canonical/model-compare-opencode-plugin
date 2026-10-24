@@ -32,8 +32,9 @@ Two fixes, one release:
   `provider` steering object in the JSON body.
 - The plugin records, per session, the endpoint and model that served the last
   response to an alias request.
-- `alt+e` toasts the last served endpoint; an endpoint outside the steering
-  order (a fallback OpenRouter chose despite the steering) is flagged `!` with
+- `alt+e` toasts the last alias response's served endpoint — alias responses
+  only, never all responses; an endpoint outside the steering order (a fallback
+  OpenRouter chose despite the steering) is flagged `!` with
   "not in steering order".
 - The report dialog (alt+shift+m) shows a footer line naming the last response's
   endpoint (the user's chosen variant C): `last response: <model> @ <endpoint>`,
