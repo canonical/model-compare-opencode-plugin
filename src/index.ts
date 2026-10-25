@@ -87,11 +87,13 @@ function stringField(obj: Record<string, unknown>, key: string): string | null {
 // The served `provider`/`model` pair carried by a response's first bytes, or
 // null while the prefix is not yet conclusive (the peek keeps going). Two
 // shapes the spike observed:
-//   - SSE (streaming): data lines — the first parseable one decides, and
-//     `data: [DONE]` concludes without a capture. Leading comment or blank
-//     lines (`: OPENROUTER PROCESSING`, spike fact 5/warmup-B) carry neither,
-//     so the peek simply continues to the next chunk rather than concluding
-//     anything from them.
+//   - SSE (streaming): data lines — the first one carrying a NON-null
+//     `provider` decides, and `data: [DONE]` concludes without a capture. A
+//     parseable line that carries no provider must NOT conclude anything:
+//     the provider may arrive in a later data line within the byte bound.
+//     Leading comment or blank lines (`: OPENROUTER PROCESSING`, spike fact
+//     5/warmup-B) carry neither, so the peek simply continues to the next
+//     chunk rather than concluding anything from them.
 //   - plain JSON (non-streaming): the whole prefix parses to an object. A
 //     prefix whose JSON is still truncated (e.g. the `provider` key beyond
 //     the peek window) stays inconclusive — the body passes through
@@ -109,7 +111,14 @@ function extractServedFields(
     try {
       const parsed = JSON.parse(payload) as unknown
       if (isPlainObject(parsed)) {
-        return { provider: stringField(parsed, "provider"), model: stringField(parsed, "model") }
+        // Only a NON-null provider concludes the peek: a parseable line
+        // without one must not end the search — the provider may arrive in a
+        // later data line within the byte bound. `data: [DONE]` (above) is
+        // the one line that concludes without a capture.
+        const provider = stringField(parsed, "provider")
+        if (provider !== null) {
+          return { provider, model: stringField(parsed, "model") }
+        }
       }
     } catch {
       // A line split across a chunk boundary — keep peeking.
@@ -270,15 +279,16 @@ export type AliasPlan = {
 // acceptable (no session-removal hook exists to prune them).
 //
 // `cannotSteerToasted[sessionID]` records that the Q2 fallback's cannot-steer
-// event was already emitted for that session: when a steerable alias request
-// (alias ref + a current pick) finds NO steering data — no catalog source,
-// `sourced === null` — the injection hook emits the event exactly ONCE PER
-// SESSION (never once per request), leaving the request body untouched. A
-// body that already carries a `provider` key binds the exclusion: the emit
-// is skipped (user-configured routing makes the "default routing applies"
-// copy false) without consuming the flag, so a later provider-free request
-// still toasts. The flag is never re-armed: a session that has seen the
-// toast keeps it for its lifetime.
+// event was already successfully emitted for that session: when a steerable
+// alias request (alias ref + a current pick) finds NO steering data — no
+// catalog source, `sourced === null` — the injection hook emits the event
+// exactly ONCE PER SESSION (never once per request), leaving the request body
+// untouched. A body that already carries a `provider` key binds the
+// exclusion: the emit is skipped (user-configured routing makes the "default
+// routing applies" copy false) without consuming the flag, so a later
+// provider-free request still toasts. The flag is set only AFTER a successful
+// emit (a failed one leaves it unset so a later request retries) and is never
+// re-armed: a session that has seen the toast keeps it for its lifetime.
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -367,9 +377,14 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     enabled: {},
     plan: { picks: {}, enabled: {} },
     registryDisabled: {},
-    appliedSteering: {},
-    lastEndpoints: {},
-    cannotSteerToasted: {},
+    // The three per-session records are keyed by ids that reach them from
+    // OUTSIDE (hook events, RPC input): null-prototype objects so a key like
+    // "constructor"/"toString"/"__proto__" can never resolve through — or
+    // mutate — the prototype chain (a plain-object lookup would return
+    // Object.prototype junk and poison the report footer).
+    appliedSteering: Object.create(null) as Record<string, string[] | null>,
+    lastEndpoints: Object.create(null) as Record<string, EndpointCapture>,
+    cannotSteerToasted: Object.create(null) as Record<string, boolean>,
   }
   // Test seam: hand the live state object out BEFORE any registration can
   // mutate it — the reference never changes, only its contents do.
@@ -490,7 +505,13 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       if (state.sourced === null) {
         state.appliedSteering[event.sessionID] = null
         const pick = state.picks[p]
+        // The whole toast block needs the RPC registration (the emit's event
+        // bridge): while it is still undefined the block is skipped ENTIRELY —
+        // no body read, no flag write, no emit — so nothing is consumed while
+        // there is nowhere to emit to (a later request retries).
+        const registration = rpcRegistration
         if (
+          registration !== undefined &&
           pick !== undefined &&
           pick.id !== null &&
           state.cannotSteerToasted[event.sessionID] !== true
@@ -512,10 +533,18 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
             // fall back to the plain emit (fail open).
           }
           if (!bodyHasProvider) {
-            state.cannotSteerToasted[event.sessionID] = true
-            if (rpcRegistration !== undefined) {
-              await rpcRegistration.events.emit("cannotSteer", { sessionID: event.sessionID })
-            }
+            // Fire-and-forget: the emit must never block the request path.
+            // The once-flag is set only AFTER a successful emit; a failed
+            // emit leaves it unset so a later request for the session
+            // retries — never a permanently lost toast.
+            void registration.events
+              .emit("cannotSteer", { sessionID: event.sessionID })
+              .then(() => {
+                state.cannotSteerToasted[event.sessionID] = true
+              })
+              .catch(() => {
+                // Leave the once-flag unset: a later request retries.
+              })
           }
         }
         return
@@ -549,7 +578,9 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       }
       // Spike fact 2's verified recipe: re-create the Request around the
       // modified body, dropping the stale length/encoding headers (the
-      // runtime re-derives content-length for the new body).
+      // runtime re-derives content-length for the new body). The original's
+      // `signal` is forwarded so abort/interrupt handling stays wired to the
+      // request the chain handed us.
       const headers = new Headers(request.headers)
       headers.delete("content-length")
       headers.delete("content-encoding")
@@ -557,6 +588,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         method: request.method,
         headers,
         body: JSON.stringify(modified),
+        signal: request.signal,
       })
       // Record the order actually applied — the response hook reads it as
       // captureEndpoint's order (the `!` flag fires only on a non-empty one).
@@ -597,13 +629,17 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       const body = response.body
       if (body === null) return
 
-      // Read ONCE, per-event, from the event's own sessionID. Task 4's
-      // last-wins-per-session sequencing assumption applies: this order is
-      // the session's most recent REQUEST's order, assumed to precede its
-      // response — a same-session response arriving after a NEWER request's
-      // injection would read the newer order (accepted; the capture stays
-      // best-effort, and non-injection paths null the record so a stale read
-      // degrades to "no verdict", never a wrong downgrade).
+      // Read ONCE, per-event, from the event's own sessionID. The record
+      // holds the session's most recent REQUEST's order — best-effort ONLY:
+      // with concurrent same-session requests (compaction/title alongside
+      // primary) the verdict can be wrong in EITHER direction. A newer
+      // non-injecting request nulls the record and this response's downgrade
+      // then reads `false` even if its own request did inject (false
+      // negative); a newer injecting request leaves ITS order here, and a
+      // response produced under the older order may be flagged `!` against
+      // the wrong order (false positive). Display-only impact — the alt+e
+      // toast and the report footer; nothing about the sent request depends
+      // on this read.
       const order = state.appliedSteering[event.sessionID] ?? null
 
       const decoder = new TextDecoder()
@@ -677,7 +713,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // recipe: the spike DELETED content-length/content-encoding on BOTH the
       // request and the response re-creation, while here the body passes
       // through unchanged, so the response's exact headers are kept verbatim
-      // for byte-identical passthrough.
+      // for byte-identical passthrough. Known cost of the re-creation: the
+      // new Response cannot carry `url`, `type` or `redirected` (they reset
+      // to ""/"default"/false) — no consumer of those fields is known in this
+      // plugin; flagged for any downstream hook that reads them.
       event.response = new Response(body.pipeThrough(transform), {
         status: response.status,
         statusText: response.statusText,
@@ -693,6 +732,8 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
   // drift), and the registration carries the report EVENT the command emits
   // so the TUI half can open the report as an instant selectable dialog.
   // Registered BEFORE the commands: the command's execute emits through it.
+  // One registration per rpcID: the host resolves duplicates last-one-wins,
+  // so a second register() would silently rebind the events bridge.
   //
   // The report footer (design §Steering visibility): the payload carries the
   // session's last-endpoint capture and the steering note. One derivation
@@ -720,11 +761,15 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       const input = rawInput as { sessionID?: string | null } | undefined
       const sessionID = input?.sessionID ?? null
       const ranks = reportRanks()
+      // ONE derivation per call: the same footer fields feed formatReport's
+      // context and the returned payload, so the transcript text and the
+      // dialog footer can never disagree.
+      const footer = reportFooter(sessionID)
       if (state.sourced === null || ranks === null) {
         return {
           text: "model-compare: no ranking data available yet",
           age: null,
-          ...reportFooter(sessionID),
+          ...footer,
           entries: [],
         }
       }
@@ -733,10 +778,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           picks: state.picks,
           overrides: config.weights,
           enabled: state.enabled,
-          capture: reportFooter(sessionID).capture,
+          capture: footer.capture,
         }),
         age: humanizeAge(Date.now() - state.sourced.acquiredAt),
-        ...reportFooter(sessionID),
+        ...footer,
         entries: reportEntries(state.sourced, ranks, { picks: state.picks, overrides: config.weights }),
       }
     },

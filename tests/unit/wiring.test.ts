@@ -19,6 +19,7 @@ import {
 } from "../../src/opencode/storage"
 import type { Acquired } from "../../src/sources"
 import { wire, type PluginCtx, type WireDeps, type WireState } from "../../src/index"
+import { ModelCompare } from "../../src/rpc"
 
 const NOW = Date.now()
 const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
@@ -219,7 +220,15 @@ function makeCtx() {
   const hookCallbacks: Array<(event: HookEvent) => Promise<void>> = []
   const commands: CommandDef[] = []
   const rpcHandlers: Record<string, (input: unknown) => Promise<unknown> | unknown> = {}
-  const rpcEmit = vi.fn(async (_name: string, _data: unknown) => {})
+  // The emit fake validates names against the REAL definition (NEW-2): an
+  // undeclared event name must fail loudly here — the old free-form mock
+  // passed anything, which is exactly the blindness that hid F1 (the plugin
+  // emitted an undeclared `cannotSteer` and every test stayed green).
+  const rpcEmit = vi.fn(async (name: string, _data: unknown) => {
+    if (!Object.hasOwn(ModelCompare.events, name)) {
+      throw new Error(`undeclared RPC event emitted: model-compare.${name}`)
+    }
+  })
   const reloads: string[] = []
   const agentModels: Record<string, ModelRef | undefined> = {
     "mc-quality": { providerID: "openrouter", id: "model-compare/quality" },
@@ -1387,6 +1396,33 @@ describe("steering injection hook", () => {
     await harness.hookCallbacks[1](event)
     expect(harness.rpcEmit).not.toHaveBeenCalled()
   })
+
+  // NEW-2 (the blindness that hid F1): every event name the plugin emits
+  // must be declared in the REAL ModelCompare.events map — the host fails
+  // emits of undeclared names ("Unknown RPC event"). The makeCtx emit fake
+  // validates the same way; this test pins the invariant explicitly over
+  // both emit sites (the Q2 cannot-steer fallback and the command's report).
+  test("every event name the plugin emits is declared in ModelCompare.events", async () => {
+    const harness = makeCtx()
+    harness.raw.options = { fallback: "openrouter/zeta/fallback" }
+    harness.raw.model.list.mockReturnValue({
+      location: {},
+      data: [{ id: "zeta/fallback", providerID: "openrouter", enabled: true }],
+    })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+
+    await harness.hookCallbacks[1](steeredEvent())
+    const command = harness.commands.find((c) => c.name === "model-compare")!
+    await command.execute({ sessionID: "s1", prompt: { text: "" } })
+
+    const names = harness.rpcEmit.mock.calls.map((call) => call[0] as string)
+    expect(names).toContain("cannotSteer")
+    expect(names).toContain("report")
+    for (const name of names) {
+      expect(Object.hasOwn(ModelCompare.events, name), `undeclared RPC event: ${name}`).toBe(true)
+    }
+  })
 })
 
 // ---- response capture hook -------------------------------------------------
@@ -1648,6 +1684,68 @@ describe("response capture hook", () => {
     await hookCallbacks[2](event)
     expect(event.response).toBe(empty)
     expect(state().lastEndpoints).toEqual({})
+  })
+
+  // F6: a parseable data line WITHOUT a provider must not conclude the peek —
+  // the provider may arrive in a later data line within the byte bound.
+  test("a leading data line without provider keeps peeking; a later one captures", async () => {
+    const { hookCallbacks, state } = await wired()
+    const NO_PROVIDER = 'data: {"id":"gen-0","choices":[{"delta":{}}]}\n\n'
+    const event = responseEvent({ response: streamResponse([NO_PROVIDER, DATA]) })
+
+    await hookCallbacks[2](event)
+    await expect((event.response as Response).text()).resolves.toBe(NO_PROVIDER + DATA)
+    expect(state().lastEndpoints.s1).toEqual({
+      sessionID: "s1",
+      endpoint: "streamlake/fp8",
+      model: "moonshotai/kimi-k3.1-fp8",
+      downgrade: false,
+      at: NOW,
+    })
+  })
+
+  // ---- the capture's report-footer hand-off (F4/NEW-2) ----------------------
+  // The capture record must reach the report RPC's footer fields through the
+  // REAL reportFooter lookup — the seam the suite previously left unexercised
+  // (the TUI tests mock the RPC; the wiring tests only ever called
+  // `report({})`).
+
+  test("the capture flows into the report RPC's footer fields for its own session", async () => {
+    const { hookCallbacks, rpcHandlers, state } = await wired()
+    const event = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](event)
+    await (event.response as Response).text()
+    expect(state().lastEndpoints.s1.endpoint).toBe("streamlake/fp8")
+
+    const report = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      capture: { endpoint: string; model: string; downgrade: boolean } | null
+      steeringNote: string | null
+    }
+    expect(report.capture).toEqual({
+      endpoint: "streamlake/fp8",
+      model: "moonshotai/kimi-k3.1-fp8",
+      downgrade: false,
+    })
+    expect(report.steeringNote).toBe("routing steered to fp8 endpoints (aliases only)")
+  })
+
+  // F3/NEW-1: sessionID values colliding with Object.prototype keys must read
+  // as "no capture" — never inherited junk that poisons the footer (a lookup
+  // of `Object.prototype` used to reach `sanitizeCatalogText(undefined)` and
+  // reject the whole report call).
+  test("the report RPC with prototype-key sessionIDs returns capture null and never throws", async () => {
+    const { hookCallbacks, rpcHandlers } = await wired()
+    const event = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](event)
+    await (event.response as Response).text()
+
+    for (const sessionID of ["constructor", "toString", "__proto__"]) {
+      const report = (await rpcHandlers.report({ sessionID })) as { capture: unknown }
+      expect(report.capture, sessionID).toBeNull()
+    }
+    // The real session still resolves its capture (the lookup itself works).
+    const real = (await rpcHandlers.report({ sessionID: "s1" })) as { capture: unknown }
+    expect(real.capture).not.toBeNull()
   })
 })
 

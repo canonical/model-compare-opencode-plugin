@@ -101,5 +101,20 @@ export const ModelCompare = Rpc.define({
         additionalProperties: false,
       },
     },
+    // The Q2 fallback's cannot-steer notification (the runtime hook emits it
+    // once per session when a steerable alias request finds no steering
+    // data): the TUI's toast listens for `rpc.model-compare.cannotSteer`.
+    // Declared here like every other event — the host fails emits of
+    // undeclared names with "Unknown RPC event".
+    cannotSteer: {
+      schema: {
+        type: "object",
+        properties: {
+          sessionID: { type: "string" },
+        },
+        required: ["sessionID"],
+        additionalProperties: false,
+      },
+    },
   },
 })

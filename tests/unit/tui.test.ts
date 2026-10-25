@@ -984,14 +984,16 @@ describe("the alt+e toast (the served endpoint)", () => {
     await drain()
     expect(active.toasts).toEqual([{ message: "last response served by Novita", variant: "success" }])
 
-    // A different session: the same payload can't serve the new lookup.
+    // A different session must surface ITS payload — a stale s1 record would
+    // re-toast Novita here. The payloads differ so the toast content itself
+    // proves the fresh lookup, not just the call addressing below.
     active.state.route = { type: "session", sessionID: "s2" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = { endpoint: "DeepInfra", model: "acme/beta", downgrade: false }
     await active.command("model-compare.endpoint").run()
     await drain()
     expect(active.toasts).toEqual([
       { message: "last response served by Novita", variant: "success" },
-      { message: "last response served by Novita", variant: "success" },
+      { message: "last response served by DeepInfra", variant: "success" },
     ])
     expect(active.report).toHaveBeenLastCalledWith(
       { sessionID: "s2" },
