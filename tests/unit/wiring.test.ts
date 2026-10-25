@@ -27,7 +27,7 @@ const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
 // One schema-valid document with a single model, so every priority's ranking
 // has the same predictable winner. Validated once and shared by the fixtures.
 const raw = {
-  schema_version: 3,
+  schema_version: 4,
   generated_at: "2026-10-09T00:00:00+00:00",
   models: [
     {

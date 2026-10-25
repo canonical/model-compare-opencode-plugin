@@ -1,5 +1,5 @@
 // src/core/catalog.ts
-// Catalog document validation (design §5). Accepts schema v3 documents (only) from
+// Catalog document validation (design §5). Accepts schema v4 documents (only) from
 // either source (vendored script or remote catalog) and projects them onto
 // the plugin's Catalog type. Validation only — ranking lives elsewhere.
 
@@ -49,11 +49,13 @@ export function validateCatalog(
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(raw)) return { ok: false, reason: "catalog must be a JSON object" }
 
-  // Supported schema: v3 only — upstream's current contract (0.4.0's
-  // schema_version 3). Every other version is rejected with the reason string
-  // the canary and the stored-document path rely on.
-  if (raw.schema_version !== 3) {
-    return { ok: false, reason: `schema_version must be 3, got ${JSON.stringify(raw.schema_version)}` }
+  // Supported schema: v4 only — upstream's current contract (0.5.0's
+  // schema_version 4). The v4 changes are additive provenance (per-model
+  // quality_as_of/quality_drift, a reshaped sources.aa block) and change
+  // nothing this validator reads; every other version is rejected with the
+  // reason string the canary and the stored-document path rely on.
+  if (raw.schema_version !== 4) {
+    return { ok: false, reason: `schema_version must be 4, got ${JSON.stringify(raw.schema_version)}` }
   }
   if (typeof raw.generated_at !== "string") {
     return { ok: false, reason: "generated_at must be a string" }
@@ -225,7 +227,7 @@ export function validateStoredCatalog(
       })
     : stored.models
   return validateCatalog({
-    schema_version: 3,
+    schema_version: 4,
     generated_at: stored.generatedAt,
     parameters: { weights: stored.weights },
     models,

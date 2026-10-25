@@ -4,9 +4,9 @@
 // Reads the catalog JSON that `python3 vendor/model_compare.py --catalog`
 // emits against live upstream data and asserts the contract the plugin
 // depends on (design §5):
-//   - schema_version is exactly 3 (upstream's contract since v0.4.0; the
+//   - schema_version is exactly 4 (upstream's contract since v0.5.0; the
 //     plugin's validateCatalog accepts nothing else, and a release only
-//     happens when the live remote serves v3)
+//     happens when the live remote serves v4)
 //   - models is a non-empty array
 //   - every model has a non-empty string id and a scores object with finite
 //     numeric quality/price/context/age and finite numeric
@@ -22,7 +22,7 @@
 import { readFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
-export const EXPECTED_SCHEMA_VERSION = 3
+export const EXPECTED_SCHEMA_VERSION = 4
 
 const COMPONENTS = ["quality", "price", "context", "age"]
 const PRIORITIES = ["balanced", "price", "quality"]

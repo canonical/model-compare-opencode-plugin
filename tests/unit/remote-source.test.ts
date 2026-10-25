@@ -23,7 +23,7 @@ const TTL = 6 * 60 * 60 * 1000
 // A minimal schema-valid document (one model, no weights or rankings).
 function doc() {
   return {
-    schema_version: 3,
+    schema_version: 4,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [
       {
@@ -329,14 +329,14 @@ describe("fetchRemote", () => {
 
   test("a schema-invalid document rejects with the validator's reason", async () => {
     const { storage } = memoryStorage()
-    const fetcher = fetchReturns(JSON.stringify({ schema_version: 2 }))
+    const fetcher = fetchReturns(JSON.stringify({ schema_version: 3 }))
 
     const reason = await rejectionOf(
       fetchRemote(REMOTE_URL, storage, { fetch: fetcher.fetch, now: () => NOW }),
     )
 
     expect(reason).toContain("remote source failed")
-    expect(reason).toContain("schema_version must be 3")
+    expect(reason).toContain("schema_version must be 4")
   })
 
   test("a record without a usable doc is treated as no cache", async () => {
@@ -542,11 +542,11 @@ describe("pool-drop warnings (final-review BUG-02)", () => {
   })
 
   test("the healthy funnel shape (endpoint_fetch_failed: 0, normal drops nonzero) emits no warning", async () => {
-    // The recorded healthy run's shape: 468 listed → 71 candidates, with 397
+    // The recorded healthy run's shape: 467 listed → 74 candidates, with 393
     // by-design funnel drops and zero endpoint failures.
     const raw = {
       ...doc(),
-      pool: { dropped: { endpoint_fetch_failed: 0, context: 275, "not ZDR": 64, batch: 47 } },
+      pool: { dropped: { endpoint_fetch_failed: 0, context: 273, "not ZDR": 62, batch: 47, pricing: 6, "tool calling": 5 } },
     }
     const { fetch } = fetchReturns(JSON.stringify(raw))
     const result = await fetchRemote(REMOTE_URL, memoryStorage().storage, { fetch, now: () => NOW })

@@ -13,8 +13,10 @@ internally consistent instead of a hand-edited copy with stale scores:
                             of the ROUNDED component scores, rounded to 4
   - rankings             <- model_compare.catalog_rankings (see the caveat)
   - models order         <- (-overall.balanced, id), as build_catalog sorts
-  - quality / aa indices <- null, quality_match null, sources.aa none/0
-  - schedules[].quality  <- null, score <- the new balanced overall
+  - quality / aa indices <- null, quality_match null, quality_as_of and
+                             quality_drift null, sources.aa none/0 (v4 shape)
+  - schedules[].quality  <- null, quality_as_of and quality_source null,
+                            score <- the new balanced overall
 
 Caveat: the recorded document only has the 4-decimal ROUNDED component scores,
 while upstream orders `rankings` from unrounded ones; a near-tie may therefore
@@ -27,7 +29,7 @@ import importlib.util
 import json
 import sys
 
-SOURCE = "fixtures/catalog-v0.4.0.json"
+SOURCE = "fixtures/catalog-v0.5.0.json"
 TARGET = "fixtures/catalog-no-quality.json"
 VENDOR = "vendor/model_compare.py"
 
@@ -78,6 +80,8 @@ def main():
         }
         model["quality"] = None
         model["quality_match"] = None
+        model["quality_as_of"] = None
+        model["quality_drift"] = None
         model["aa"] = {
             "intelligence_index": None,
             "coding_index": None,
@@ -89,14 +93,18 @@ def main():
     doc["rankings"] = mc.catalog_rankings(candidates, weights)
     doc["sources"]["aa"] = {
         "mode": "none",
-        "fallback": "none",
-        "matched": 0,
+        "matched_aa": 0,
+        "matched_catalog": 0,
         "matched_openrouter": 0,
+        "catalog_generated_at": None,
+        "intelligence_index_version": None,
     }
 
     balanced = {m["id"]: m["scores"]["overall"]["balanced"] for m in doc["models"]}
     for entry in doc["schedules"]:
         entry["quality"] = None
+        entry["quality_as_of"] = None
+        entry["quality_source"] = None
         if entry["id"] in balanced:
             entry["score"] = balanced[entry["id"]]
 

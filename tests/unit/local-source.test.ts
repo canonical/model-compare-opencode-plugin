@@ -171,7 +171,7 @@ describe("runLocalScript", () => {
 
   test("a stub whose pool lost models at the endpoint stage reports the shrink in warnings", async () => {
     const doc = {
-      schema_version: 3,
+      schema_version: 4,
       generated_at: "2026-10-09T00:00:00+00:00",
       // context rides along: the by-design funnel drops must not trigger or
       // inflate the endpoint-stage warning.
@@ -190,7 +190,7 @@ describe("runLocalScript", () => {
     // Deterministic inline stub — STUB_CATALOG fetches live upstream data, so
     // its dropped map is not stable across cache states.
     const doc = {
-      schema_version: 3,
+      schema_version: 4,
       generated_at: "2026-10-09T00:00:00+00:00",
       pool: { dropped: { endpoint_fetch_failed: 0, context: 275, "not ZDR": 64 } },
       models: [],
@@ -220,10 +220,10 @@ describe("runLocalScript", () => {
     const dir = mkdtempSync(join(tmpdir(), "local-source-bad-doc-"))
     try {
       const stub = join(dir, "stub-bad-schema.py")
-      writeFileSync(stub, `print('{"schema_version": 2}')\n`)
+      writeFileSync(stub, `print('{"schema_version": 3}')\n`)
       const reason = await rejectionOf(runLocalScript(stub))
       expect(reason).toContain("local source failed")
-      expect(reason).toContain("schema_version must be 3")
+      expect(reason).toContain("schema_version must be 4")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

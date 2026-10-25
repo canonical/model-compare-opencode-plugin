@@ -21,7 +21,7 @@ function model() {
 
 function doc() {
   return {
-    schema_version: 3,
+    schema_version: 4,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [model()],
   }
@@ -44,9 +44,9 @@ function steering() {
 }
 
 test("accepts the recorded catalog fixture", () => {
-  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8"))
-  // The gate accepts v3 only; the fixture records the v3 contract document.
-  expect(raw.schema_version).toBe(3)
+  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.5.0.json", "utf8"))
+  // The gate accepts v4 only; the fixture records the v4 contract document.
+  expect(raw.schema_version).toBe(4)
   const result = validateCatalog(raw)
   expect(result.ok).toBe(true)
   if (!result.ok) return
@@ -67,6 +67,36 @@ test("accepts the no-quality fixture with no quality weight", () => {
   expect((balanced?.price ?? 0) + (balanced?.context ?? 0) + (balanced?.age ?? 0)).toBeCloseTo(1, 10)
 })
 
+test("the no-quality fixture carries null quality provenance on every quality-less row (v4 fields)", () => {
+  // A genuine quality-blind run emits no provenance: the vendored script
+  // degrades quality_as_of/quality_drift to null on unmatched candidates and
+  // schedules, so a quality-less row claiming "as of <timestamp>" would be a
+  // provenance lie inside the contract fixture.
+  const raw = JSON.parse(readFileSync("fixtures/catalog-no-quality.json", "utf8"))
+  for (const model of raw.models) {
+    expect(model.quality, model.id).toBeNull()
+    expect(model.quality_match, model.id).toBeNull()
+    expect(model.quality_as_of, model.id).toBeNull()
+    expect(model.quality_drift, model.id).toBeNull()
+  }
+  for (const entry of raw.schedules) {
+    expect(entry.quality, entry.id).toBeNull()
+    expect(entry.quality_as_of, entry.id).toBeNull()
+    expect(entry.quality_source, entry.id).toBeNull()
+  }
+  // sources.aa is the v4 shape: disjoint matched_* buckets with provenance
+  // fields — the v3 keys (fallback/matched) are removed upstream and its
+  // validator rejects the old shape.
+  expect(raw.sources.aa).toEqual({
+    mode: "none",
+    matched_aa: 0,
+    matched_catalog: 0,
+    matched_openrouter: 0,
+    catalog_generated_at: null,
+    intelligence_index_version: null,
+  })
+})
+
 test("rejects an empty document, naming schema_version", () => {
   const result = validateCatalog({})
   expect(result.ok).toBe(false)
@@ -81,11 +111,11 @@ test("rejects schema_version 1 (dropped: the plugin never shipped, so no stored 
   expect(result.reason).toMatch(/schema_version/)
 })
 
-test("rejects schema_version 2 (dropped: the plugin goes v3-only with upstream 0.4.0)", () => {
-  const result = validateCatalog({ ...doc(), schema_version: 2 })
+test("rejects schema_version 3 (the previous contract, dropped with the 0.5.0 re-vendor)", () => {
+  const result = validateCatalog({ ...doc(), schema_version: 3 })
   expect(result.ok).toBe(false)
   if (result.ok) return
-  expect(result.reason).toMatch(/must be 3, got 2/)
+  expect(result.reason).toMatch(/must be 4, got 3/)
 })
 
 test("rejects a model without scores", () => {
@@ -364,7 +394,7 @@ test("ignores unknown top-level fields", () => {
 
 describe("validateStoredCatalog (F-16)", () => {
   const recorded = () => {
-    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.4.0.json", "utf8")))
+    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.5.0.json", "utf8")))
     if (!result.ok) throw new Error(result.reason)
     return result.catalog
   }

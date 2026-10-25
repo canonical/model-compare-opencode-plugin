@@ -47,7 +47,7 @@ export type Catalog = {
   models: ModelEntry[]
 }
 
-// Upstream.s PRIORITY_WEIGHTS at the pinned tag (v0.4.0; unchanged since v0.3.0). Used when a
+// Upstream.s PRIORITY_WEIGHTS at the pinned tag (v0.5.0; unchanged since v0.3.0). Used when a
 // document carries no `parameters.weights` at all (design §5); individual
 // missing keys fall back to weight 0 instead.
 export const DEFAULT_WEIGHTS: Record<Priority, Weights> = {
