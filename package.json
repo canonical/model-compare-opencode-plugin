@@ -44,7 +44,7 @@
     "prepublishOnly": "npm run build && npm run typecheck && npm test && node scripts/pack-smoke.mjs"
   },
   "dependencies": {
-    "@opencode/plugin": "2.0.16"
+    "@opencode/plugin": "2.0.32"
   },
   "peerDependencies": {
     "@opentui/core": "^0.5.8",
