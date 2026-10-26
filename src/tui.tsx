@@ -39,7 +39,7 @@
 
 import { Plugin } from "@opencode/plugin/tui"
 import type { KeymapCommand } from "@opencode/plugin/tui/context"
-import { TextAttributes, RGBA } from "@opentui/core"
+import { TextAttributes, RGBA, type ColorInput } from "@opentui/core"
 // The OpenTUI JSX element types (<text fg>, <box>): a type-only import loads
 // the package's solid-js JSX augmentation without a runtime import — the TUI
 // host already provides the runtime side.
@@ -101,7 +101,7 @@ let armedClose: (() => void) | null = null
 // when a dialog is armed, cleared by its close() alongside armedClose.
 let armedReveal: ((center: boolean) => void) | null = null
 
-function StatusLine(props: { line: () => string; fg?: string }) {
+function StatusLine(props: { line: () => string; fg?: ColorInput }) {
   return <text fg={props.fg}>{props.line()}</text>
 }
 
