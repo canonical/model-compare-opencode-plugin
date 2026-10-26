@@ -58,7 +58,7 @@ and failure reasons.
 
 
 - The model picker shows the three aliases: `Model Compare: balanced/price/quality → <pick>`
-- `/use-best [priority]` switches this session (a toast confirms)
+- `/use-best [priority]` switches this session (the transcript notice appears at the next turn; the TUI toast is tracked in #14)
 - `/model-compare` prints the ranking report
 - The footer shows `MC: …` while a session is open
 
