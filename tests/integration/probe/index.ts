@@ -41,6 +41,8 @@
 // The probe is deliberately dumb: it only records. Assertions live in
 // core-cases.test.mjs.
 
+// `@opencode/plugin` is resolved by the host's module map, not by this
+// package: the probe ships no node_modules and declares no dependency on it.
 import { Plugin } from "@opencode/plugin"
 import { appendFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"

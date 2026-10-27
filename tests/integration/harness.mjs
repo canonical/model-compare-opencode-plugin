@@ -362,6 +362,10 @@ function clientEnv() {
   const dirs = runDirs()
   return {
     ...process.env,
+    // OpenCode 2.1.4 resolves the project from PWD (not the spawned cwd), so
+    // pin it: a vitest run from the repo root would otherwise load the repo
+    // root's project config and never the scratch project's plugins.
+    PWD: PROJECT_DIR,
     OPENCODE_SERVER_PASSWORD: SERVER_PASSWORD,
     // Per-run OpenCode home: a fresh kv database (the plugin's storage) plus
     // an empty global config dir — both isolated from live state (runDirs).
