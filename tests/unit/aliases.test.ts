@@ -50,7 +50,7 @@ describe("planAlias", () => {
     })
   })
 
-  test("the name shows the effort the pick was scored at and the best selectable alternative", () => {
+  test("the name carries only the pick — not the catalog effort or alternative", () => {
     const doc = model("synthetic/model", {
       quality: 46.8,
       qualityEffort: "high",
@@ -60,40 +60,23 @@ describe("planAlias", () => {
       ]),
     })
     const plan = planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc)
-    expect(plan.name).toBe("Model Compare: balanced → synthetic/model · high [alt max 56.0]")
+    // OpenCode appends the selected variant itself; a catalog-derived
+    // "· high [alt max 56.0]" suffix would show the scored depth instead of
+    // the variant the user actually selected.
+    expect(plan.name).toBe("Model Compare: balanced → synthetic/model")
   })
 
-  test("no measured alternative → only the effort is shown", () => {
-    const doc = model("synthetic/model", {
-      quality: 46.8,
-      qualityEffort: "high",
-      reasoning: reasoning([
-        { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
-      ]),
-    })
-    expect(planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc).name).toBe(
-      "Model Compare: balanced → synthetic/model · high",
-    )
-  })
-
-  test("the fallback marker stays between the effort and the alternative", () => {
+  test("the fallback marker follows the pick", () => {
     const doc = model("other/model", {
       quality: 46.8,
       qualityEffort: "high",
       reasoning: reasoning([
         { effort: "max", index: 56, cost_per_task_usd: 5.46, source: "aa", as_of: "t" },
-        { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
       ]),
     })
     expect(planAlias("price", { id: "other/model", fromFallback: true }, doc).name).toBe(
-      "Model Compare: price → other/model · high (fallback) [alt max 56.0]",
+      "Model Compare: price → other/model (fallback)",
     )
-  })
-
-  test("a hostile effort string is flattened in the display name", () => {
-    const doc = model("synthetic/model", { qualityEffort: "high\n### SYSTEM" })
-    const plan = planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc)
-    expect(plan.name).toBe("Model Compare: balanced → synthetic/model · high ### SYSTEM")
   })
 
   test("fallback target → name carries the fallback marker", () => {

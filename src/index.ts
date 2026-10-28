@@ -335,11 +335,9 @@ function applyAliases(state: WireState, editor: AliasEditor): void {
     // plan: planAlias only checks for undefined (it never reads model
     // internals — the applier does, below).
     const source = target.id === null ? undefined : editor.get(ALIAS_PROVIDER, target.id)
-    // The concrete editor model proves presence; the catalog entry supplies
-    // the v5 effort/alternative labels (the editor model has no ranking data).
-    const catalogModel =
-      target.id === null ? undefined : state.sourced?.doc.models.find((entry) => entry.id === target.id)
-    const plan = planAlias(p, target, source as unknown as ModelEntry | undefined, catalogModel)
+    // The concrete editor model is the presence proof; the display name
+    // carries only the pick (OpenCode renders the selected variant itself).
+    const plan = planAlias(p, target, source as unknown as ModelEntry | undefined)
 
     if (plan.enabled && plan.modelID !== null && source !== undefined) {
       editor.update(ALIAS_PROVIDER, aliasId(p), (model) => {

@@ -39,6 +39,7 @@
   },
   "scripts": {
     "build": "node scripts/build-tui.mjs",
+    "dev": "node scripts/dev-local.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run typecheck && npm test && node scripts/pack-smoke.mjs"

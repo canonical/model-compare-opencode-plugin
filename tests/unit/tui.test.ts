@@ -19,7 +19,7 @@ import { createRoot } from "solid-js"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { ModelCompare } from "../../src/rpc"
 import { aliasId, useBestNotice, useBestRefusal } from "../../src/opencode/usebest"
-import tuiPlugin, { cappedRowsHeight } from "../../src/tui"
+import tuiPlugin, { cappedRowsHeight, strWidth } from "../../src/tui"
 
 // ---- the dialog JSX's fake element model -----------------------------------
 // src/tui.tsx is Solid JSX: the transform compiles it to @opentui/solid's
@@ -1008,6 +1008,137 @@ describe("the alt+e toast (the served endpoint)", () => {
   })
 })
 
+// ---- the report table's columns and cursor status line ----------------------
+// The report table carries the model name, quality and price only. The scored
+// variant and the best higher variant moved off the table into a status line
+// below the list, which follows the cursor from row to row. The TUI says
+// "variant" to match OpenCode even though the catalog calls it effort.
+describe("the report table's three columns and cursor status line", () => {
+  test("the table has only model, qual and price columns", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const { tree } = renderDialog(active)
+    const texts = treeTexts(tree)
+    const header = texts.find((text) => text.includes("qual") && text.includes("$ in/out"))
+
+    expect(header).toBeDefined()
+    expect(header).not.toContain("effort")
+    expect(header).not.toContain("alt")
+
+    // The row's trailing columns carry quality and price, not effort/alt.
+    const rowColumns = texts.find((text) => text.includes("8.0") && text.includes("$1/$2"))
+    expect(rowColumns).toBeDefined()
+    expect(rowColumns).not.toContain("high")
+    expect(rowColumns).not.toContain("max 56.0")
+  })
+
+  test("the status line uses OpenCode's variant terminology and follows the cursor", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+
+    await active.command("model-compare.report").run()
+    await drain()
+    expect(treeTexts(renderDialog(active).tree)).toContain(
+      "variant: high · best higher variant: max 56.0",
+    )
+
+    const modal = await active.modalCommands()
+    const down = modal?.find((item) => item.id === "model-compare.list.down")
+    expect(down).toBeDefined()
+
+    down!.run() // acme/alpha (balanced) → acme/beta (medium, no alternative)
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: medium · best higher variant: -")
+
+    down!.run() // acme/beta → acme/alpha (quality: max, no alternative)
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: max · best higher variant: -")
+  })
+
+  test("the status line clamps wide characters by display columns, not string length", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    // 深 (U+6DF1) and 寬 (U+5BBD) are East Asian Wide: 2 terminal columns
+    // each. The effort is 8 code points (16 columns) and the alternative 14
+    // (28 columns) — the old length-based clamp would have cut them to 7
+    // and 13 LENGTH units, which still render 13 and 25 columns wide and
+    // push the line past its 56-column box.
+    active.reportPayload.entries = [
+      { ...ENTRIES[0], effort: "深度深度深度深度", alternative: "寬度寬度寬度寬度寬度寬度寬度" },
+    ]
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
+    expect(status).toBeDefined()
+    // Truncated to 6 display columns (3 wide chars) + the ellipsis = 7
+    // columns — exactly the effort cap; the same for the 13-column
+    // alternative (6 wide chars + ellipsis). No mid-character cut.
+    expect(status).toBe("variant: 深度深… · best higher variant: 寬度寬度寬度…")
+    // The general guarantee: the rendered line fits the status box's
+    // 56-column budget (60-wide dialog − 4 left inset), worst case 53.
+    expect(strWidth(status!)).toBeLessThanOrEqual(56)
+  })
+
+  test("a table row clamps wide cells by display columns and keeps the row budget", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    // A 20-code-point wide-char id (40 columns) and a wide quality cell: the
+    // old length-based clamps rendered this row 60 columns against a
+    // 52-column budget (the name column measured 20 length units, so it was
+    // never trimmed, and the quality cell was padded to 5 length units =
+    // 8 columns).
+    active.reportPayload.entries = [
+      {
+        ...ENTRIES[0],
+        id: "深度深度深度深度深度深度深度深度深度深度",
+        value: "acme/alpha",
+        quality: "深度深度深度",
+      },
+    ]
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const texts = treeTexts(renderDialog(active).tree)
+    // The quality cell clamps to its 5-column cap ("深度" + ellipsis); the
+    // columns segment (quality + price) keeps its exact fixed widths.
+    const columns = texts.find((text) => text.includes("$1/$2") && text.includes("深度"))
+    expect(columns).toBe("  深度…  $1/$2   ")
+    // The name column truncates at its 35-column clamp (the ellipsis is the
+    // 34th column; one pad column follows) instead of rendering 40+.
+    const label = texts.find((text) => text.startsWith("1. 深度"))
+    expect(label).toBeDefined()
+    expect(label!.endsWith("… ")).toBe(true)
+    expect(strWidth(label!)).toBeLessThanOrEqual(35)
+    // Together the row lands exactly on the 52-char content budget.
+    expect(strWidth(label!) + strWidth(columns!)).toBeLessThanOrEqual(52)
+  })
+
+  test("the status line clamps emoji by display columns too (transport, dingbat)", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    // 🚀 (U+1F680, transport) and ✨ (U+2728, dingbat) render 2 columns each
+    // but sit OUTSIDE the East Asian Wide blocks — the ranges a naive
+    // CJK-only width table covers. Five rockets are 10 columns (2 UTF-16
+    // units each), eight sparkles 16 — both past their caps.
+    active.reportPayload.entries = [
+      { ...ENTRIES[0], effort: "🚀🚀🚀🚀🚀", alternative: "✨✨✨✨✨✨✨✨" },
+    ]
+
+    await active.command("model-compare.report").run()
+    await drain()
+    const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
+    expect(status).toBeDefined()
+    // 3 rockets (6 columns) + ellipsis = the 7-column effort cap; 6
+    // sparkles (12 columns) + ellipsis = the 13-column alternative cap.
+    expect(status).toBe("variant: 🚀🚀🚀… · best higher variant: ✨✨✨✨✨✨…")
+    expect(strWidth(status!)).toBeLessThanOrEqual(56)
+  })
+})
+
 // ---- the report dialog's footer (option C) ----------------------------------
 // The report dialog's footer (design §Decisions): the steering note ABOVE the
 // last-response line `last response: <model> @ <endpoint>`. The last-response
@@ -1116,6 +1247,32 @@ describe("dialog presentation and viewport fitting", () => {
     await drain()
 
     expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+  })
+})
+
+describe("strWidth (the clamps' display-column measure)", () => {
+  test("ASCII and CJK measure as before", () => {
+    expect(strWidth("abc")).toBe(3)
+    expect(strWidth("深度")).toBe(4) // East Asian Wide: 2 columns each
+    expect(strWidth("…")).toBe(1) // the ellipsis stays narrow — the clamps reserve exactly one column for it
+  })
+
+  test("wide emoji count 2 columns across all the symbol planes", () => {
+    expect(strWidth("🚀")).toBe(2) // U+1F680 transport — outside the CJK blocks
+    expect(strWidth("✨")).toBe(2) // U+2728 dingbat
+    expect(strWidth("🀄")).toBe(2) // U+1F004 mahjong (the range's head)
+    expect(strWidth("🪛")).toBe(2) // U+1FA9B symbols extended-A (the range's tail)
+    expect(strWidth("🛰")).toBe(2) // U+1F6F0 transport tail
+  })
+
+  test("emoji-presentation sequences (VS16) never count below 2 columns", () => {
+    // ☺️ = U+263A + U+FE0F. The VS16 itself counts 1, so the pair totals 3 —
+    // one column MORE than it renders, the safe direction for a clamp.
+    expect(strWidth("☺️")).toBe(3)
+    expect(strWidth("☺")).toBe(2) // the bare base is already covered
+    // ⌨️ = U+2328 + U+FE0F: the base is OUTSIDE every wide block, so only
+    // the VS16 rule keeps the pair at ≥ 2 — the no-undercount guarantee.
+    expect(strWidth("\u2328\uFE0F")).toBe(2)
   })
 })
 

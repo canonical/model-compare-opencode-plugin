@@ -1,5 +1,12 @@
 # Try the plugin in your own OpenCode
 
+Quick path from the repo root: `npm run dev` creates a scratch project outside
+the repository, points it at this checkout's `src/`, hides the global OpenCode
+config for the run, and launches `opencode --standalone`. The isolation is
+config-only — the scratch project shares your OpenCode data directory (auth,
+plugin state, sessions), so switches made in the dev TUI apply to your normal
+sessions too. The manual setup below is the same idea with the knobs exposed.
+
 One-time setup from the repo root (the plugin's imports — `@opencode/plugin`,
 `@opencode/plugin/tui`, `solid-js` — resolve from the repo's `node_modules`):
 

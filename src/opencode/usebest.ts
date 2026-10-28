@@ -81,18 +81,19 @@ export function readAliasViews(
 
 // The pick shown in an alias's display name:
 // "Model Compare: <p> → <pick>[ (fallback)]" → "<pick>[ (fallback)]", or null
-// for the "(unavailable)" placeholder names. A v5 name appends the scored
-// effort and the best alternative (" · high [alt max 56.0]") AFTER the pick
-// (the fallback marker stays between them); those annotations are stripped so
-// the status line and toasts still name the served model, not its depth.
+// for the "(unavailable)" placeholder names. Older v5 names appended the
+// scored effort and the best alternative (" · high [alt max 56.0]") after the
+// pick; those annotations are no longer written, but remain stripped so a
+// registry entry left by an older plugin still names the served model.
 export function pickFromName(name: string): string | null {
   const arrow = name.indexOf("→")
   if (arrow === -1) return null
   const rest = name.slice(arrow + 1).replace(/ \[alt .*\]$/, "")
-  // Our name builder separates the pick from its v5 annotations with " · ";
-  // OpenRouter ids contain no spaces, so the first segment is the pick. The
-  // fallback marker lives in the annotation segment (or already after a pick
-  // with no annotations), so carry it over exactly once.
+  // Legacy v5 names (no longer written — see above) separated the pick from
+  // its annotations with " · "; OpenRouter ids contain no spaces, so the
+  // first segment is the pick. The fallback marker lives in the annotation
+  // segment (or already after a pick with no annotations), so carry it over
+  // exactly once.
   const [pick, ...annotations] = rest.split(" · ")
   const fallback = annotations.join(" ").includes("(fallback)") ? " (fallback)" : ""
   return `${pick.trim()}${fallback}`

@@ -10,7 +10,9 @@ Each priority is a live alias inside the existing OpenRouter provider — no new
 | `openrouter/model-compare/price` | best price pick |
 | `openrouter/model-compare/quality` | best quality pick |
 
-The alias re-points at the current pick while OpenCode runs (refresh every 30 minutes, data cache 6 hours). It also pins the catalog's scored reasoning effort on each request, so the model runs at the depth its `quality` score was measured at. OpenCode's model picker shows it as `Model Compare: <priority> → <pick> · <effort> [alt <effort> <index>]`, with `(fallback)` while the fallback is serving, `(unavailable)` when the alias is disabled, and the `alt` part naming the best measured effort above the current one that OpenRouter can actually select.
+The alias re-points at the current pick while OpenCode runs (refresh every 30 minutes, data cache 6 hours). It also pins the catalog's scored reasoning effort on each request, so the model runs at the depth its `quality` score was measured at. OpenCode's model picker shows it as `Model Compare: <priority> → <pick>`, with `(fallback)` while the fallback is serving and `(unavailable)` when the alias is disabled. The alias name deliberately carries no catalog effort or alternative: OpenCode shows the selected variant itself, and a baked-in depth would not follow your `#variant` choice.
+
+**Effort vs variant.** The model-compare catalog and the request body call this reasoning level the *effort* (`quality_effort`, pinned as `reasoning.effort`); OpenCode calls the selectable model option a *variant* (`provider/model#variant`). The alias byline shows only the pick; the report dialog's status line uses “variant” and shows the highlighted model's variant and its best higher variant.
 
 
 ## Install
@@ -69,7 +71,7 @@ opencode run --model "openrouter/model-compare/price" "msg"
 Commands:
 
 - `/use-best [priority]` — switch the session to `openrouter/model-compare/<p>` (defaults to `defaultPriority`). Refuses a disabled alias.
-- `/model-compare` — top 5 per priority with scores and data age; each line also shows the reasoning effort behind `quality` (`· high`) and the best selectable measured alternative (`· alt max 56.0`). Priorities whose `weights` override actually takes effect are labelled `(custom weights)` with recomputed scores, and each alias's current pick is marked `← current pick`. The output is a synthetic message (`resume: false`): it costs no model turn and, in a headless session, surfaces in the transcript at the next turn. In the TUI it opens the report dialog instead, with `effort` and `alt` columns.
+- `/model-compare` — top 5 per priority with scores and data age; each line also shows the reasoning effort behind `quality` (`· high`) and the best selectable measured alternative (`· alt max 56.0`). Priorities whose `weights` override actually takes effect are labelled `(custom weights)` with recomputed scores, and each alias's current pick is marked `← current pick`. The output is a synthetic message (`resume: false`): it costs no model turn and, in a headless session, surfaces in the transcript at the next turn. In the TUI it opens the report dialog instead, with model, quality and price columns and a status line that follows the cursor and shows the highlighted model's variant and its best higher variant.
 
 
 ### Keyboard shortcuts
@@ -78,14 +80,14 @@ Commands:
 |---|---|
 | `alt+m` | picks dialog — all three priorities with their current picks |
 | `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
-| `alt+shift+m` | report dialog — the top-5 table; `return` switches the session to the highlighted model |
+| `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model |
 | `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
 | `esc` | close the dialog |
 
 Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before. The TUI has no `/use-best` keybinding: the slash command already covers switching.
 
-Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries the effort and alternative; the footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
+Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries only the pick (plus the fallback marker); the report dialog's status line carries the variant and best higher variant. The footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
 
 
 ## Configuration
@@ -201,11 +203,13 @@ Run a checkout instead of the npm package:
 OpenCode's local loader resolves a directory target strictly as `<dir>/index.*` — `exports` are ignored for local paths, and file targets are rejected. `src/` has the physical entry files (`src/index.ts`, `src/tui.tsx`); the plugin's imports resolve from the repo's `node_modules` (`npm ci` once at the repo root). The repo ships this setup as [`.test/`](.test/README.md). Two caveats: the watcher only watches package-style entries, so source edits need an OpenCode restart; and a bare package name is always npm-installed by OpenCode — it is not read from `node_modules` — so local testing must use the directory form.
 
 ```sh
+npm run dev                                           # launch the TUI against this checkout
 npm test                                              # unit + vendored-conformance suites (hermetic)
 npm run build                                         # regenerate dist/tui.js from src/tui.tsx
 MC_INTEGRATION=1 npx vitest run tests/integration/    # live-server suite (opt-in)
 ```
 
+- `npm run dev` writes a scratch project under `/tmp/opencode/model-compare-dev`, points its plugin entry at this checkout's `src/`, hides the global OpenCode config for the run (so an installed `model-compare-opencode-plugin` cannot shadow the local copy), and runs `opencode --standalone` there. The isolation is config-only: the scratch project shares your OpenCode data directory (auth, plugin state, sessions), so alias switches made in the dev session rewrite your live aliases. Pass extra flags after `--` (for example `npm run dev -- --auto`), or use `--print-config` to inspect the generated project config. `MC_DEV_DIR` overrides the scratch location. Source edits need an OpenCode restart.
 - Local development loads `src/` directly and needs no build; the *published* package does — OpenCode's Solid JSX transform skips `node_modules` paths, so the npm-installed raw TSX cannot load (see [Install](#install) and the troubleshooting entry). `npm run build` precompiles `src/tui.tsx` through the same Babel pipeline as the host's loader (taken from the pinned `@opentui/solid`) into `dist/tui.js`, rebasing relative imports from `src/`-relative to `dist/`-relative; `prepublishOnly` runs it, and CI builds before the packaging check. `dist/` is regenerated, never committed.
 - The integration files skip unless `MC_INTEGRATION=1`, so plain `npm test` stays hermetic. The suite drives a real `opencode serve` on 127.0.0.1:14721 and needs the `opencode` CLI and `python3` (skips cleanly when either is missing); one case needs network access and the `sqlite3` CLI.
 - `node scripts/pack-smoke.mjs` (also in CI, after `node scripts/build-tui.mjs`) packs the plugin and checks the tarball against the packaging list (files, `exports`, relative imports, and that the TUI artifact is precompiled — no react import). It does **not** load the package in OpenCode — install the tarball into a scratch project and confirm OpenCode loads it before publishing.

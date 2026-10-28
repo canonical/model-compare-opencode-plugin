@@ -117,6 +117,10 @@ type ListRow = {
   // Trailing dim right-justified columns (the report table); when
   // present, label renders in its own span so the two tones can differ.
   columns?: string
+  // The cursor-following status line (the report table's variant and best
+  // higher variant): the dialog renders this row's status below the list and
+  // swaps it as the cursor moves.
+  status?: string
   selected?: string
   value?: string
   dim?: boolean
@@ -160,6 +164,56 @@ function rowsHeight(rows: readonly ListRow[], upto: number = rows.length): numbe
 // rig.
 export function cappedRowsHeight(contentLines: number, terminalHeight: number): number {
   return Math.min(contentLines, Math.max(1, Math.floor(terminalHeight / 2) - 6))
+}
+
+// The terminal display width of one code point, in columns: 2 for the ranges
+// terminals render double-width — East Asian Wide/Fullwidth (CJK, Hangul) and
+// the emoji/symbol planes — and 1 for everything else. Deliberately
+// CONSERVATIVE: it never undercounts the wide content the catalog can carry.
+// Blocks that are only partially wide are covered at BLOCK width — the
+// narrow tails inside the SMP symbol planes (alchemical symbols, chess)
+// count 2 anyway — and variation selector 16 (emoji presentation) counts 1
+// itself, so a base+VS16 sequence such as ☺️ always totals ≥ 2 even when the
+// base alone would not. Overcounting only makes a clamp cut
+// earlier; it can never let a line render wider than its budget. (Genuinely
+// East-Asian-Ambiguous characters OUTSIDE these ranges — ±, an en dash,
+// Greek — count 1; a terminal font that renders those wide is beyond the
+// clamp's scope. Catalog text is sanitized to a single line by
+// sanitizeCatalogText, so width is the only wrap risk left.)
+function charWidth(codePoint: number): number {
+  // Variation selectors (VS1–VS16) are zero-width in reality. VS16 forces
+  // emoji presentation on the preceding base, so the pair renders 2 columns:
+  // counting the selector itself as 1 keeps any base+VS16 sequence at ≥ 2
+  // even when the base is NOT in a wide block (⌨️ = U+2328+VS16), while a
+  // wide base + VS16 overcounts by one — the safe direction.
+  if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return 1
+  if (
+    (codePoint >= 0x1100 && codePoint <= 0x115f) || // Hangul Jamo
+    (codePoint >= 0x2e80 && codePoint <= 0xa4cf) || // CJK radicals … Yi
+    (codePoint >= 0xa960 && codePoint <= 0xa97f) || // Hangul Jamo Ext. A
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) || // Hangul syllables
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK compat ideographs
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) || // vertical forms
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) || // CJK compat forms
+    (codePoint >= 0xff00 && codePoint <= 0xff60) || // fullwidth forms
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6) || // fullwidth signs
+    (codePoint >= 0x2600 && codePoint <= 0x27bf) || // misc symbols + dingbats (☺ ✨ ⚠ — ambiguous, commonly 2 under emoji presentation)
+    (codePoint >= 0x2b00 && codePoint <= 0x2bff) || // misc symbols and arrows (⭐)
+    (codePoint >= 0x1f000 && codePoint <= 0x1faff) || // the SMP symbol planes: mahjong/cards, enclosed ideographs, pictographs, transport (🚀), supplemental, symbols ext-A
+    (codePoint >= 0x20000 && codePoint <= 0x2fffd) || // CJK ext B+
+    (codePoint >= 0x30000 && codePoint <= 0x3fffd) // CJK ext G+
+  ) {
+    return 2
+  }
+  return 1
+}
+
+// A string's terminal display width (the sum of its code points' widths).
+// Exported for the unit rig, which asserts rendered lines against it.
+export function strWidth(value: string): number {
+  let width = 0
+  for (const char of value) width += charWidth(char.codePointAt(0)!)
+  return width
 }
 
 // One report entry's defensive normalization, shared by the two paths that
@@ -645,6 +699,14 @@ export default Plugin.define({
                 })
               })()}
             </scrollbox>
+            {(() => {
+              const row = selectable[cursor()]
+              return row.status === undefined ? null : (
+                <box paddingLeft={4}>
+                  <text fg={muted}>{row.status}</text>
+                </box>
+              )
+            })()}
             {footerLines.map((line) => (
               <box paddingLeft={4}>
                 <text fg={muted}>{line}</text>
@@ -708,17 +770,18 @@ export default Plugin.define({
         notify("no ranking data available yet", "error")
         return
       }
-      // The approved table: one dim column header at the top (directly above
-      // the first section), section headings with a blank line above all but
-      // the first, and right-justified quality/price columns. No score
-      // column — the transcript's text report keeps it. Column widths are
-      // clamped (qual ≤ 8, $ in/out ≤ 16) and oversized cells are truncated
-      // to their clamped width, so with the name clamp below the row budget
-      // holds even for hostile/absurd column strings: what the clamp
-      // guarantees is that a row and the header stay within the dialog's
-      // fixed 52-char content width (hostile values get truncated rather
-      // than pushed into wrapping — the 40-char rankless fallback label did
-      // exactly that before the name clamp).
+      // The approved table now carries three columns: model name, quality
+      // and price. The scored variant (the catalog's effort) and the best
+      // higher variant moved into a cursor-following status line below the
+      // list (see ListRow.status), so the table stays readable. No score
+      // column — the transcript's text report keeps it. Column widths are clamped
+      // (qual ≤ 5, $ in/out ≤ 13) and oversized cells are truncated to their
+      // clamped width, so with the name clamp below the row budget holds
+      // even for hostile/absurd column strings: what the clamp guarantees is
+      // that a row and the header stay within the dialog's fixed 52-char
+      // content width (hostile values get truncated rather than pushed into
+      // wrapping — the 40-char rankless fallback label did exactly that
+      // before the name clamp).
       const labels = data.entries.map(
         (entry) =>
           `${entry.rank === null ? "·" : entry.rank}. ${entry.id}${
@@ -727,42 +790,74 @@ export default Plugin.define({
       )
       const labelOf = new Map(data.entries.map((entry, index) => [entry, labels[index]]))
       const colW = (values: string[], floor: number, cap: number): number =>
-        Math.min(cap, Math.max(floor, ...values.map((value) => value.length)))
+        Math.min(cap, Math.max(floor, ...values.map(strWidth)))
       // Quality is a one-decimal AA index (max "100.0"); the caps leave the
       // 52-char row budget intact (see `fixed` below) while fitting real
-      // values: "minimal" (effort), "minimal 100.0" (alt), "10.00/100.00".
+      // values: "10.00/100.00" (price).
       const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 5)
-      // Catalog v5: the effort the quality was measured at and the best
-      // selectable measured alternative ("max 56.0"). A missing value is "-".
-      const effortW = colW(data.entries.map((entry) => entry.effort || "-"), "effort".length, 7)
-      const altW = colW(data.entries.map((entry) => entry.alternative || "-"), "alt".length, 13)
+      // The status line's variant and best-higher-variant cells keep their
+      // old column caps: the status box is a direct child of the 60-wide
+      // dialog with only its own 4-char left inset, so one text line has 56
+      // columns — the worst case, 9 ("variant: ") + 7 + 24 (" · best higher
+      // variant: ") + 13 = 53, leaves 3 columns of slack. Clamping each cell
+      // (in display columns, see cell) keeps hostile catalog strings from
+      // wrapping.
+      const effortW = 7
+      const altW = 13
       const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 13)
-      // A cell wider than its clamped column is truncated to fit.
-      const cell = (value: string, width: number): string =>
-        value.length > width ? value.slice(0, width - 1) + "…" : value
+      // A cell wider than its clamped column is truncated to fit — measured
+      // in terminal COLUMNS (strWidth), not string length: a 7-code-point
+      // CJK effort label renders 14 columns wide and would push the row
+      // past its budget if length were the measure.
+      const cell = (value: string, width: number): string => {
+        if (strWidth(value) <= width) return value
+        // Reserve one column for the ellipsis; walk whole code points so a
+        // wide char is never cut in half.
+        let used = 0
+        let out = ""
+        for (const char of value) {
+          const w = charWidth(char.codePointAt(0)!)
+          if (used + w > width - 1) break
+          out += char
+          used += w
+        }
+        return `${out}…`
+      }
+      // The pads match cell's measure, so a truncated wide cell and its
+      // padding land on the same column arithmetic (padEnd keeps the
+      // prices' flush right edges — see below).
+      const padEndW = (value: string, width: number): string =>
+        value + " ".repeat(Math.max(0, width - strWidth(value)))
+      const padStartW = (value: string, width: number): string =>
+        " ".repeat(Math.max(0, width - strWidth(value))) + value
       // Prices use padEnd (not padStart): padded to a common width the
       // right edges stay flush while the fixed 2-space gap between columns
       // stays exactly 2 (padStart pushed each value right by its slack).
       // The default dialog is 60 wide: 2 list insets + 6 row insets leave 52
       // for row content; the header shares that budget (plus its 3-indent).
-      // Column caps keep the budget even for hostile strings: 5+7+13+13 plus
-      // the four 2-char paddings and the 2-char row indent = 46, leaving the
-      // name floor of 6 (the name column shrinks first for real content).
-      const fixed = 2 + qualW + 2 + effortW + 2 + altW + 2 + priceW
-      const nameW = Math.max(6, Math.min(52 - fixed, Math.max(...labels.map((label) => label.length))))
-      const trim = (label: string): string =>
-        label.length > nameW ? label.slice(0, nameW - 1) + "…" : label
+      // Column caps keep the budget even for hostile strings: 5+13 plus the
+      // two 2-char paddings and the 2-char row indent = 24, leaving plenty
+      // for the name (the name column shrinks first for real content).
+      const fixed = 2 + qualW + 2 + priceW
+      const nameW = Math.max(6, Math.min(52 - fixed, Math.max(...labels.map(strWidth))))
+      const trim = (label: string): string => cell(label, nameW)
       const headerLine =
         "   " +
         " ".repeat(nameW) +
         "  " +
         "qual".padStart(qualW) +
         "  " +
-        "effort".padStart(effortW) +
-        "  " +
-        "alt".padEnd(altW) +
-        "  " +
         "$ in/out".padEnd(priceW)
+      // Catalog v5 calls this the effort the quality was measured at, and the
+      // best selectable measured alternative ("max 56.0"). OpenCode calls the
+      // selectable option a VARIANT, so the TUI uses "variant" throughout to
+      // match what the user sees in OpenCode's model picker. A missing value
+      // is "-", and "best higher variant" spells out what "alt" meant.
+      const statusOf = (entry: ReportEntry): string =>
+        `variant: ${cell(entry.effort || "-", effortW)} · best higher variant: ${cell(
+          entry.alternative || "-",
+          altW,
+        )}`
       const rows: ListRow[] = [{ label: "", headerLine }]
       for (const priority of PRIORITIES) {
         const section = data.entries.filter((entry) => entry.priority === priority)
@@ -770,16 +865,13 @@ export default Plugin.define({
         rows.push({ heading: priority, label: "" })
         for (const entry of section) {
           rows.push({
-            label: trim(labelOf.get(entry) ?? "").padEnd(nameW),
+            label: padEndW(trim(labelOf.get(entry) ?? ""), nameW),
             columns:
               "  " +
-              cell(entry.quality, qualW).padStart(qualW) +
+              padStartW(cell(entry.quality, qualW), qualW) +
               "  " +
-              cell(entry.effort || "-", effortW).padStart(effortW) +
-              "  " +
-              cell(entry.alternative || "-", altW).padEnd(altW) +
-              "  " +
-              cell(entry.price, priceW).padEnd(priceW),
+              padEndW(cell(entry.price, priceW), priceW),
+            status: statusOf(entry),
             // F-20 id split: the row DISPLAYS the sanitized id (in `label`)
             // but picks `value`, the raw catalog id switchToModel needs.
             value: entry.value,

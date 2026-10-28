@@ -439,7 +439,7 @@ describe("setup", () => {
     expect(aliasOf(byKey, "price").enabled).toBe(false)
   })
 
-  test("the alias display name carries the catalog effort and best alternative", async () => {
+  test("the alias display name carries only the pick, not the catalog effort/alternative", async () => {
     const { ctx, raw } = makeCtx()
     const { editor, byKey } = makeEditor([concrete("acme/alpha")])
     raw.model.transform.mockImplementation(async (cb) => {
@@ -452,11 +452,9 @@ describe("setup", () => {
     await wire(ctx, deps(vi.fn(), fakeTimers()))
     await drain()
 
-    // The effort/alternative come from the CATALOG entry, not the editor's
-    // concrete model definition (which carries no ranking metadata).
-    expect(aliasOf(byKey, "price").name).toBe(
-      "Model Compare: price → acme/alpha · high [alt max 56.0]",
-    )
+    // STEERED_DOC's entry carries qualityEffort/reasoning data, but the byline
+    // must show only the pick: OpenCode renders the selected variant itself.
+    expect(aliasOf(byKey, "price").name).toBe("Model Compare: price → acme/alpha")
   })
 
   test("cold start with a runnable fallback → aliases start enabled from the fallback", async () => {
