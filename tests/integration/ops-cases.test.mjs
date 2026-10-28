@@ -311,7 +311,7 @@ function hasSqlite3() {
 // The SQL goes in on STDIN, together with the .timeout dot-command: sqlite3
 // executes command-line SQL arguments and exits WITHOUT reading stdin, and a
 // restored doc/cache row's value is the cached catalog document re-serialized
-// compactly — ~300 KB for the v4 fixture (the projected doc-cache row ~262 KB),
+// compactly — ~300 KB for the v5 fixture (the projected doc-cache row ~262 KB),
 // past the 128 KiB per-argv cap (spawnSync E2BIG; the v2-era document was
 // 91 KB and always just fit).
 // Stdin has no such cap. Surfaced 2026-10-22 when the snapshot/restore

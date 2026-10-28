@@ -23,7 +23,7 @@ const TTL = 6 * 60 * 60 * 1000
 // A minimal schema-valid document (one model, no weights or rankings).
 function doc() {
   return {
-    schema_version: 4,
+    schema_version: 5,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [
       {
@@ -336,7 +336,7 @@ describe("fetchRemote", () => {
     )
 
     expect(reason).toContain("remote source failed")
-    expect(reason).toContain("schema_version must be 4")
+    expect(reason).toContain("schema_version must be 5")
   })
 
   test("a record without a usable doc is treated as no cache", async () => {

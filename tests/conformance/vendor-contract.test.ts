@@ -15,9 +15,9 @@ import { scriptEnv } from "../../src/sources/local"
 
 const VENDOR_SCRIPT = "vendor/model_compare.py"
 const UPSTREAM_META = "vendor/UPSTREAM.json"
-// Recorded at v0.5.0 (schema v4) — the vendored script's own published
+// Recorded at v0.6.0 (schema v5) — the vendored script's own published
 // catalog at the pinned tag, so this stays the contract fixture.
-const TAGGED_FIXTURE = "fixtures/catalog-v0.5.0.json"
+const TAGGED_FIXTURE = "fixtures/catalog-v0.6.0.json"
 const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
 
 const meta = JSON.parse(readFileSync(UPSTREAM_META, "utf8")) as { tag: string }

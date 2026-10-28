@@ -154,6 +154,16 @@ describe("pickFromName", () => {
     expect(pickFromName("Model Compare: price → a/b (fallback)")).toBe("a/b (fallback)")
     expect(pickFromName("Model Compare: quality (unavailable)")).toBeNull()
   })
+
+  it("strips the v5 effort and alternative annotations, keeping a fallback marker", () => {
+    expect(pickFromName("Model Compare: balanced → z-ai/glm-5.3 · high [alt max 56.0]")).toBe(
+      "z-ai/glm-5.3",
+    )
+    expect(
+      pickFromName("Model Compare: price → z-ai/glm-5.3 · high (fallback) [alt max 56.0]"),
+    ).toBe("z-ai/glm-5.3 (fallback)")
+    expect(pickFromName("Model Compare: quality → x/y · reasoning")).toBe("x/y")
+  })
 })
 
 describe("pickOf", () => {
@@ -169,6 +179,14 @@ describe("pickOf", () => {
       { id: "model-compare/price", name: "Model Compare: price → a/b (fallback)", modelID: "a/b" },
     ])
     expect(pickOf(fallback)).toBe("a/b (fallback)")
+    const [annotated] = readAliasViews([
+      {
+        id: "model-compare/balanced",
+        name: "Model Compare: balanced → a/b · high (fallback) [alt max 56.0]",
+        modelID: "a/b",
+      },
+    ])
+    expect(pickOf(annotated)).toBe("a/b (fallback)")
     const [unavailable] = readAliasViews([
       { id: "model-compare/quality", name: "Model Compare: quality (unavailable)" },
     ])

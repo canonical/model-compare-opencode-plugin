@@ -1,9 +1,16 @@
 // src/core/catalog.ts
-// Catalog document validation (design §5). Accepts schema v4 documents (only) from
+// Catalog document validation (design §5). Accepts schema v5 documents (only) from
 // either source (vendored script or remote catalog) and projects them onto
 // the plugin's Catalog type. Validation only — ranking lives elsewhere.
 
-import type { Catalog, ModelEntry, Priority, Weights } from "./types"
+import type {
+  Catalog,
+  ModelEntry,
+  Priority,
+  Reasoning,
+  ReasoningDepth,
+  Weights,
+} from "./types"
 
 const PRIORITIES: readonly Priority[] = ["balanced", "price", "quality"]
 const SCORE_KEYS = ["quality", "price", "context", "age"] as const
@@ -44,18 +51,67 @@ function steer(raw: unknown): ModelEntry["steering"] {
   return steering
 }
 
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null
+}
+
+function boolOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null
+}
+
+// The v5 reasoning block (display + request injection). Field-by-field
+// projection, never a spread of the raw object: a hostile catalogURL serves
+// arbitrary JSON here, and only the fields the plugin reads survive. A
+// non-object block reads as absent; a malformed field reads as its neutral
+// value (empty list / null) rather than rejecting the whole catalog — the
+// block is advisory metadata, not ranking input. Depth records without a
+// non-empty string effort are dropped; every other depth field is nullable.
+function projectReasoning(raw: unknown): Reasoning | undefined {
+  if (!isObject(raw)) return undefined
+  const supported =
+    Array.isArray(raw.supported_efforts) && raw.supported_efforts.every((effort) => typeof effort === "string")
+      ? [...(raw.supported_efforts as string[])]
+      : []
+  const depths: ReasoningDepth[] = []
+  if (Array.isArray(raw.depths)) {
+    for (const record of raw.depths) {
+      if (!isObject(record)) continue
+      if (typeof record.effort !== "string" || record.effort === "") continue
+      depths.push({
+        effort: record.effort,
+        index: finiteOrNull(record.index),
+        cost_per_task_usd: finiteOrNull(record.cost_per_task_usd),
+        source: stringOrNull(record.source),
+        as_of: stringOrNull(record.as_of),
+      })
+    }
+  }
+  return {
+    default_effort: stringOrNull(raw.default_effort),
+    supported_efforts: supported,
+    default_enabled: boolOrNull(raw.default_enabled),
+    mandatory: boolOrNull(raw.mandatory),
+    supports_max_tokens: boolOrNull(raw.supports_max_tokens),
+    depths,
+  }
+}
+
 export function validateCatalog(
   raw: unknown,
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(raw)) return { ok: false, reason: "catalog must be a JSON object" }
 
-  // Supported schema: v4 only — upstream's current contract (0.5.0's
-  // schema_version 4). The v4 changes are additive provenance (per-model
-  // quality_as_of/quality_drift, a reshaped sources.aa block) and change
-  // nothing this validator reads; every other version is rejected with the
-  // reason string the canary and the stored-document path rely on.
-  if (raw.schema_version !== 4) {
-    return { ok: false, reason: `schema_version must be 4, got ${JSON.stringify(raw.schema_version)}` }
+  // Supported schema: v5 only — upstream's current contract (0.6.0's
+  // schema_version 5). v5 changes the meaning of `quality` (the AA score at
+  // the selected/default reasoning effort) and adds per-model
+  // `quality_effort` and `reasoning`; every other version is rejected with
+  // the reason string the canary and the stored-document path rely on.
+  if (raw.schema_version !== 5) {
+    return { ok: false, reason: `schema_version must be 5, got ${JSON.stringify(raw.schema_version)}` }
   }
   if (typeof raw.generated_at !== "string") {
     return { ok: false, reason: "generated_at must be a string" }
@@ -160,12 +216,17 @@ export function validateCatalog(
     const input = pricing.input_per_1m
     const output = pricing.output_per_1m
     // The steering block projects (or reads as absent) per the steer() rules.
-    // The assignment sits AFTER the spread so it explicitly overrides the raw
-    // block that `...entry` would otherwise carry through verbatim — a
-    // hostile steering block must never survive onto the projected entry.
+    // The v5 quality_effort/reasoning fields project the same way: strip the
+    // raw keys before the spread so the camelCase projection is the only
+    // representation on the entry (a hostile block never survives verbatim).
+    const { steering: _rawSteering, quality_effort: _rawQualityEffort, reasoning: _rawReasoning, ...passthrough } =
+      entry
     const steering = steer(entry.steering)
+    const qualityEffort =
+      typeof entry.quality_effort === "string" && entry.quality_effort !== "" ? entry.quality_effort : null
+    const reasoning = projectReasoning(entry.reasoning)
     models.push({
-      ...entry,
+      ...passthrough,
       id: entry.id,
       name: entry.name,
       pricing: {
@@ -177,6 +238,8 @@ export function validateCatalog(
       context: entry.context,
       scores: { ...components, overall },
       quality,
+      qualityEffort,
+      reasoning,
       steering,
     })
   }
@@ -220,14 +283,33 @@ export function validateStoredCatalog(
   stored: unknown,
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(stored)) return { ok: false, reason: "stored catalog must be an object" }
+  // v5 projections always carry qualityEffort (null or a string). A record
+  // written by a pre-v5 plugin lacks it: accepting it would mix v4's max-row
+  // quality with v5's default-effort semantics, so it is a cache miss.
+  if (Array.isArray(stored.models)) {
+    for (const [i, entry] of stored.models.entries()) {
+      if (isObject(entry) && !Object.hasOwn(entry, "qualityEffort")) {
+        return { ok: false, reason: `models[${i}].qualityEffort is missing (not a v5 catalog)` }
+      }
+    }
+  }
   const models = Array.isArray(stored.models)
     ? stored.models.map((entry) => {
-        if (!isObject(entry) || entry.steering === undefined) return entry
-        return { ...entry, steering: { model: entry.id, provider: entry.steering } }
+        if (!isObject(entry)) return entry
+        // The projection renamed quality_effort to qualityEffort and unwrapped
+        // steering; rebuild the raw v5 shape. A hand-edited record re-projects
+        // (or reads as absent) exactly like a raw one would.
+        const raw: Record<string, unknown> = {
+          ...entry,
+          quality_effort: entry.qualityEffort ?? null,
+        }
+        if (entry.reasoning !== undefined) raw.reasoning = entry.reasoning
+        if (entry.steering !== undefined) raw.steering = { model: entry.id, provider: entry.steering }
+        return raw
       })
     : stored.models
   return validateCatalog({
-    schema_version: 4,
+    schema_version: 5,
     generated_at: stored.generatedAt,
     parameters: { weights: stored.weights },
     models,

@@ -19,7 +19,13 @@ import { parseConfig } from "./config"
 import { pinKey, type Pin } from "./core/pins"
 import { effectiveWeights, rankModels } from "./core/rank"
 import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced } from "./core/types"
-import { captureEndpoint, injectSteering, steeringFor } from "./core/steering"
+import {
+  captureEndpoint,
+  injectReasoning,
+  injectSteering,
+  reasoningEffortFor,
+  steeringFor,
+} from "./core/steering"
 import { formatReport, humanizeAge, reportEntries, steeringNote } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
@@ -329,7 +335,11 @@ function applyAliases(state: WireState, editor: AliasEditor): void {
     // plan: planAlias only checks for undefined (it never reads model
     // internals — the applier does, below).
     const source = target.id === null ? undefined : editor.get(ALIAS_PROVIDER, target.id)
-    const plan = planAlias(p, target, source as unknown as ModelEntry | undefined)
+    // The concrete editor model proves presence; the catalog entry supplies
+    // the v5 effort/alternative labels (the editor model has no ranking data).
+    const catalogModel =
+      target.id === null ? undefined : state.sourced?.doc.models.find((entry) => entry.id === target.id)
+    const plan = planAlias(p, target, source as unknown as ModelEntry | undefined, catalogModel)
 
     if (plan.enabled && plan.modelID !== null && source !== undefined) {
       editor.update(ALIAS_PROVIDER, aliasId(p), (model) => {
@@ -558,21 +568,36 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         state.appliedSteering[event.sessionID] = null
         return
       }
-      const steering = steeringFor(
-        event.model,
-        bodyModelOf(body),
-        state.picks,
-        new Map(state.sourced.doc.models.map((entry): [string, ModelEntry] => [entry.id, entry])),
+      const byId = new Map(
+        state.sourced.doc.models.map((entry): [string, ModelEntry] => [entry.id, entry]),
       )
-      if (steering === null) {
-        // No steering data for the pick: untouched, fail open.
-        state.appliedSteering[event.sessionID] = null
-        return
+      const bodyModel = bodyModelOf(body)
+      const steering = steeringFor(event.model, bodyModel, state.picks, byId)
+      // Two independent injections share one re-created Request: the
+      // provider-routing block and the catalog's scored reasoning effort.
+      // Each helper preserves a value the body already sets, so an explicit
+      // #variant (either signalled by the event's variant or by the body's
+      // own reasoning field) wins without withholding the other block.
+      let modified: unknown = body
+      let providerApplied = false
+      if (steering !== null) {
+        const next = injectSteering(modified, steering)
+        if (next !== modified) {
+          modified = next
+          providerApplied = true
+        }
       }
-      const modified = injectSteering(body, steering)
+      const effort = reasoningEffortFor(
+        event.model,
+        event.model.variant,
+        bodyModel,
+        state.picks,
+        byId,
+      )
+      if (effort !== null) modified = injectReasoning(modified, effort)
       if (modified === body) {
-        // The body already carries a `provider` key (or is not an object):
-        // never clobber routing the user or a provider configured.
+        // Neither block had anything to add: no steering data, no scored
+        // effort, or the body already carries the corresponding field.
         state.appliedSteering[event.sessionID] = null
         return
       }
@@ -592,7 +617,9 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       })
       // Record the order actually applied — the response hook reads it as
       // captureEndpoint's order (the `!` flag fires only on a non-empty one).
-      state.appliedSteering[event.sessionID] = steering.order
+      // A reasoning-only injection (or a body that already carried routing)
+      // applies no routing, so the record is null.
+      state.appliedSteering[event.sessionID] = providerApplied ? steering!.order : null
     } catch {
       // Fail open: any error leaves the original request proceeding
       // untouched, and records that nothing was injected.

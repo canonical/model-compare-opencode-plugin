@@ -8,6 +8,7 @@
 // not upstream's `generated_at`.
 
 import { effectiveWeights, overallScore } from "../core/rank"
+import { formatDepthAlternative } from "../core/reasoning"
 import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced, Weights } from "../core/types"
 import type { AliasTarget } from "./aliases"
 
@@ -141,6 +142,30 @@ function overrideInEffect(
   return eff.applied && !eff.zeroSum ? eff.weights : null
 }
 
+// Catalog v5 display suffixes: the effort the quality score was measured at
+// (` · high`) and the best measured selectable alternative (` · alt max 56.0`).
+// Both are catalog-derived, so they are flattened before joining the report
+// text / dialog (F-20). An absent effort/alternative adds nothing.
+function effortLabel(model: ModelEntry | undefined): string {
+  const effort = model?.qualityEffort
+  return effort == null ? "" : sanitizeCatalogText(effort)
+}
+
+function alternativeLabel(model: ModelEntry | undefined): string {
+  const alternative = formatDepthAlternative(model)
+  return alternative === "" ? "" : sanitizeCatalogText(alternative)
+}
+
+function reasoningSuffix(model: ModelEntry | undefined): string {
+  const label = effortLabel(model)
+  return label === "" ? "" : ` · ${label}`
+}
+
+function alternativeSuffix(model: ModelEntry | undefined): string {
+  const label = alternativeLabel(model)
+  return label === "" ? "" : ` · alt ${label}`
+}
+
 // §10: /model-compare's report. `ranks` arrives already ranked, top-first
 // (under the same overrides, see ReportContext), and only the top 5 per
 // priority are rendered; a ranked id absent from the catalog still takes its
@@ -175,18 +200,23 @@ export function formatReport(
         model === undefined ? null : weights ? overallScore(model, weights) : model.scores.overall[p]
       const score = value === null ? "-" : value.toFixed(3)
       const marker = pick?.id === id ? " ← current pick" : ""
-      lines.push(`${index + 1}. ${sanitizeCatalogText(id)} (${score})${marker}`)
+      lines.push(
+        `${index + 1}. ${sanitizeCatalogText(id)} (${score})${reasoningSuffix(model)}${alternativeSuffix(model)}${marker}`,
+      )
     }
     // A pick that is not visible in the list above needs its own line.
     if (pick !== undefined && (pick.id === null || !top.includes(pick.id))) {
+      const pickModel = pick.id === null ? undefined : byId.get(pick.id)
       if (pick.id === null) {
         lines.push("Current pick: none (alias disabled)")
       } else if (pick.fromFallback) {
-        lines.push(`Current pick: ${sanitizeCatalogText(pick.id)} (fallback)`)
+        lines.push(
+          `Current pick: ${sanitizeCatalogText(pick.id)} (fallback)${reasoningSuffix(pickModel)}${alternativeSuffix(pickModel)}`,
+        )
       } else {
         const rank = ranks[p].indexOf(pick.id)
         lines.push(
-          `Current pick: ${sanitizeCatalogText(pick.id)} (${rank === -1 ? "not in the ranking" : `rank ${rank + 1}`})`,
+          `Current pick: ${sanitizeCatalogText(pick.id)} (${rank === -1 ? "not in the ranking" : `rank ${rank + 1}`})${reasoningSuffix(pickModel)}${alternativeSuffix(pickModel)}`,
         )
       }
     }
@@ -225,6 +255,10 @@ export type ReportEntry = {
   value: string
   score: string
   quality: string
+  // The effort behind `quality` ("" when unknown) and the best selectable
+  // measured alternative as "<effort> <index>" ("" when there is none).
+  effort: string
+  alternative: string
   price: string
   current: boolean
   fromFallback: boolean
@@ -279,6 +313,8 @@ export function reportEntries(
         value: id,
         score: scoreValue === null ? "-" : scoreValue.toFixed(3),
         quality: fmtQuality(model),
+        effort: effortLabel(model),
+        alternative: alternativeLabel(model),
         price: fmtPrice(model),
         current,
         // A top-5 row that IS the current pick carries the pick's fallback
@@ -302,6 +338,8 @@ export function reportEntries(
         value: pick.id,
         score: "-",
         quality: fmtQuality(model),
+        effort: effortLabel(model),
+        alternative: alternativeLabel(model),
         price: fmtPrice(model),
         current: true,
         fromFallback: pick.fromFallback,

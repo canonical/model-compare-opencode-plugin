@@ -10,8 +10,10 @@
 
 import type { Priority } from "../core/types"
 
-// A model reference as configured on an agent (`agent.model`).
-export type ModelRef = { providerID: string; id: string }
+// A model reference (agent config, session selection or request event). The
+// optional `variant` is the `#variant` selection; alias identification stays
+// variant-blind (it is not stable across binding styles).
+export type ModelRef = { providerID: string; id: string; variant?: string }
 
 const ALIAS_PREFIX = "model-compare/"
 

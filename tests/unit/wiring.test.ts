@@ -27,7 +27,7 @@ const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
 // One schema-valid document with a single model, so every priority's ranking
 // has the same predictable winner. Validated once and shared by the fixtures.
 const raw = {
-  schema_version: 4,
+  schema_version: 5,
   generated_at: "2026-10-09T00:00:00+00:00",
   models: [
     {
@@ -58,6 +58,19 @@ const steeredRaw = {
   models: [
     {
       ...raw.models[0],
+      quality: 46.8,
+      quality_effort: "high",
+      reasoning: {
+        default_effort: "high",
+        supported_efforts: ["max", "high"],
+        default_enabled: true,
+        mandatory: false,
+        supports_max_tokens: null,
+        depths: [
+          { effort: "max", index: 56, cost_per_task_usd: 5.46, source: "aa", as_of: "t" },
+          { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
+        ],
+      },
       steering: {
         model: raw.models[0].id,
         provider: {
@@ -101,7 +114,7 @@ function acquired(acquiredAt = NOW): Acquired {
 
 // ---- mocks -----------------------------------------------------------------
 
-type ModelRef = { providerID: string; id: string }
+type ModelRef = { providerID: string; id: string; variant?: string }
 
 type EditorModel = {
   providerID: string
@@ -424,6 +437,26 @@ describe("setup", () => {
     // Priorities without a stored pin stay disabled.
     expect(aliasOf(byKey, "balanced").enabled).toBe(false)
     expect(aliasOf(byKey, "price").enabled).toBe(false)
+  })
+
+  test("the alias display name carries the catalog effort and best alternative", async () => {
+    const { ctx, raw } = makeCtx()
+    const { editor, byKey } = makeEditor([concrete("acme/alpha")])
+    raw.model.transform.mockImplementation(async (cb) => {
+      cb(editor)
+      return { dispose: vi.fn(async () => {}) }
+    })
+    await writeCachedDoc(ctx.storage, localIdentity(null), { doc: STEERED_DOC, acquiredAt: NOW })
+    await seedPin(ctx.storage, STEERED_DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
+
+    await wire(ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+
+    // The effort/alternative come from the CATALOG entry, not the editor's
+    // concrete model definition (which carries no ranking metadata).
+    expect(aliasOf(byKey, "price").name).toBe(
+      "Model Compare: price → acme/alpha · high [alt max 56.0]",
+    )
   })
 
   test("cold start with a runnable fallback → aliases start enabled from the fallback", async () => {
@@ -1122,6 +1155,55 @@ describe("steering injection hook", () => {
     expect(body.provider).toEqual(PROVIDER)
   })
 
+  test("the alias request pins the catalog's scored reasoning effort in its body", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent()
+    await hookCallbacks[1](event)
+    const body = await bodyOf(event.request as Request)
+    // Both blocks ride the same re-created Request.
+    expect(body.provider).toEqual(PROVIDER)
+    expect(body.reasoning).toEqual({ effort: "high" })
+  })
+
+  test("an explicit #variant selection wins over the catalog effort (the provider still steers)", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({
+      model: { providerID: "openrouter", id: "model-compare/price", variant: "max" },
+    })
+    const original = event.request as Request
+    await hookCallbacks[1](event)
+    const body = await bodyOf(event.request as Request)
+    expect(event.request).not.toBe(original) // the provider block still applies
+    expect(body.provider).toEqual(PROVIDER)
+    expect(Object.hasOwn(body, "reasoning")).toBe(false)
+  })
+
+  test("a body that already sets reasoning is untouched by the effort injection", async () => {
+    const { hookCallbacks } = await wired()
+    const event = steeredEvent({
+      body: {
+        model: "acme/alpha",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { effort: "max", exclude: false },
+      },
+    })
+    await hookCallbacks[1](event)
+    const body = await bodyOf(event.request as Request)
+    expect(body.reasoning).toEqual({ effort: "max", exclude: false })
+    expect(body.provider).toEqual(PROVIDER)
+  })
+
+  test("a pick with no scored effort injects no reasoning", async () => {
+    const harness = makeCtx()
+    await seedDocCache(harness.ctx.storage) // DOC's model has qualityEffort null
+    await seedPin(harness.ctx.storage, DOC, "price", { v: 1, id: "acme/alpha", since: NOW })
+    await wire(harness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    const event = steeredEvent()
+    await harness.hookCallbacks[1](event)
+    expect(Object.hasOwn(await bodyOf(event.request as Request), "reasoning")).toBe(false)
+  })
+
   test("a compaction-kind request bound to the alias is steered too (no kind filter)", async () => {
     const { hookCallbacks } = await wired()
     const event = steeredEvent({ kind: "compaction" })
@@ -1139,7 +1221,7 @@ describe("steering injection hook", () => {
     expect(Object.hasOwn(await bodyOf((original as Request).clone()), "provider")).toBe(false)
   })
 
-  test("a body that already carries a provider key is untouched (no clobber)", async () => {
+  test("a body that already carries a provider key keeps it (no clobber) while the effort still lands", async () => {
     const { hookCallbacks } = await wired()
     const event = steeredEvent({
       body: {
@@ -1147,14 +1229,15 @@ describe("steering injection hook", () => {
         provider: { order: ["elsewhere/fp4"], ignore: [], allow_fallbacks: false },
       },
     })
-    const original = event.request
     await hookCallbacks[1](event)
-    expect(event.request).toBe(original)
-    expect((await bodyOf((original as Request).clone())).provider).toEqual({
+    const body = await bodyOf(event.request as Request)
+    expect(body.provider).toEqual({
       order: ["elsewhere/fp4"],
       ignore: [],
       allow_fallbacks: false,
     })
+    // Independent fields: the routing no-clobber does not withhold the effort.
+    expect(body.reasoning).toEqual({ effort: "high" })
   })
 
   test("a non-alias request is untouched", async () => {

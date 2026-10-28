@@ -186,6 +186,8 @@ function toReportEntries(raw: unknown): ReportEntry[] {
         value: entry.value,
         score: typeof entry.score === "string" ? entry.score : "-",
         quality: typeof entry.quality === "string" ? entry.quality : "-",
+        effort: typeof entry.effort === "string" ? entry.effort : "",
+        alternative: typeof entry.alternative === "string" ? entry.alternative : "",
         price: typeof entry.price === "string" ? entry.price : "-",
         current: entry.current === true,
         fromFallback: entry.fromFallback === true,
@@ -726,8 +728,15 @@ export default Plugin.define({
       const labelOf = new Map(data.entries.map((entry, index) => [entry, labels[index]]))
       const colW = (values: string[], floor: number, cap: number): number =>
         Math.min(cap, Math.max(floor, ...values.map((value) => value.length)))
-      const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 8)
-      const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 16)
+      // Quality is a one-decimal AA index (max "100.0"); the caps leave the
+      // 52-char row budget intact (see `fixed` below) while fitting real
+      // values: "minimal" (effort), "minimal 100.0" (alt), "10.00/100.00".
+      const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 5)
+      // Catalog v5: the effort the quality was measured at and the best
+      // selectable measured alternative ("max 56.0"). A missing value is "-".
+      const effortW = colW(data.entries.map((entry) => entry.effort || "-"), "effort".length, 7)
+      const altW = colW(data.entries.map((entry) => entry.alternative || "-"), "alt".length, 13)
+      const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 13)
       // A cell wider than its clamped column is truncated to fit.
       const cell = (value: string, width: number): string =>
         value.length > width ? value.slice(0, width - 1) + "…" : value
@@ -736,8 +745,11 @@ export default Plugin.define({
       // stays exactly 2 (padStart pushed each value right by its slack).
       // The default dialog is 60 wide: 2 list insets + 6 row insets leave 52
       // for row content; the header shares that budget (plus its 3-indent).
-      const fixed = 2 + qualW + 2 + priceW
-      const nameW = Math.max(8, Math.min(52 - fixed, Math.max(...labels.map((label) => label.length))))
+      // Column caps keep the budget even for hostile strings: 5+7+13+13 plus
+      // the four 2-char paddings and the 2-char row indent = 46, leaving the
+      // name floor of 6 (the name column shrinks first for real content).
+      const fixed = 2 + qualW + 2 + effortW + 2 + altW + 2 + priceW
+      const nameW = Math.max(6, Math.min(52 - fixed, Math.max(...labels.map((label) => label.length))))
       const trim = (label: string): string =>
         label.length > nameW ? label.slice(0, nameW - 1) + "…" : label
       const headerLine =
@@ -745,6 +757,10 @@ export default Plugin.define({
         " ".repeat(nameW) +
         "  " +
         "qual".padStart(qualW) +
+        "  " +
+        "effort".padStart(effortW) +
+        "  " +
+        "alt".padEnd(altW) +
         "  " +
         "$ in/out".padEnd(priceW)
       const rows: ListRow[] = [{ label: "", headerLine }]
@@ -758,6 +774,10 @@ export default Plugin.define({
             columns:
               "  " +
               cell(entry.quality, qualW).padStart(qualW) +
+              "  " +
+              cell(entry.effort || "-", effortW).padStart(effortW) +
+              "  " +
+              cell(entry.alternative || "-", altW).padEnd(altW) +
               "  " +
               cell(entry.price, priceW).padEnd(priceW),
             // F-20 id split: the row DISPLAYS the sanitized id (in `label`)

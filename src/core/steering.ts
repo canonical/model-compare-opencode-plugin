@@ -12,6 +12,7 @@
 // and the steeringFor cases here); a semantic change to one must be mirrored
 // in the other.
 
+import { gatewayEffort } from "./reasoning"
 import type { ModelEntry, Priority } from "./types"
 
 // A model reference as the hook event carries it (`event.model`), mirroring
@@ -75,6 +76,30 @@ export function steeringFor(
   return models.get(pick.id)?.steering ?? null
 }
 
+// The reasoning effort an alias request must pin, or null when it must not:
+// the same alias/body/pick/model gates as steeringFor, plus the explicit
+// variant rule. `#variant` is OpenCode's per-request selection (the event
+// carries it on `model.variant`); "default" is the no-selection sentinel
+// OpenCode stamps on `--model` refs (spike fact 1), so it does NOT count as an
+// explicit variant. The catalog's `quality_effort` is the effort the score was
+// measured at; the "reasoning" sentinel is a producer label and is never sent
+// to the gateway.
+export function reasoningEffortFor(
+  eventModel: ModelRef,
+  variant: string | undefined,
+  bodyModel: string | undefined,
+  picks: Partial<Record<Priority, AliasTarget>>,
+  models: Map<string, ModelEntry>,
+): string | null {
+  const p = aliasPriority(eventModel)
+  if (p === null) return null
+  if (variant !== undefined && variant !== "default") return null
+  const pick = picks[p]
+  if (pick === undefined || pick.id === null) return null
+  if (bodyModel !== undefined && bodyModel !== pick.id) return null
+  return gatewayEffort(models.get(pick.id)?.qualityEffort)
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -101,6 +126,17 @@ export function injectSteering(body: unknown, steering: Steering): unknown {
       allow_fallbacks: steering.allow_fallbacks,
     },
   }
+}
+
+// The body with `reasoning: { effort }` added — or the input untouched when
+// it already carries `reasoning` or the legacy `reasoning_effort` field (an
+// explicit #variant, user config or another plugin wins; the plugin never
+// clobbers a reasoning choice it did not make) or is not a JSON object.
+// Reference inequality is the wiring's "re-create the Request" signal.
+export function injectReasoning(body: unknown, effort: string): unknown {
+  if (!isPlainObject(body)) return body
+  if (Object.hasOwn(body, "reasoning") || Object.hasOwn(body, "reasoning_effort")) return body
+  return { ...body, reasoning: { effort } }
 }
 
 // normalize_provider (vendor/model_compare.py): casefold the name and strip

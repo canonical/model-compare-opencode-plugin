@@ -31,6 +31,7 @@ function syntheticModel(opts?: {
     pricing: { blended_per_1m: opts?.blended ?? 1 },
     context: 128000,
     quality: opts?.quality ?? null,
+    qualityEffort: null,
     scores: { ...scores, overall: { balanced: overall, price: overall, quality: overall } },
   }
 }
@@ -51,7 +52,7 @@ function syntheticCatalog(
 
 describe("effectiveWeights", () => {
   test("normalizes the merged map to sum 1 (§6 worked example)", () => {
-    const catalog = catalogFromFixture("fixtures/catalog-v0.5.0.json")
+    const catalog = catalogFromFixture("fixtures/catalog-v0.6.0.json")
     const eff = effectiveWeights(catalog, "balanced", { quality: 0.5 })
     expect(eff.usedOverride).toBe(true)
     expect(eff.zeroSum).toBe(false)
@@ -144,7 +145,7 @@ describe("overallScore", () => {
 
 describe("rankModels", () => {
   test("no override returns the published ranking verbatim", () => {
-    const catalog = catalogFromFixture("fixtures/catalog-v0.5.0.json")
+    const catalog = catalogFromFixture("fixtures/catalog-v0.6.0.json")
     const ranked = rankModels(catalog, "balanced")
     expect(ranked.ids).toEqual(catalog.rankings.balanced)
     expect(ranked.usedFallbackWeights).toBe(false)
@@ -202,7 +203,7 @@ describe("rankModels", () => {
     // published balanced ranking. The anchor is derived from the fixture
     // (the max of a DIFFERENT field than the ranking uses), asserted
     // unique so the test stays well-anchored across vendor upgrades.
-    const catalog = catalogFromFixture("fixtures/catalog-v0.5.0.json")
+    const catalog = catalogFromFixture("fixtures/catalog-v0.6.0.json")
     const best = [...catalog.models].sort((a, b) => (b.scores.quality ?? 0) - (a.scores.quality ?? 0))[0]
     const runnersUp = catalog.models.filter((m) => m.id !== best.id && (m.scores.quality ?? 0) === best.scores.quality)
     expect(runnersUp).toEqual([]) // unique anchor

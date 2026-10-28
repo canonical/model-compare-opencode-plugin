@@ -6,6 +6,31 @@ export type Priority = "balanced" | "price" | "quality"
 
 export type Weights = { quality: number; price: number; context: number; age: number }
 
+// One measured reasoning effort (catalog v5): the AA intelligence index at
+// that effort, AA's reference-price benchmark cost per task (display-only,
+// never scored), and the record's provenance. `null` marks a missing value;
+// the record itself survives so the effort can still be offered as a variant.
+export type ReasoningDepth = {
+  effort: string
+  index: number | null
+  cost_per_task_usd: number | null
+  source: string | null
+  as_of: string | null
+}
+
+// The v5 per-model reasoning block. `supported_efforts` is what OpenRouter
+// accepts as a discrete effort (expanded upstream, never null); `depths` is
+// what some source measured (empty when nothing did). The raw flags are kept
+// for provenance and for the single-state/non-reasoning display rules.
+export type Reasoning = {
+  default_effort: string | null
+  supported_efforts: string[]
+  default_enabled: boolean | null
+  mandatory: boolean | null
+  supports_max_tokens: boolean | null
+  depths: ReasoningDepth[]
+}
+
 export type ModelEntry = {
   id: string
   name: string
@@ -20,6 +45,14 @@ export type ModelEntry = {
   }
   context: number
   quality: number | null
+  // The effort `quality` was measured at (catalog v5 `quality_effort`). The
+  // alias request pins exactly this effort; the sentinel "reasoning" is a
+  // catalog label, never a gateway value. Optional only for hand-built /
+  // legacy projected entries: validateCatalog always writes it (null or a
+  // string), and validateStoredCatalog requires it on cached records.
+  qualityEffort?: string | null
+  // Present when the raw block projects cleanly (absent stays absent).
+  reasoning?: Reasoning
   // The steering block (F-11/F-12): upstream records the provider's
   // endpoint-routing hints as { model, provider: { order, ignore,
   // quantizations?, allow_fallbacks } }; the projection unwraps the provider
@@ -47,7 +80,7 @@ export type Catalog = {
   models: ModelEntry[]
 }
 
-// Upstream.s PRIORITY_WEIGHTS at the pinned tag (v0.5.0; unchanged since v0.3.0). Used when a
+// Upstream's PRIORITY_WEIGHTS at the pinned tag (v0.6.0; unchanged since v0.3.0). Used when a
 // document carries no `parameters.weights` at all (design §5); individual
 // missing keys fall back to weight 0 instead.
 export const DEFAULT_WEIGHTS: Record<Priority, Weights> = {

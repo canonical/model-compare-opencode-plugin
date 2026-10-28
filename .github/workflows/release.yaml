@@ -73,7 +73,7 @@ jobs:
       # published catalog is not the accepted schema (Global Constraint #3,
       # previously enforced only by hand). canary-check.mjs fails closed —
       # a non-zero exit aborts the workflow before anything is staged.
-      - name: Live-remote canary gate (published catalog must be schema v4)
+      - name: Live-remote canary gate (published catalog must be schema v5)
         run: curl -fsSL --proto-redir =https https://model-compare.dev/catalog.json | node scripts/canary-check.mjs
       # Stages the package for maintainer approval (see header). Provenance
       # is automatic under trusted publishing.

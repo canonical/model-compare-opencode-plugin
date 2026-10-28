@@ -21,9 +21,37 @@ function model() {
 
 function doc() {
   return {
-    schema_version: 4,
+    schema_version: 5,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [model()],
+  }
+}
+
+// The v5 reasoning block as upstream publishes it: the effective default, the
+// expanded supported-effort list, the three raw flags and the measured depths.
+function reasoning() {
+  return {
+    default_effort: "high",
+    supported_efforts: ["max", "high"],
+    default_enabled: true,
+    mandatory: false,
+    supports_max_tokens: null,
+    depths: [
+      {
+        effort: "max",
+        index: 56,
+        cost_per_task_usd: 5.46,
+        source: "aa",
+        as_of: "2026-10-27T00:00:00+00:00",
+      },
+      {
+        effort: "high",
+        index: 46.8,
+        cost_per_task_usd: 1.2,
+        source: "aa",
+        as_of: "2026-10-27T00:00:00+00:00",
+      },
+    ],
   }
 }
 
@@ -44,9 +72,9 @@ function steering() {
 }
 
 test("accepts the recorded catalog fixture", () => {
-  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.5.0.json", "utf8"))
-  // The gate accepts v4 only; the fixture records the v4 contract document.
-  expect(raw.schema_version).toBe(4)
+  const raw = JSON.parse(readFileSync("fixtures/catalog-v0.6.0.json", "utf8"))
+  // The gate accepts v5 only; the fixture records the v5 contract document.
+  expect(raw.schema_version).toBe(5)
   const result = validateCatalog(raw)
   expect(result.ok).toBe(true)
   if (!result.ok) return
@@ -67,7 +95,7 @@ test("accepts the no-quality fixture with no quality weight", () => {
   expect((balanced?.price ?? 0) + (balanced?.context ?? 0) + (balanced?.age ?? 0)).toBeCloseTo(1, 10)
 })
 
-test("the no-quality fixture carries null quality provenance on every quality-less row (v4 fields)", () => {
+test("the no-quality fixture carries null quality provenance on every quality-less row (v5 fields)", () => {
   // A genuine quality-blind run emits no provenance: the vendored script
   // degrades quality_as_of/quality_drift to null on unmatched candidates and
   // schedules, so a quality-less row claiming "as of <timestamp>" would be a
@@ -78,20 +106,28 @@ test("the no-quality fixture carries null quality provenance on every quality-le
     expect(model.quality_match, model.id).toBeNull()
     expect(model.quality_as_of, model.id).toBeNull()
     expect(model.quality_drift, model.id).toBeNull()
+    expect(model.quality_effort, model.id).toBeNull()
+    // No measured quality means no measured depths (the effort metadata from
+    // OpenRouter survives; the AA/OpenRouter score records do not).
+    expect(model.reasoning.depths, model.id).toEqual([])
   }
   for (const entry of raw.schedules) {
     expect(entry.quality, entry.id).toBeNull()
     expect(entry.quality_as_of, entry.id).toBeNull()
+    expect(entry.quality_effort, entry.id).toBeNull()
     expect(entry.quality_source, entry.id).toBeNull()
   }
-  // sources.aa is the v4 shape: disjoint matched_* buckets with provenance
-  // fields — the v3 keys (fallback/matched) are removed upstream and its
-  // validator rejects the old shape.
+  // sources.aa is the v5 shape: disjoint matched_* buckets with provenance
+  // fields plus the depth counters — the v3 keys (fallback/matched) are
+  // removed upstream and its validator rejects the old shape.
   expect(raw.sources.aa).toEqual({
     mode: "none",
     matched_aa: 0,
     matched_catalog: 0,
     matched_openrouter: 0,
+    depth_rows: 0,
+    matched_depth: 0,
+    matched_default: 0,
     catalog_generated_at: null,
     intelligence_index_version: null,
   })
@@ -111,11 +147,11 @@ test("rejects schema_version 1 (dropped: the plugin never shipped, so no stored 
   expect(result.reason).toMatch(/schema_version/)
 })
 
-test("rejects schema_version 3 (the previous contract, dropped with the 0.5.0 re-vendor)", () => {
-  const result = validateCatalog({ ...doc(), schema_version: 3 })
+test("rejects schema_version 4 (the previous contract, dropped with the 0.6.0 re-vendor)", () => {
+  const result = validateCatalog({ ...doc(), schema_version: 4 })
   expect(result.ok).toBe(false)
   if (result.ok) return
-  expect(result.reason).toMatch(/must be 4, got 3/)
+  expect(result.reason).toMatch(/must be 5, got 4/)
 })
 
 test("rejects a model without scores", () => {
@@ -366,6 +402,79 @@ test("a model without steering stays without one (absent stays absent)", () => {
   expect(result.catalog.models[0].steering).toBeUndefined()
 })
 
+// v5 — reasoning depth projection: the effort `quality` was measured at and
+// the per-model reasoning block (effective default, supported efforts, raw
+// flags, measured depths). Display and request-injection both read this.
+test("projects quality_effort and the reasoning block", () => {
+  const result = validateCatalog({
+    ...doc(),
+    models: [{ ...model(), quality: 46.8, quality_effort: "high", reasoning: reasoning() }],
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].qualityEffort).toBe("high")
+  expect(result.catalog.models[0].reasoning).toEqual(reasoning())
+})
+
+test("a model without quality_effort/reasoning projects both as absent", () => {
+  const result = validateCatalog(doc())
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].qualityEffort).toBeNull()
+  expect(result.catalog.models[0].reasoning).toBeUndefined()
+})
+
+test("a hostile reasoning block is normalized field-by-field, never passed through raw", () => {
+  const inf = JSON.parse("1e999")
+  const result = validateCatalog({
+    ...doc(),
+    models: [
+      {
+        ...model(),
+        quality_effort: 42,
+        reasoning: {
+          default_effort: 7,
+          supported_efforts: ["max", 4, null],
+          default_enabled: "yes",
+          mandatory: 1,
+          supports_max_tokens: "no",
+          depths: [
+            { effort: "max", index: 56, cost_per_task_usd: inf, source: 3, as_of: 4 },
+            { index: 12 }, // no effort: dropped
+            { effort: "", index: 12 }, // empty effort: dropped
+            { effort: "high", index: "12" }, // non-number index: null
+            "not a record",
+          ],
+          is_reasoning: true,
+        },
+      },
+    ],
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].qualityEffort).toBeNull()
+  expect(result.catalog.models[0].reasoning).toEqual({
+    default_effort: null,
+    supported_efforts: [],
+    default_enabled: null,
+    mandatory: null,
+    supports_max_tokens: null,
+    depths: [
+      { effort: "max", index: 56, cost_per_task_usd: null, source: null, as_of: null },
+      { effort: "high", index: null, cost_per_task_usd: null, source: null, as_of: null },
+    ],
+  })
+})
+
+test("a non-object reasoning block reads as absent", () => {
+  for (const value of [[], "reasoning", 5, null]) {
+    const result = validateCatalog({ ...doc(), models: [{ ...model(), reasoning: value }] })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.catalog.models[0].reasoning).toBeUndefined()
+  }
+})
+
 test("rejects a model without context", () => {
   const { context: _omitted, ...stripped } = model()
   const result = validateCatalog({ ...doc(), models: [stripped] })
@@ -394,7 +503,7 @@ test("ignores unknown top-level fields", () => {
 
 describe("validateStoredCatalog (F-16)", () => {
   const recorded = () => {
-    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.5.0.json", "utf8")))
+    const result = validateCatalog(JSON.parse(readFileSync("fixtures/catalog-v0.6.0.json", "utf8")))
     if (!result.ok) throw new Error(result.reason)
     return result.catalog
   }
@@ -414,6 +523,28 @@ describe("validateStoredCatalog (F-16)", () => {
       ok: true,
       catalog: result.catalog,
     })
+  })
+
+  test("rejects a pre-v5 stored projection (a model without qualityEffort)", () => {
+    // Old v4 cache records have no qualityEffort; accepting one would mix v4's
+    // max-row quality with v5's default-effort semantics.
+    const stored = JSON.parse(JSON.stringify(recorded()))
+    delete stored.models[0].qualityEffort
+    const result = validateStoredCatalog(stored)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toMatch(/qualityEffort/)
+  })
+
+  test("round-trips quality_effort and the reasoning block", () => {
+    const first = validateCatalog({
+      ...doc(),
+      models: [{ ...model(), quality: 46.8, quality_effort: "high", reasoning: reasoning() }],
+    })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    const stored = JSON.parse(JSON.stringify(first.catalog))
+    expect(validateStoredCatalog(stored)).toEqual({ ok: true, catalog: first.catalog })
   })
 
   test("round-trips a steering block: the provider sub-object unwraps on the way in and re-wraps on the way back", () => {

@@ -4,9 +4,15 @@
 // and the served-endpoint membership verdict — pure functions over the data
 // the wiring hooks supply.
 import { describe, expect, test } from "vitest"
-import { captureEndpoint, injectSteering, steeringFor } from "../../src/core/steering"
+import {
+  captureEndpoint,
+  injectReasoning,
+  injectSteering,
+  reasoningEffortFor,
+  steeringFor,
+} from "../../src/core/steering"
 import type { AliasTarget, ModelRef, Steering } from "../../src/core/steering"
-import type { ModelEntry, Priority } from "../../src/core/types"
+import type { ModelEntry, Priority, Reasoning } from "../../src/core/types"
 
 const PICK_ID = "z-ai/glm-5.3-flash"
 const ALIAS_REF: ModelRef = { providerID: "openrouter", id: "model-compare/price" }
@@ -19,13 +25,20 @@ const BLOCK: Steering = {
   allow_fallbacks: true,
 }
 
-function entry(opts?: { id?: string; steering?: ModelEntry["steering"] }): ModelEntry {
+function entry(opts?: {
+  id?: string
+  steering?: ModelEntry["steering"]
+  qualityEffort?: string | null
+  reasoning?: Reasoning
+}): ModelEntry {
   return {
     id: opts?.id ?? PICK_ID,
     name: "Synthetic Model",
     pricing: { blended_per_1m: 1 },
     context: 128000,
     quality: null,
+    qualityEffort: opts?.qualityEffort ?? null,
+    reasoning: opts?.reasoning,
     scores: {
       quality: 0.5,
       price: 0.5,
@@ -225,6 +238,119 @@ describe("injectSteering", () => {
     expect(injectSteering(null, BLOCK)).toBeNull()
     expect(injectSteering("body", BLOCK)).toBe("body")
     expect(injectSteering([1, 2], BLOCK)).toEqual([1, 2])
+  })
+})
+
+describe("reasoningEffortFor", () => {
+  test("an alias request whose pick was scored at a gateway effort → that effort", () => {
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: "high" })),
+      ),
+    ).toBe("high")
+  })
+
+  test("the no-variant sentinel 'default' still injects the catalog effort", () => {
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        "default",
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: "max" })),
+      ),
+    ).toBe("max")
+  })
+
+  test("an explicit #variant selection wins: no effort is injected", () => {
+    for (const variant of ["max", "high", "fast"]) {
+      expect(
+        reasoningEffortFor(
+          ALIAS_REF,
+          variant,
+          PICK_ID,
+          picksFor(PICK_ID),
+          catalogOf(entry({ qualityEffort: "medium" })),
+        ),
+      ).toBeNull()
+    }
+  })
+
+  test("the catalog sentinel 'reasoning' is never sent to the gateway", () => {
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: "reasoning" })),
+      ),
+    ).toBeNull()
+  })
+
+  test("no scored effort → no injection", () => {
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: null })),
+      ),
+    ).toBeNull()
+  })
+
+  test("non-alias, disabled, mismatched-body and missing-model requests never inject", () => {
+    const catalog = catalogOf(entry({ qualityEffort: "high" }))
+    expect(reasoningEffortFor(DIRECT_REF, undefined, PICK_ID, picksFor(PICK_ID), catalog)).toBeNull()
+    expect(reasoningEffortFor(ALIAS_REF, undefined, PICK_ID, picksFor(null), catalog)).toBeNull()
+    expect(
+      reasoningEffortFor(ALIAS_REF, undefined, "other/model", picksFor(PICK_ID), catalog),
+    ).toBeNull()
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ id: "other/model", qualityEffort: "high" })),
+      ),
+    ).toBeNull()
+  })
+})
+
+describe("injectReasoning", () => {
+  test("adds a reasoning.effort object and preserves the rest of the body", () => {
+    const body = { model: PICK_ID, messages: [{ role: "user", content: "hi" }], stream: true }
+    const result = injectReasoning(body, "high") as Record<string, unknown>
+    expect(result).not.toBe(body)
+    expect(result.model).toBe(PICK_ID)
+    expect(result.stream).toBe(true)
+    expect(result.reasoning).toEqual({ effort: "high" })
+    expect(Object.hasOwn(body, "reasoning")).toBe(false)
+  })
+
+  test("a body that already sets reasoning → untouched (user/variant wins)", () => {
+    const existing = { effort: "max", exclude: false }
+    const body = { model: PICK_ID, reasoning: existing }
+    const result = injectReasoning(body, "high")
+    expect(result).toBe(body)
+    expect((result as typeof body).reasoning).toBe(existing)
+  })
+
+  test("a body that already sets the legacy reasoning_effort field → untouched", () => {
+    const body = { model: PICK_ID, reasoning_effort: "max" }
+    expect(injectReasoning(body, "high")).toBe(body)
+  })
+
+  test("a body that is not a JSON object is returned untouched", () => {
+    expect(injectReasoning(null, "high")).toBeNull()
+    expect(injectReasoning("body", "high")).toBe("body")
+    expect(injectReasoning([1, 2], "high")).toEqual([1, 2])
   })
 })
 

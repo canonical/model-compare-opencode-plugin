@@ -28,6 +28,7 @@ function entry(id: string, quality: number): ModelEntry {
     pricing: { blended_per_1m: 1 },
     context: 128000,
     quality: null,
+    qualityEffort: null,
     scores: {
       quality,
       price: 0.5,

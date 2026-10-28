@@ -6,12 +6,12 @@ import { readFileSync } from "node:fs"
 import { describe, expect, test } from "vitest"
 import { checkCanary } from "../../scripts/canary-check.mjs"
 
-const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.5.0.json", "utf8"))
+const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.6.0.json", "utf8"))
 
 describe("checkCanary", () => {
-  test("passes the recorded v4 catalog", () => {
+  test("passes the recorded v5 catalog", () => {
     const doc = fixture()
-    expect(doc.schema_version).toBe(4)
+    expect(doc.schema_version).toBe(5)
     expect(checkCanary(doc)).toEqual({ ok: true, models: doc.models.length })
   })
 
@@ -19,12 +19,12 @@ describe("checkCanary", () => {
     const doc = { ...fixture(), schema_version: 1 }
     const result = checkCanary(doc)
     expect(result.ok).toBe(false)
-    expect(result.reason).toMatch(/schema_version is 1, expected 4/)
+    expect(result.reason).toMatch(/schema_version is 1, expected 5/)
   })
 
   test("fails a missing schema_version", () => {
     const { schema_version, ...rest } = fixture()
-    expect(checkCanary(rest)).toEqual({ ok: false, reason: "schema_version is null, expected 4" })
+    expect(checkCanary(rest)).toEqual({ ok: false, reason: "schema_version is null, expected 5" })
   })
 
   test("fails an empty model pool", () => {
@@ -43,6 +43,26 @@ describe("checkCanary", () => {
     const doc = fixture()
     doc.models[1].scores.age = null
     expect(checkCanary(doc).reason).toMatch(/model 1 .*scores\.age/)
+  })
+
+  test("fails a scored model without quality_effort (the v5 depth contract)", () => {
+    const doc = fixture()
+    const model = doc.models.find((entry) => entry.quality !== null)
+    expect(model, "the fixture carries a scored model").toBeDefined()
+    model.quality_effort = null
+    expect(checkCanary(doc).reason).toMatch(/quality_effort/)
+  })
+
+  test("fails a model without the v5 reasoning block", () => {
+    const doc = fixture()
+    delete doc.models[0].reasoning
+    expect(checkCanary(doc).reason).toMatch(/reasoning is missing/)
+  })
+
+  test("fails a reasoner whose reasoning block lacks a well-shaped depths list", () => {
+    const doc = fixture()
+    doc.models[0].reasoning.depths = "max"
+    expect(checkCanary(doc).reason).toMatch(/reasoning\.depths/)
   })
 
   test("fails a non-object document", () => {

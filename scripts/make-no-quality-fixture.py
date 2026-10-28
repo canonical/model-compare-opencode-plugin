@@ -13,10 +13,13 @@ internally consistent instead of a hand-edited copy with stale scores:
                             of the ROUNDED component scores, rounded to 4
   - rankings             <- model_compare.catalog_rankings (see the caveat)
   - models order         <- (-overall.balanced, id), as build_catalog sorts
-  - quality / aa indices <- null, quality_match null, quality_as_of and
-                             quality_drift null, sources.aa none/0 (v4 shape)
-  - schedules[].quality  <- null, quality_as_of and quality_source null,
-                            score <- the new balanced overall
+  - quality / aa indices <- null, quality_match null, quality_as_of,
+                             quality_drift and quality_effort null,
+                             reasoning.depths emptied (no measured quality),
+                             sources.aa none/0 (v5 shape, depth counters 0)
+  - schedules[].quality  <- null, quality_as_of, quality_effort and
+                            quality_source null, score <- the new balanced
+                            overall
 
 Caveat: the recorded document only has the 4-decimal ROUNDED component scores,
 while upstream orders `rankings` from unrounded ones; a near-tie may therefore
@@ -29,7 +32,7 @@ import importlib.util
 import json
 import sys
 
-SOURCE = "fixtures/catalog-v0.5.0.json"
+SOURCE = "fixtures/catalog-v0.6.0.json"
 TARGET = "fixtures/catalog-no-quality.json"
 VENDOR = "vendor/model_compare.py"
 
@@ -82,6 +85,9 @@ def main():
         model["quality_match"] = None
         model["quality_as_of"] = None
         model["quality_drift"] = None
+        model["quality_effort"] = None
+        if isinstance(model.get("reasoning"), dict):
+            model["reasoning"]["depths"] = []
         model["aa"] = {
             "intelligence_index": None,
             "coding_index": None,
@@ -96,6 +102,9 @@ def main():
         "matched_aa": 0,
         "matched_catalog": 0,
         "matched_openrouter": 0,
+        "depth_rows": 0,
+        "matched_depth": 0,
+        "matched_default": 0,
         "catalog_generated_at": None,
         "intelligence_index_version": None,
     }
@@ -104,6 +113,7 @@ def main():
     for entry in doc["schedules"]:
         entry["quality"] = None
         entry["quality_as_of"] = None
+        entry["quality_effort"] = None
         entry["quality_source"] = None
         if entry["id"] in balanced:
             entry["score"] = balanced[entry["id"]]

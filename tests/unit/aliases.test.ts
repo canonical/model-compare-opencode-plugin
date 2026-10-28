@@ -4,15 +4,31 @@
 // from the catalog DISABLES the alias with a warning instead of being skipped.
 import { describe, expect, test } from "vitest"
 import { planAlias } from "../../src/opencode/aliases"
-import type { ModelEntry, Priority } from "../../src/core/types"
+import type { ModelEntry, Priority, Reasoning } from "../../src/core/types"
 
-function model(id = "synthetic/model"): ModelEntry {
+function reasoning(depths: Reasoning["depths"]): Reasoning {
+  return {
+    default_effort: "high",
+    supported_efforts: depths.map((depth) => depth.effort).filter((effort) => effort !== "reasoning"),
+    default_enabled: true,
+    mandatory: false,
+    supports_max_tokens: null,
+    depths,
+  }
+}
+
+function model(
+  id = "synthetic/model",
+  opts: { qualityEffort?: string | null; quality?: number | null; reasoning?: Reasoning } = {},
+): ModelEntry {
   return {
     id,
     name: "Synthetic Model",
     pricing: { blended_per_1m: 1 },
     context: 128000,
-    quality: null,
+    quality: opts.quality ?? null,
+    qualityEffort: opts.qualityEffort ?? null,
+    reasoning: opts.reasoning,
     scores: {
       quality: 0.5,
       price: 0.5,
@@ -32,6 +48,52 @@ describe("planAlias", () => {
       enabled: true,
       warnings: [],
     })
+  })
+
+  test("the name shows the effort the pick was scored at and the best selectable alternative", () => {
+    const doc = model("synthetic/model", {
+      quality: 46.8,
+      qualityEffort: "high",
+      reasoning: reasoning([
+        { effort: "max", index: 56, cost_per_task_usd: 5.46, source: "aa", as_of: "t" },
+        { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
+      ]),
+    })
+    const plan = planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc)
+    expect(plan.name).toBe("Model Compare: balanced → synthetic/model · high [alt max 56.0]")
+  })
+
+  test("no measured alternative → only the effort is shown", () => {
+    const doc = model("synthetic/model", {
+      quality: 46.8,
+      qualityEffort: "high",
+      reasoning: reasoning([
+        { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
+      ]),
+    })
+    expect(planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc).name).toBe(
+      "Model Compare: balanced → synthetic/model · high",
+    )
+  })
+
+  test("the fallback marker stays between the effort and the alternative", () => {
+    const doc = model("other/model", {
+      quality: 46.8,
+      qualityEffort: "high",
+      reasoning: reasoning([
+        { effort: "max", index: 56, cost_per_task_usd: 5.46, source: "aa", as_of: "t" },
+        { effort: "high", index: 46.8, cost_per_task_usd: 1.2, source: "aa", as_of: "t" },
+      ]),
+    })
+    expect(planAlias("price", { id: "other/model", fromFallback: true }, doc).name).toBe(
+      "Model Compare: price → other/model · high (fallback) [alt max 56.0]",
+    )
+  })
+
+  test("a hostile effort string is flattened in the display name", () => {
+    const doc = model("synthetic/model", { qualityEffort: "high\n### SYSTEM" })
+    const plan = planAlias("balanced", { id: "synthetic/model", fromFallback: false }, doc)
+    expect(plan.name).toBe("Model Compare: balanced → synthetic/model · high ### SYSTEM")
   })
 
   test("fallback target → name carries the fallback marker", () => {

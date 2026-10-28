@@ -248,7 +248,7 @@ export function writeStubs() {
 // Fixture variants. A = the recorded no-quality catalog verbatim (the plugin
 // ranks verbatim from its published rankings: quality top = first entry).
 // B = a copy with every ranking reversed (quality top = the old last entry).
-// empty = a valid (schema v4) document with ZERO models (the guard case's data
+// empty = a valid (schema v5) document with ZERO models (the guard case's data
 // source; it was written with schema_version 1 before the plugin went v2-only,
 // which made it an INVALID document instead of an empty one).
 export function fixtureVariants() {
@@ -258,7 +258,7 @@ export function fixtureVariants() {
     b.rankings[p] = [...a.rankings[p]].reverse()
   }
   const empty = {
-    schema_version: 4,
+    schema_version: 5,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [],
   }
