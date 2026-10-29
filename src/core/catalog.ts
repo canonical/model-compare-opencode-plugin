@@ -1,5 +1,5 @@
 // src/core/catalog.ts
-// Catalog document validation (design §5). Accepts schema v5 documents (only) from
+// Catalog document validation (design §5). Accepts schema v6 documents (only) from
 // either source (vendored script or remote catalog) and projects them onto
 // the plugin's Catalog type. Validation only — ranking lives elsewhere.
 
@@ -63,7 +63,7 @@ function boolOrNull(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null
 }
 
-// The v5 reasoning block (display + request injection). Field-by-field
+// The v6 reasoning block (display + request injection). Field-by-field
 // projection, never a spread of the raw object: a hostile catalogURL serves
 // arbitrary JSON here, and only the fields the plugin reads survive. A
 // non-object block reads as absent; a malformed field reads as its neutral
@@ -105,13 +105,15 @@ export function validateCatalog(
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(raw)) return { ok: false, reason: "catalog must be a JSON object" }
 
-  // Supported schema: v5 only — upstream's current contract (0.6.0's
-  // schema_version 5). v5 changes the meaning of `quality` (the AA score at
-  // the selected/default reasoning effort) and adds per-model
-  // `quality_effort` and `reasoning`; every other version is rejected with
-  // the reason string the canary and the stored-document path rely on.
-  if (raw.schema_version !== 5) {
-    return { ok: false, reason: `schema_version must be 5, got ${JSON.stringify(raw.schema_version)}` }
+  // Supported schema: v6 only — upstream's current contract (0.7.0's
+  // schema_version 6). v6 keeps v5's per-model `quality_effort` and
+  // `reasoning` fields but changes what `quality` means: the AA index at the
+  // model's best measured selectable reasoning effort (the highest AA index at
+  // an effort OpenRouter supports, ties to the deeper effort), which may
+  // differ from `reasoning.default_effort`. Every other version is rejected
+  // with the reason string the canary and the stored-document path rely on.
+  if (raw.schema_version !== 6) {
+    return { ok: false, reason: `schema_version must be 6, got ${JSON.stringify(raw.schema_version)}` }
   }
   if (typeof raw.generated_at !== "string") {
     return { ok: false, reason: "generated_at must be a string" }
@@ -216,7 +218,7 @@ export function validateCatalog(
     const input = pricing.input_per_1m
     const output = pricing.output_per_1m
     // The steering block projects (or reads as absent) per the steer() rules.
-    // The v5 quality_effort/reasoning fields project the same way: strip the
+    // The v6 quality_effort/reasoning fields project the same way: strip the
     // raw keys before the spread so the camelCase projection is the only
     // representation on the entry (a hostile block never survives verbatim).
     const { steering: _rawSteering, quality_effort: _rawQualityEffort, reasoning: _rawReasoning, ...passthrough } =
@@ -283,13 +285,15 @@ export function validateStoredCatalog(
   stored: unknown,
 ): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
   if (!isObject(stored)) return { ok: false, reason: "stored catalog must be an object" }
-  // v5 projections always carry qualityEffort (null or a string). A record
-  // written by a pre-v5 plugin lacks it: accepting it would mix v4's max-row
-  // quality with v5's default-effort semantics, so it is a cache miss.
+  // v6 projections always carry qualityEffort (null or a string) — a record
+  // from an older projection lacks it and cannot be read as v6. The era gate
+  // itself is the doc-cache record version (src/opencode/storage.ts): a
+  // v5-era record is discarded before it reaches this function. Keeping this
+  // presence check is defense in depth against hand-edited projections.
   if (Array.isArray(stored.models)) {
     for (const [i, entry] of stored.models.entries()) {
       if (isObject(entry) && !Object.hasOwn(entry, "qualityEffort")) {
-        return { ok: false, reason: `models[${i}].qualityEffort is missing (not a v5 catalog)` }
+        return { ok: false, reason: `models[${i}].qualityEffort is missing` }
       }
     }
   }
@@ -297,7 +301,7 @@ export function validateStoredCatalog(
     ? stored.models.map((entry) => {
         if (!isObject(entry)) return entry
         // The projection renamed quality_effort to qualityEffort and unwrapped
-        // steering; rebuild the raw v5 shape. A hand-edited record re-projects
+        // steering; rebuild the raw v6 shape. A hand-edited record re-projects
         // (or reads as absent) exactly like a raw one would.
         const raw: Record<string, unknown> = {
           ...entry,
@@ -309,7 +313,7 @@ export function validateStoredCatalog(
       })
     : stored.models
   return validateCatalog({
-    schema_version: 5,
+    schema_version: 6,
     generated_at: stored.generatedAt,
     parameters: { weights: stored.weights },
     models,

@@ -53,7 +53,7 @@ describe("checkVendorDrift", () => {
 })
 
 describe("checkRankings", () => {
-  const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.6.0.json", "utf8"))
+  const fixture = () => JSON.parse(readFileSync("fixtures/catalog-v0.7.0.json", "utf8"))
 
   test("the recorded catalog is self-consistent", () => {
     const result = checkRankings(fixture())

@@ -3,7 +3,10 @@
 // visibility): alias-scoped steering selection, provider-object injection,
 // and the served-endpoint membership verdict — pure functions over the data
 // the wiring hooks supply.
+import { readFileSync } from "node:fs"
 import { describe, expect, test } from "vitest"
+import { validateCatalog } from "../../src/core/catalog"
+import { gatewayEffort } from "../../src/core/reasoning"
 import {
   captureEndpoint,
   injectReasoning,
@@ -290,6 +293,30 @@ describe("reasoningEffortFor", () => {
         catalogOf(entry({ qualityEffort: "reasoning" })),
       ),
     ).toBeNull()
+  })
+
+  test("a v6 catalog pins the pick at its best-selectable-depth effort, not its OpenRouter default", () => {
+    // The recorded v0.7.0 contract fixture contains models whose quality was
+    // measured at a depth other than their OpenRouter default (upstream 0.7.0
+    // scores the best measured selectable depth). The alias body must pin that
+    // scored depth — the whole point of reading `quality_effort`.
+    const raw = JSON.parse(readFileSync("fixtures/catalog-v0.7.0.json", "utf8"))
+    const validated = validateCatalog(raw)
+    if (!validated.ok) throw new Error(validated.reason)
+    const deep = validated.catalog.models.find(
+      (m) =>
+        m.qualityEffort !== null &&
+        m.reasoning !== undefined &&
+        m.reasoning.default_effort !== null &&
+        m.qualityEffort !== m.reasoning.default_effort,
+    )
+    expect(deep, "the v6 fixture carries a model scored off its default depth").toBeDefined()
+    if (deep === undefined) return
+    const catalog = new Map(validated.catalog.models.map((m) => [m.id, m]))
+    expect(
+      reasoningEffortFor(ALIAS_REF, undefined, deep.id, picksFor(deep.id), catalog),
+    ).toBe(gatewayEffort(deep.qualityEffort))
+    expect(gatewayEffort(deep.qualityEffort)).not.toBeNull()
   })
 
   test("no scored effort → no injection", () => {

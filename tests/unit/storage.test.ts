@@ -20,7 +20,7 @@ const CACHE_KEY = docCacheKey(IDENTITY)
 // same shape the source tests build.
 function doc() {
   return {
-    schema_version: 5,
+    schema_version: 6,
     generated_at: "2026-10-09T00:00:00+00:00",
     models: [
       {
