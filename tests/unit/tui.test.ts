@@ -1010,9 +1010,9 @@ describe("the alt+e toast (the served endpoint)", () => {
 
 // ---- the report table's columns and cursor status line ----------------------
 // The report table carries the model name, quality and price only. The scored
-// variant and the best higher variant moved off the table into a status line
-// below the list, which follows the cursor from row to row. The TUI says
-// "variant" to match OpenCode even though the catalog calls it effort.
+// variant moved off the table into a status line below the list, which
+// follows the cursor from row to row. The TUI says "variant" to match
+// OpenCode even though the catalog calls it effort.
 describe("the report table's three columns and cursor status line", () => {
   test("the table has only model, qual and price columns", async () => {
     active = await activate()
@@ -1043,41 +1043,44 @@ describe("the report table's three columns and cursor status line", () => {
 
     await active.command("model-compare.report").run()
     await drain()
-    expect(treeTexts(renderDialog(active).tree)).toContain(
-      "variant: high · best higher variant: max 56.0",
-    )
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: high")
 
     const modal = await active.modalCommands()
     const down = modal?.find((item) => item.id === "model-compare.list.down")
     expect(down).toBeDefined()
 
     down!.run() // acme/alpha (balanced) → acme/beta (medium, no alternative)
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: medium · best higher variant: -")
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: medium")
 
     down!.run() // acme/beta → acme/alpha (quality: max, no alternative)
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: max · best higher variant: -")
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: max")
+  })
+
+  test("an unscored model's empty effort renders as a dash", async () => {
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = [{ ...ENTRIES[0], effort: "" }]
+    await active.command("model-compare.report").run()
+    await drain()
+    expect(treeTexts(renderDialog(active).tree)).toContain("variant: -")
   })
 
   test("the status line clamps wide characters by display columns, not string length", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
-    // 深 (U+6DF1) and 寬 (U+5BBD) are East Asian Wide: 2 terminal columns
-    // each. The effort is 8 code points (16 columns) and the alternative 14
-    // (28 columns) — the old length-based clamp would have cut them to 7
-    // and 13 LENGTH units, which still render 13 and 25 columns wide and
-    // push the line past its 56-column box.
-    active.reportPayload.entries = [
-      { ...ENTRIES[0], effort: "深度深度深度深度", alternative: "寬度寬度寬度寬度寬度寬度寬度" },
-    ]
+    // 深 (U+6DF1) is East Asian Wide: 2 terminal columns each. The effort is
+    // 8 code points (16 columns) — the old length-based clamp would have cut
+    // it to 7 LENGTH units, which still render 14 columns wide and push the
+    // line past its 56-column box.
+    active.reportPayload.entries = [{ ...ENTRIES[0], effort: "深度深度深度深度" }]
 
     await active.command("model-compare.report").run()
     await drain()
     const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
     expect(status).toBeDefined()
     // Truncated to 6 display columns (3 wide chars) + the ellipsis = 7
-    // columns — exactly the effort cap; the same for the 13-column
-    // alternative (6 wide chars + ellipsis). No mid-character cut.
-    expect(status).toBe("variant: 深度深… · best higher variant: 寬度寬度寬度…")
+    // columns — exactly the effort cap. No mid-character cut.
+    expect(status).toBe("variant: 深度深…")
     // The general guarantee: the rendered line fits the status box's
     // 56-column budget (60-wide dialog − 4 left inset), worst case 53.
     expect(strWidth(status!)).toBeLessThanOrEqual(56)
@@ -1120,21 +1123,17 @@ describe("the report table's three columns and cursor status line", () => {
   test("the status line clamps emoji by display columns too (transport, dingbat)", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
-    // 🚀 (U+1F680, transport) and ✨ (U+2728, dingbat) render 2 columns each
-    // but sit OUTSIDE the East Asian Wide blocks — the ranges a naive
-    // CJK-only width table covers. Five rockets are 10 columns (2 UTF-16
-    // units each), eight sparkles 16 — both past their caps.
-    active.reportPayload.entries = [
-      { ...ENTRIES[0], effort: "🚀🚀🚀🚀🚀", alternative: "✨✨✨✨✨✨✨✨" },
-    ]
+    // 🚀 (U+1F680, transport) renders 2 columns but sits OUTSIDE the East
+    // Asian Wide blocks — the ranges a naive CJK-only width table covers.
+    // Five rockets are 10 columns (2 UTF-16 units each) — past the cap.
+    active.reportPayload.entries = [{ ...ENTRIES[0], effort: "🚀🚀🚀🚀🚀" }]
 
     await active.command("model-compare.report").run()
     await drain()
     const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
     expect(status).toBeDefined()
-    // 3 rockets (6 columns) + ellipsis = the 7-column effort cap; 6
-    // sparkles (12 columns) + ellipsis = the 13-column alternative cap.
-    expect(status).toBe("variant: 🚀🚀🚀… · best higher variant: ✨✨✨✨✨✨…")
+    // 3 rockets (6 columns) + ellipsis = the 7-column effort cap.
+    expect(status).toBe("variant: 🚀🚀🚀…")
     expect(strWidth(status!)).toBeLessThanOrEqual(56)
   })
 })

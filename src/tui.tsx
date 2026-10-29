@@ -117,9 +117,9 @@ type ListRow = {
   // Trailing dim right-justified columns (the report table); when
   // present, label renders in its own span so the two tones can differ.
   columns?: string
-  // The cursor-following status line (the report table's variant and best
-  // higher variant): the dialog renders this row's status below the list and
-  // swaps it as the cursor moves.
+  // The cursor-following status line (the report table's variant): the
+  // dialog renders this row's status below the list and swaps it as the
+  // cursor moves.
   status?: string
   selected?: string
   value?: string
@@ -779,9 +779,9 @@ export default Plugin.define({
         return
       }
       // The approved table now carries three columns: model name, quality
-      // and price. The scored variant (the catalog's effort) and the best
-      // higher variant moved into a cursor-following status line below the
-      // list (see ListRow.status), so the table stays readable. No score
+      // and price. The scored variant (the catalog's effort) moved into a
+      // cursor-following status line below the list (see ListRow.status), so
+      // the table stays readable. No score
       // column — the transcript's text report keeps it. Column widths are clamped
       // (qual ≤ 5, $ in/out ≤ 13) and oversized cells are truncated to their
       // clamped width, so with the name clamp below the row budget holds
@@ -803,15 +803,13 @@ export default Plugin.define({
       // 52-char row budget intact (see `fixed` below) while fitting real
       // values: "10.00/100.00" (price).
       const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 5)
-      // The status line's variant and best-higher-variant cells keep their
-      // old column caps: the status box is a direct child of the 60-wide
-      // dialog with only its own 4-char left inset, so one text line has 56
-      // columns — the worst case, 9 ("variant: ") + 7 + 24 (" · best higher
-      // variant: ") + 13 = 53, leaves 3 columns of slack. Clamping each cell
-      // (in display columns, see cell) keeps hostile catalog strings from
+      // The status line's variant cell keeps its 7-column clamp: the status
+      // box is a direct child of the 60-wide dialog with only its own 4-char
+      // left inset, so one text line has 56 columns — the worst case, 9
+      // ("variant: ") + 7 = 16, leaves ample slack. Clamping the cell (in
+      // display columns, see cell) keeps hostile catalog strings from
       // wrapping.
       const effortW = 7
-      const altW = 13
       const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 13)
       // A cell wider than its clamped column is truncated to fit — measured
       // in terminal COLUMNS (strWidth), not string length: a 7-code-point
@@ -856,20 +854,15 @@ export default Plugin.define({
         "qual".padStart(qualW) +
         "  " +
         "$ in/out".padEnd(priceW)
-      // Catalog v6 calls this the effort the quality was measured at, and the
-      // best selectable measured alternative ("max 56.0"). For the v6
-      // default-effort publications both plugin sources produce, the quality
-      // already sits at the best selectable depth, so the alternative column
-      // shows "-" from them; it fills only for an explicit-effort v6 document
-      // served by a user-pointed catalogURL. OpenCode calls the selectable
-      // option a VARIANT, so the TUI uses "variant" throughout to match what
-      // the user sees in OpenCode's model picker. A missing value is "-", and
-      // "best higher variant" spells out what "alt" meant.
+      // Catalog v6 calls this the effort the quality was measured at: the
+      // best measured selectable depth, so there is no higher selectable
+      // alternative to advertise. The alternative label survives only in the
+      // /model-compare text report, for an explicit-effort v6 document served
+      // by a user-pointed catalogURL. OpenCode calls the selectable option a
+      // VARIANT, so the TUI says "variant" to match the model picker. An
+      // unscored model's missing effort renders as "-".
       const statusOf = (entry: ReportEntry): string =>
-        `variant: ${cell(entry.effort || "-", effortW)} · best higher variant: ${cell(
-          entry.alternative || "-",
-          altW,
-        )}`
+        `variant: ${cell(entry.effort || "-", effortW)}`
       const rows: ListRow[] = [{ label: "", headerLine }]
       for (const priority of PRIORITIES) {
         const section = data.entries.filter((entry) => entry.priority === priority)
