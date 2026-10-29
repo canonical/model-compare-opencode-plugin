@@ -371,7 +371,10 @@ function docCacheRecords() {
   return out
     .split("\n")
     .map((line) => JSON.parse(line))
-    .filter((record) => record?.v === 1 && typeof record.doc === "object" && typeof record.acquiredAt === "number")
+    // v2 is the v6-catalog doc-cache era (src/opencode/storage.ts
+    // DOC_CACHE_VERSION): v1 records hold schema-v5 catalogs and are discarded
+    // by the plugin on read.
+    .filter((record) => record?.v === 2 && typeof record.doc === "object" && typeof record.acquiredAt === "number")
     .sort((a, b) => b.acquiredAt - a.acquiredAt)
 }
 
