@@ -12,7 +12,7 @@ Each priority is a live alias inside the existing OpenRouter provider — no new
 
 The alias re-points at the current pick while OpenCode runs (refresh every 30 minutes, data cache 6 hours). It also pins the catalog's scored reasoning effort on each request, so the model runs at the depth its `quality` score was measured at. OpenCode's model picker shows it as `Model Compare: <priority> → <pick>`, with `(fallback)` while the fallback is serving and `(unavailable)` when the alias is disabled. The alias name deliberately carries no catalog effort or alternative: OpenCode shows the selected variant itself, and a baked-in depth would not follow your `#variant` choice.
 
-**Effort vs variant.** The model-compare catalog and the request body call this reasoning level the *effort* (`quality_effort`, pinned as `reasoning.effort`); OpenCode calls the selectable model option a *variant* (`provider/model#variant`). The alias byline shows only the pick; the report dialog's status line uses “variant” and shows the highlighted model's variant and its best higher variant.
+**Effort vs variant.** The model-compare catalog and the request body call this reasoning level the *effort* (`quality_effort`, pinned as `reasoning.effort`); OpenCode calls the selectable model option a *variant* (`provider/model#variant`). The alias byline shows only the pick; the report dialog's status line uses “variant” and shows the highlighted model's variant.
 
 
 ## Install
@@ -71,7 +71,7 @@ opencode run --model "openrouter/model-compare/price" "msg"
 Commands:
 
 - `/use-best [priority]` — switch the session to `openrouter/model-compare/<p>` (defaults to `defaultPriority`). Refuses a disabled alias.
-- `/model-compare` — top 5 per priority with scores and data age; each line also shows the reasoning effort behind `quality` (`· high`) and the best selectable measured alternative (`· alt max 56.0`). Priorities whose `weights` override actually takes effect are labelled `(custom weights)` with recomputed scores, and each alias's current pick is marked `← current pick`. The output is a synthetic message (`resume: false`): it costs no model turn and, in a headless session, surfaces in the transcript at the next turn. In the TUI it opens the report dialog instead, with model, quality and price columns and a status line that follows the cursor and shows the highlighted model's variant and its best higher variant.
+- `/model-compare` — top 5 per priority with scores and data age; each line also shows the reasoning effort behind `quality` (`· high`) and the best selectable measured alternative (`· alt max 56.0`). Priorities whose `weights` override actually takes effect are labelled `(custom weights)` with recomputed scores, and each alias's current pick is marked `← current pick`. The output is a synthetic message (`resume: false`): it costs no model turn and, in a headless session, surfaces in the transcript at the next turn. In the TUI it opens the report dialog instead, with model, quality and price columns and a status line that follows the cursor and shows the highlighted model's variant.
 
 
 ### Keyboard shortcuts
@@ -87,7 +87,7 @@ Commands:
 
 Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before. The TUI has no `/use-best` keybinding: the slash command already covers switching.
 
-Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries only the pick (plus the fallback marker); the report dialog's status line carries the variant and best higher variant. The footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
+Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries only the pick (plus the fallback marker); the report dialog's status line carries the variant. The footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
 
 
 ## Configuration
