@@ -32,7 +32,7 @@ import importlib.util
 import json
 import sys
 
-SOURCE = "fixtures/catalog-v0.6.0.json"
+SOURCE = "fixtures/catalog-v0.7.0.json"
 TARGET = "fixtures/catalog-no-quality.json"
 VENDOR = "vendor/model_compare.py"
 
