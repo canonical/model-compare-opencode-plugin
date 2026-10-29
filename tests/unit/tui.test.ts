@@ -208,8 +208,17 @@ function makeHarness() {
   const reportPayload: { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown } = {}
 
   const session = {
-    create: vi.fn(async (_input: { model: { providerID: string; id: string } }) => ({ id: "new-session-1" })),
-    switchModel: vi.fn(async (_input: { sessionID: string; model: { providerID: string; id: string } }) => {}),
+    create: vi.fn(
+      async (_input: { model: { providerID: string; id: string; variant?: string } }) => ({
+        id: "new-session-1",
+      }),
+    ),
+    switchModel: vi.fn(
+      async (_input: {
+        sessionID: string
+        model: { providerID: string; id: string; variant?: string }
+      }) => {},
+    ),
     command: vi.fn(async (_input: { sessionID: string; name: string; text: string }) => ({})),
   }
   const report = vi.fn(async (_input: unknown, _options: unknown) => reportPayload)
@@ -573,8 +582,10 @@ describe("the shortcuts from the opening screen (no session)", () => {
     await drain()
 
     expect(active.session.create).toHaveBeenCalledTimes(1)
+    // The status line advertises `variant: high` for the highlighted row, so
+    // the new session must bind that variant, not the model's default depth.
     expect(active.session.create).toHaveBeenCalledWith({
-      model: { providerID: "openrouter", id: "acme/alpha" },
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "high" },
     })
     expect(active.navigate).toHaveBeenCalledWith({ type: "session", sessionID: "new-session-1" })
     expect(active.session.switchModel).not.toHaveBeenCalled()
@@ -823,9 +834,59 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
 
     expect(active.session.switchModel).toHaveBeenCalledWith({
       sessionID: "s1",
-      model: { providerID: "openrouter", id: "acme/alpha" },
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "high" },
     })
     expect(active.session.create).not.toHaveBeenCalled()
+  })
+
+  test("a report pick with no scored effort switches the bare model (no variant key)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "s1",
+          age: "3h",
+          entries: [{ ...ENTRIES[0], effort: "" }],
+        },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha" },
+    })
+  })
+
+  test("a report pick never sends the catalog's non-gateway 'reasoning' sentinel as a variant", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "s1",
+          age: "3h",
+          entries: [{ ...ENTRIES[0], effort: "reasoning" }],
+        },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha" },
+    })
   })
 
   test("a failed switch on the report-dialog path toasts 'switch failed'", async () => {

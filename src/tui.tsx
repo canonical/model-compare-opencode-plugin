@@ -68,6 +68,7 @@ import {
   type AliasView,
 } from "./opencode/usebest"
 import type { ReportEntry } from "./opencode/commands"
+import { gatewayEffort } from "./core/reasoning"
 import { lastResponseLine, sanitizeCatalogText } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 
@@ -123,6 +124,12 @@ type ListRow = {
   status?: string
   selected?: string
   value?: string
+  // The OpenCode variant the pick must select (`provider/model#variant`):
+  // the effort the row's quality was measured at, when the catalog names a
+  // gateway-selectable one. Undefined means the bare model (its default).
+  // Carried on the row, not derived from `value`, because a model can be
+  // listed under several priorities and the pick must use THIS row's effort.
+  variant?: string
   dim?: boolean
 }
 
@@ -427,11 +434,11 @@ export default Plugin.define({
 
     // Switch the current session straight to a concrete model (the report
     // dialog's selection).
-    async function switchToModel(sessionID: string, id: string): Promise<void> {
+    async function switchToModel(sessionID: string, id: string, variant?: string): Promise<void> {
       try {
         await context.client.session.switchModel({
           sessionID,
-          model: { providerID: ALIAS_PROVIDER, id },
+          model: { providerID: ALIAS_PROVIDER, id, ...(variant === undefined ? {} : { variant }) },
         })
         // F-20: `id` here is the raw catalog id (the switch needs it) — the
         // toast shows the flattened form so it cannot be line-injected.
@@ -485,7 +492,7 @@ export default Plugin.define({
     function showListDialog(
       title: string,
       rows: ListRow[],
-      onPick: (value: string) => void,
+      onPick: (row: ListRow & { value: string }) => void,
       // The footer's extra lines (the report dialog's steering note and
       // last-response line), rendered muted ABOVE the Details line. Absent
       // for the other dialogs (the picks dialog carries no footer lines).
@@ -611,7 +618,7 @@ export default Plugin.define({
       const pick = () => {
         const row = selectable[cursor()]
         close()
-        onPick(row.value!)
+        onPick(row as ListRow & { value: string })
       }
 
       // Arm the modal layer via the app slot's in-tree effect (see the app
@@ -751,8 +758,8 @@ export default Plugin.define({
           dim: !enabled,
         }
       })
-      showListDialog("Model Compare — current picks", rows, (priority) => {
-        void switchToPriority(priority as Priority)
+      showListDialog("Model Compare — current picks", rows, (row) => {
+        void switchToPriority(row.value as Priority)
       })
     }
 
@@ -878,8 +885,12 @@ export default Plugin.define({
               padEndW(cell(entry.price, priceW), priceW),
             status: statusOf(entry),
             // F-20 id split: the row DISPLAYS the sanitized id (in `label`)
-            // but picks `value`, the raw catalog id switchToModel needs.
+            // but picks `value`, the raw catalog id switchToModel needs. The
+            // variant is the gateway-valid effort the status line advertises;
+            // a blank effort and the catalog's "reasoning" sentinel are not
+            // OpenCode variants.
             value: entry.value,
+            variant: gatewayEffort(entry.effort) ?? undefined,
             selected: entry.current ? entry.value : undefined,
           })
         }
@@ -894,17 +905,22 @@ export default Plugin.define({
       showListDialog(
         `Model Compare — top 5 (data age: ${data.age ?? "unknown"})`,
         rows,
-        (id) => {
+        (row) => {
           const sessionID = data.sessionID
           if (sessionID !== null) {
-            void switchToModel(sessionID, id)
+            void switchToModel(sessionID, row.value, row.variant)
             return
           }
           // The opening screen: the pick becomes a NEW session's model —
-          // the same concrete model the in-session path switches to.
+          // the same concrete model AND variant the in-session path
+          // switches to.
           void createSessionOnModel(
-            { providerID: ALIAS_PROVIDER, id },
-            `switched to openrouter/${sanitizeCatalogText(id)}`,
+            {
+              providerID: ALIAS_PROVIDER,
+              id: row.value,
+              ...(row.variant === undefined ? {} : { variant: row.variant }),
+            },
+            `switched to openrouter/${sanitizeCatalogText(row.value)}`,
           )
         },
         footerLines,
