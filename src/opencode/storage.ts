@@ -17,12 +17,15 @@ export type Storage = {
 // missing, the value is not a JSON object, or `v` is not the caller's expected
 // version (§7.2: corrupt or unknown-version entries are discarded and treated
 // as absent). Every caller states the version it owns: pin records are v1,
-// the doc cache is DOC_CACHE_VERSION. The doc-cache layer adds its own field
-// checks (readCachedDoc below).
+// the doc cache is DOC_CACHE_VERSION. The version argument is type-linked to
+// the record's own `v` literal, so a mismatched pair (reading pins with the
+// doc-cache version) is a compile error, not a silent all-records-discard at
+// runtime (compile-time pin: tests/unit/storage.test.ts, post-review BUG-03).
+// The doc-cache layer adds its own field checks (readCachedDoc below).
 export async function readRecord<T extends { v: number }>(
   storage: Storage,
   key: string,
-  version: number,
+  version: T["v"],
 ): Promise<T | null> {
   const raw: unknown = await storage.get(key)
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null

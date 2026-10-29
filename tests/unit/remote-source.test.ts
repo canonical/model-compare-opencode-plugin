@@ -341,7 +341,13 @@ describe("fetchRemote", () => {
 
   test("a record without a usable doc is treated as no cache", async () => {
     const { storage, map } = memoryStorage()
-    map.set(DOC_CACHE_KEY, { v: 1, acquiredAt: NOW }) // corrupt: no doc at all
+    // A current-era record (v2) whose shape is unusable: the version gate
+    // passes, the source matches, acquiredAt is finite — and then
+    // validateStoredCatalog(undefined) rejects the missing doc. The v1-era
+    // rejection itself is covered by storage.test.ts's dedicated v1-era test;
+    // this test must stay past the version gate to keep the doc-shape path
+    // covered.
+    map.set(DOC_CACHE_KEY, { v: 2, source: remoteIdentity(REMOTE_URL), acquiredAt: NOW }) // corrupt: no doc at all
     const fetcher = fetchFails(new Error("network down"))
 
     const reason = await rejectionOf(

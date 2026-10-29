@@ -144,8 +144,12 @@ function overrideInEffect(
 
 // Catalog v6 display suffixes: the effort the quality score was measured at
 // (` · high`) and the best measured selectable alternative (` · alt max 56.0`).
-// Both are catalog-derived, so they are flattened before joining the report
-// text / dialog (F-20). An absent effort/alternative adds nothing.
+// For the v6 default-effort publications both plugin sources produce, the
+// quality already sits at the best selectable depth, so the alternative suffix
+// never renders from them — it is live only for an explicit-effort v6 document
+// served by a user-pointed catalogURL. Both are catalog-derived, so they are
+// flattened before joining the report text / dialog (F-20). An absent
+// effort/alternative adds nothing.
 function effortLabel(model: ModelEntry | undefined): string {
   const effort = model?.qualityEffort
   return effort == null ? "" : sanitizeCatalogText(effort)

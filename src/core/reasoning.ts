@@ -68,6 +68,15 @@ export type DepthAlternative = {
 // The best measured, selectable effort that scores strictly higher than the
 // effort `quality` already represents. Unselectable rows never qualify; ties
 // resolve to the deeper effort (the display order).
+//
+// Under the publications the plugin's own two sources produce (the vendored
+// `--catalog` run and the published remote) this is vacuous: a default-effort
+// v6 document already places `quality` at the best measured selectable depth,
+// so no selectable depth can score strictly higher and the function returns
+// null. It stays live and correct for explicit-effort v6 documents — a
+// user-pointed catalogURL can serve one, since upstream publishes the full
+// measured depths list while `quality` sits at the requested effort — and as
+// defense-in-depth against a producer that violates the best-depth invariant.
 export function bestDepthAlternative(model: ModelEntry): DepthAlternative | null {
   const base = model.quality
   const selected = model.qualityEffort

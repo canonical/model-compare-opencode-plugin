@@ -6,9 +6,12 @@
 // defends against (final-review BUG-04).
 import { describe, expect, test } from "vitest"
 import { validateCatalog } from "../../src/core/catalog"
+import type { Pin } from "../../src/core/pins"
 import {
   docCacheKey,
+  DOC_CACHE_VERSION,
   readCachedDoc,
+  readRecord,
   remoteIdentity,
   type Storage,
 } from "../../src/opencode/storage"
@@ -87,5 +90,19 @@ describe("readCachedDoc record validation", () => {
     const record = { v: 1, source: IDENTITY, doc: projectedDoc(), acquiredAt: 1_000_000_000_000 }
     const cached = await readCachedDoc(memoryStorage(record), IDENTITY)
     expect(cached).toBeNull()
+  })
+})
+
+describe("readRecord version/record type linkage (post-review BUG-03)", () => {
+  test("a mismatched version/record pair is a compile error and a runtime cache miss", async () => {
+    // Compile-time pin: readRecord's version argument is type-linked to the
+    // record's own `v` literal, so reading a Pin record with the doc-cache
+    // version is a compile error (before the linkage this line compiled and
+    // made typecheck fail with ts2578 — unused @ts-expect-error). The runtime
+    // assertion is the second layer: even with the types loosened, the record
+    // version gate must still discard the mismatched read.
+    const storage = memoryStorage({ "pin/balanced/x": { v: 1, id: "a/pin", since: 5 } })
+    // @ts-expect-error the doc-cache version must not read pin records
+    expect(await readRecord<Pin>(storage, "pin/balanced/x", DOC_CACHE_VERSION)).toBeNull()
   })
 })

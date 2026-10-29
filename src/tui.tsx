@@ -849,10 +849,14 @@ export default Plugin.define({
         "  " +
         "$ in/out".padEnd(priceW)
       // Catalog v6 calls this the effort the quality was measured at, and the
-      // best selectable measured alternative ("max 56.0"). OpenCode calls the
-      // selectable option a VARIANT, so the TUI uses "variant" throughout to
-      // match what the user sees in OpenCode's model picker. A missing value
-      // is "-", and "best higher variant" spells out what "alt" meant.
+      // best selectable measured alternative ("max 56.0"). For the v6
+      // default-effort publications both plugin sources produce, the quality
+      // already sits at the best selectable depth, so the alternative column
+      // shows "-" from them; it fills only for an explicit-effort v6 document
+      // served by a user-pointed catalogURL. OpenCode calls the selectable
+      // option a VARIANT, so the TUI uses "variant" throughout to match what
+      // the user sees in OpenCode's model picker. A missing value is "-", and
+      // "best higher variant" spells out what "alt" meant.
       const statusOf = (entry: ReportEntry): string =>
         `variant: ${cell(entry.effort || "-", effortW)} · best higher variant: ${cell(
           entry.alternative || "-",
