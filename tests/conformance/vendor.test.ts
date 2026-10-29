@@ -18,7 +18,7 @@ test("vendored script matches the pinned tag", () => {
 const ALLOWLIST = new Set([
   "__future__",
   "argparse",
-  // vendored 0.6.0 (unchanged since 0.4.0) uses concurrent.futures for catalog assembly
+  // vendored 0.7.0 uses concurrent.futures for catalog assembly
   "concurrent.futures",
   "datetime",
   "gzip",

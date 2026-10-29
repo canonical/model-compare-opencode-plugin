@@ -27,7 +27,7 @@ function doc() {
   }
 }
 
-// The v5 reasoning block as upstream publishes it: the effective default, the
+// The reasoning block as upstream publishes it: the effective default, the
 // expanded supported-effort list, the three raw flags and the measured depths.
 function reasoning() {
   return {

@@ -45,7 +45,7 @@ describe("checkCanary", () => {
     expect(checkCanary(doc).reason).toMatch(/model 1 .*scores\.age/)
   })
 
-  test("fails a scored model without quality_effort (the v5 depth contract)", () => {
+  test("fails a scored model without quality_effort (the depth contract)", () => {
     const doc = fixture()
     const model = doc.models.find((entry) => entry.quality !== null)
     expect(model, "the fixture carries a scored model").toBeDefined()
@@ -53,7 +53,7 @@ describe("checkCanary", () => {
     expect(checkCanary(doc).reason).toMatch(/quality_effort/)
   })
 
-  test("fails a model without the v5 reasoning block", () => {
+  test("fails a model without the reasoning block", () => {
     const doc = fixture()
     delete doc.models[0].reasoning
     expect(checkCanary(doc).reason).toMatch(/reasoning is missing/)

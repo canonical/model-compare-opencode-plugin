@@ -142,7 +142,7 @@ function overrideInEffect(
   return eff.applied && !eff.zeroSum ? eff.weights : null
 }
 
-// Catalog v5 display suffixes: the effort the quality score was measured at
+// Catalog v6 display suffixes: the effort the quality score was measured at
 // (` · high`) and the best measured selectable alternative (` · alt max 56.0`).
 // Both are catalog-derived, so they are flattened before joining the report
 // text / dialog (F-20). An absent effort/alternative adds nothing.

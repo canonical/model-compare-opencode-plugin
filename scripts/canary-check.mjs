@@ -60,7 +60,7 @@ export function checkCanary(catalog) {
         return { ok: false, reason: `${where}: scores.overall.${p} is not a finite number` }
       }
     }
-    // The v5 depth contract: quality_effort names the effort behind a scored
+    // The depth contract: quality_effort names the effort behind a scored
     // quality, and every entry carries a reasoning block whose depths the
     // plugin reads for display. A scored model without an effort would make
     // the alias run at OpenRouter's default, not the depth its score means.

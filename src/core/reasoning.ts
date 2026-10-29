@@ -1,5 +1,5 @@
 // src/core/reasoning.ts
-// Reasoning-depth helpers (catalog v5): gateway-effort validation, the
+// Reasoning-depth helpers (catalog v6): gateway-effort validation, the
 // selectable-depth rule, and the best measured alternative to the effort a
 // model was scored at. Pure functions over a projected ModelEntry — no I/O,
 // no OpenCode imports.

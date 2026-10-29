@@ -1,5 +1,5 @@
 // tests/unit/reasoning.test.ts
-// Reasoning-depth helpers (catalog v5): which efforts OpenRouter can actually
+// Reasoning-depth helpers (catalog v6): which efforts OpenRouter can actually
 // select, and the best selectable measured alternative to the effort a model
 // was scored at. Ported from upstream's site rule so the plugin's report and
 // alias labels never advertise an AA row OpenRouter cannot run.

@@ -6,7 +6,7 @@ export type Priority = "balanced" | "price" | "quality"
 
 export type Weights = { quality: number; price: number; context: number; age: number }
 
-// One measured reasoning effort (catalog v5): the AA intelligence index at
+// One measured reasoning effort (catalog v6): the AA intelligence index at
 // that effort, AA's reference-price benchmark cost per task (display-only,
 // never scored), and the record's provenance. `null` marks a missing value;
 // the record itself survives so the effort can still be offered as a variant.
@@ -18,7 +18,7 @@ export type ReasoningDepth = {
   as_of: string | null
 }
 
-// The v5 per-model reasoning block. `supported_efforts` is what OpenRouter
+// The v6 per-model reasoning block. `supported_efforts` is what OpenRouter
 // accepts as a discrete effort (expanded upstream, never null); `depths` is
 // what some source measured (empty when nothing did). The raw flags are kept
 // for provenance and for the single-state/non-reasoning display rules.
@@ -45,7 +45,8 @@ export type ModelEntry = {
   }
   context: number
   quality: number | null
-  // The effort `quality` was measured at (catalog v5 `quality_effort`). The
+  // The effort `quality` was measured at (catalog v6 `quality_effort`) — the
+  // best measured selectable depth, which may differ from `default_effort`. The
   // alias request pins exactly this effort; the sentinel "reasoning" is a
   // catalog label, never a gateway value. Optional only for hand-built /
   // legacy projected entries: validateCatalog always writes it (null or a
@@ -80,7 +81,7 @@ export type Catalog = {
   models: ModelEntry[]
 }
 
-// Upstream's PRIORITY_WEIGHTS at the pinned tag (v0.6.0; unchanged since v0.3.0). Used when a
+// Upstream's PRIORITY_WEIGHTS at the pinned tag (v0.7.0; unchanged since v0.3.0). Used when a
 // document carries no `parameters.weights` at all (design §5); individual
 // missing keys fall back to weight 0 instead.
 export const DEFAULT_WEIGHTS: Record<Priority, Weights> = {

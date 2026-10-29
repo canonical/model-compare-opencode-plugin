@@ -848,7 +848,7 @@ export default Plugin.define({
         "qual".padStart(qualW) +
         "  " +
         "$ in/out".padEnd(priceW)
-      // Catalog v5 calls this the effort the quality was measured at, and the
+      // Catalog v6 calls this the effort the quality was measured at, and the
       // best selectable measured alternative ("max 56.0"). OpenCode calls the
       // selectable option a VARIANT, so the TUI uses "variant" throughout to
       // match what the user sees in OpenCode's model picker. A missing value
