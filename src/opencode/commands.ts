@@ -8,7 +8,7 @@
 // not upstream's `generated_at`.
 
 import { effectiveWeights, overallScore } from "../core/rank"
-import { formatDepthAlternative } from "../core/reasoning"
+import { formatDepthAlternative, isSelectableDepth } from "../core/reasoning"
 import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced, Weights } from "../core/types"
 import type { AliasTarget } from "./aliases"
 
@@ -158,6 +158,23 @@ function effortLabel(model: ModelEntry | undefined): string {
 function alternativeLabel(model: ModelEntry | undefined): string {
   const alternative = formatDepthAlternative(model)
   return alternative === "" ? "" : sanitizeCatalogText(alternative)
+}
+
+// The effort the structured report's entry may advertise as a pickable
+// variant: the scored effort ONLY when the model's own reasoning block lets
+// a pick bind it. The vendor's tier-4 "none" (a non-reasoning model scored
+// from the OR trio) and any scored effort the block does not expose are
+// display-only — a pick could not select them — so the entry advertises the
+// bare model instead. The /model-compare TEXT report keeps its provenance
+// suffix regardless (effortLabel is untouched); the TUI re-checks the string
+// at its own trust boundary (gatewayEffort). The gate reads the raw effort
+// and emits the sanitized label, so the emitted value is always an exact
+// gateway effort.
+function advertisedEffort(model: ModelEntry | undefined): string {
+  if (model === undefined) return ""
+  const effort = model.qualityEffort
+  if (effort === null || effort === undefined || !isSelectableDepth(model, effort)) return ""
+  return effortLabel(model)
 }
 
 function reasoningSuffix(model: ModelEntry | undefined): string {
@@ -317,7 +334,7 @@ export function reportEntries(
         value: id,
         score: scoreValue === null ? "-" : scoreValue.toFixed(3),
         quality: fmtQuality(model),
-        effort: effortLabel(model),
+        effort: advertisedEffort(model),
         alternative: alternativeLabel(model),
         price: fmtPrice(model),
         current,
@@ -342,7 +359,7 @@ export function reportEntries(
         value: pick.id,
         score: "-",
         quality: fmtQuality(model),
-        effort: effortLabel(model),
+        effort: advertisedEffort(model),
         alternative: alternativeLabel(model),
         price: fmtPrice(model),
         current: true,

@@ -589,7 +589,7 @@ describe("the shortcuts from the opening screen (no session)", () => {
     })
     expect(active.navigate).toHaveBeenCalledWith({ type: "session", sessionID: "new-session-1" })
     expect(active.session.switchModel).not.toHaveBeenCalled()
-    expect(active.toasts).toEqual([{ message: "switched to openrouter/acme/alpha", variant: "success" }])
+    expect(active.toasts).toEqual([{ message: "switched to openrouter/acme/alpha#high", variant: "success" }])
   })
 
   test("the report dialog opens with the cursor on the current entry, not the first", async () => {
@@ -836,6 +836,9 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
       sessionID: "s1",
       model: { providerID: "openrouter", id: "acme/alpha", variant: "high" },
     })
+    // The toast confirms the bound variant — the thing the status line
+    // advertised and the pick applied.
+    expect(active.toasts).toEqual([{ message: "switched to openrouter/acme/alpha#high", variant: "success" }])
     expect(active.session.create).not.toHaveBeenCalled()
   })
 
@@ -886,6 +889,39 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     expect(active.session.switchModel).toHaveBeenCalledWith({
       sessionID: "s1",
       model: { providerID: "openrouter", id: "acme/alpha" },
+    })
+  })
+
+  test("the pick binds THIS row's variant (the same model under two priorities carries different efforts)", async () => {
+    // ENTRIES lists acme/alpha under balanced (effort high) AND under
+    // quality (effort max). Two downs walk the cursor from the preselected
+    // balanced row to the quality-section row; the pick must use THAT row's
+    // effort — not the first entry sharing the value.
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: { sessionID: "s1", age: "3h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    const modal = await active.modalCommands()
+    expect(modal).not.toBeNull()
+    const down = modal!.find((item) => item.id === "model-compare.list.down")
+    const pick = modal!.find((item) => item.id === "model-compare.list.pick")
+    expect(down).not.toBeNull()
+    expect(pick).not.toBeNull()
+
+    down!.run() // acme/alpha (balanced, high) → acme/beta (medium)
+    down!.run() // acme/beta → acme/alpha (quality: max)
+    pick!.run()
+    await drain()
+
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "max" },
     })
   })
 

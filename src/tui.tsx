@@ -127,8 +127,11 @@ type ListRow = {
   // The OpenCode variant the pick must select (`provider/model#variant`):
   // the effort the row's quality was measured at, when the catalog names a
   // gateway-selectable one. Undefined means the bare model (its default).
-  // Carried on the row, not derived from `value`, because a model can be
-  // listed under several priorities and the pick must use THIS row's effort.
+  // Carried on the row, not derived from `value`: the payload crosses a
+  // trust boundary (toReportEntries passes any well-shaped entry, so the
+  // same id can arrive with a different effort on each row), and at pick
+  // time the TUI holds no catalog to look the effort up in. The row is the
+  // only source of its own advertised effort.
   variant?: string
   dim?: boolean
 }
@@ -432,8 +435,15 @@ export default Plugin.define({
       }
     }
 
+    // The pick's success toast: the flattened model id (F-20 — the raw id
+    // cannot be line-injected) plus the bound variant when one was — the
+    // confirmation of what the status line advertised. The variant is one of
+    // the seven gatewayEffort literals, so appending it cannot inject.
+    const switchedToast = (id: string, variant?: string): string =>
+      `switched to openrouter/${sanitizeCatalogText(id)}${variant === undefined ? "" : `#${variant}`}`
+
     // Switch the current session straight to a concrete model (the report
-    // dialog's selection).
+    // dialog's selection) at the variant the row advertised, if any.
     async function switchToModel(sessionID: string, id: string, variant?: string): Promise<void> {
       try {
         await context.client.session.switchModel({
@@ -442,7 +452,7 @@ export default Plugin.define({
         })
         // F-20: `id` here is the raw catalog id (the switch needs it) — the
         // toast shows the flattened form so it cannot be line-injected.
-        notify(`switched to openrouter/${sanitizeCatalogText(id)}`)
+        notify(switchedToast(id, variant))
       } catch (error) {
         notify(`switch failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
@@ -453,7 +463,7 @@ export default Plugin.define({
     // session came up; a failure is toasted and nothing else happens — no
     // half-open session to clean up.
     async function createSessionOnModel(
-      model: { providerID: string; id: string },
+      model: { providerID: string; id: string; variant?: string },
       success: string,
     ): Promise<boolean> {
       try {
@@ -915,12 +925,8 @@ export default Plugin.define({
           // the same concrete model AND variant the in-session path
           // switches to.
           void createSessionOnModel(
-            {
-              providerID: ALIAS_PROVIDER,
-              id: row.value,
-              ...(row.variant === undefined ? {} : { variant: row.variant }),
-            },
-            `switched to openrouter/${sanitizeCatalogText(row.value)}`,
+            { providerID: ALIAS_PROVIDER, id: row.value, variant: row.variant },
+            switchedToast(row.value, row.variant),
           )
         },
         footerLines,

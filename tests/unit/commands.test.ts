@@ -216,6 +216,52 @@ describe("reportEntries", () => {
     expect(entries[0]).toMatchObject({ effort: "high", alternative: "max 56.0" })
   })
 
+  test("a tier-4 non-reasoning 'none' score is not advertised as a pickable variant (the text keeps its provenance)", () => {
+    // The vendor's tier-4 shape: a known non-reasoning model scored from the
+    // OR trio at effort "none". The model's reasoning block exposes no
+    // selectable depth (the non-reasoning block), so no pick can bind
+    // "#none" — the dialog entry must advertise the bare model. The text
+    // report stays display-only provenance: its suffix survives.
+    const tier4 = entry("m/tier4", { balanced: 0.9, price: 0.5, quality: 0.5 }, {
+      quality: 50,
+      qualityEffort: "none",
+      reasoning: {
+        default_effort: "none",
+        supported_efforts: [],
+        default_enabled: null,
+        mandatory: null,
+        supports_max_tokens: null,
+        depths: [{ effort: "none", index: 50, cost_per_task_usd: 1.2, source: "aa", as_of: "t" }],
+      },
+    })
+    const doc: Catalog = { ...DOC, models: [tier4] }
+    const ranks: Record<Priority, string[]> = { balanced: ["m/tier4"], price: [], quality: [] }
+    const sourced = { doc, acquiredAt: Date.now() - HOUR }
+    expect(reportEntries(sourced, ranks)[0]?.effort).toBe("")
+    expect(formatReport(sourced, ranks).split("\n")).toContain("1. m/tier4 (0.900) · none")
+  })
+
+  test("a single-state toggle scored at 'none' keeps its advertised variant", () => {
+    // default_enabled: false makes "#none" the one state a pick CAN bind
+    // (reasoning.test.ts's positive toggle case) — the effort survives the
+    // gate, guarding against a gate that drops every "none".
+    const toggle = entry("m/toggle", { balanced: 0.9, price: 0.5, quality: 0.5 }, {
+      quality: 14.2,
+      qualityEffort: "none",
+      reasoning: {
+        default_effort: "none",
+        supported_efforts: [],
+        default_enabled: false,
+        mandatory: false,
+        supports_max_tokens: null,
+        depths: [{ effort: "none", index: 14.2, cost_per_task_usd: 1.2, source: "aa", as_of: "t" }],
+      },
+    })
+    const doc: Catalog = { ...DOC, models: [toggle] }
+    const ranks: Record<Priority, string[]> = { balanced: ["m/toggle"], price: [], quality: [] }
+    expect(reportEntries({ doc, acquiredAt: Date.now() - HOUR }, ranks)[0]?.effort).toBe("none")
+  })
+
   test("formats quality and price columns (Free, decimals, half-unknown, unknown)", () => {
     const make = (
       id: string,
