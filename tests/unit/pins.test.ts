@@ -298,27 +298,27 @@ describe("storage records", () => {
 
   test("readRecord returns the stored record when v is 1", async () => {
     const { storage } = memoryStorage({ "pin/balanced/x": { v: 1, id: "a/pin", since: 5 } })
-    expect(await readRecord(storage, "pin/balanced/x")).toEqual({ v: 1, id: "a/pin", since: 5 })
+    expect(await readRecord(storage, "pin/balanced/x", 1)).toEqual({ v: 1, id: "a/pin", since: 5 })
   })
 
   test("readRecord returns null on a missing key or a non-object value", async () => {
     const { storage } = memoryStorage({ nullish: null, numeric: 42, text: "x", list: [1, 2] })
-    expect(await readRecord(storage, "absent")).toBeNull() // never stored
-    expect(await readRecord(storage, "nullish")).toBeNull()
-    expect(await readRecord(storage, "numeric")).toBeNull()
-    expect(await readRecord(storage, "text")).toBeNull()
-    expect(await readRecord(storage, "list")).toBeNull()
+    expect(await readRecord(storage, "absent", 1)).toBeNull() // never stored
+    expect(await readRecord(storage, "nullish", 1)).toBeNull()
+    expect(await readRecord(storage, "numeric", 1)).toBeNull()
+    expect(await readRecord(storage, "text", 1)).toBeNull()
+    expect(await readRecord(storage, "list", 1)).toBeNull()
   })
 
-  test("readRecord returns null on a record without v or with a non-1 v", async () => {
+  test("readRecord returns null on a record without v or with another version", async () => {
     const { storage } = memoryStorage({
       noVersion: { id: "a/pin", since: 5 },
       wrongVersion: { v: 2, id: "a/pin", since: 5 },
       stringVersion: { v: "1", id: "a/pin", since: 5 },
     })
-    expect(await readRecord(storage, "noVersion")).toBeNull()
-    expect(await readRecord(storage, "wrongVersion")).toBeNull()
-    expect(await readRecord(storage, "stringVersion")).toBeNull()
+    expect(await readRecord(storage, "noVersion", 1)).toBeNull()
+    expect(await readRecord(storage, "wrongVersion", 1)).toBeNull()
+    expect(await readRecord(storage, "stringVersion", 1)).toBeNull()
   })
 
   test("writeRecord writes the value with its version", async () => {
@@ -326,7 +326,7 @@ describe("storage records", () => {
     const record = { v: 1, id: "a/pin", since: 5 }
     await writeRecord(storage, "pin/balanced/x", record)
     expect(calls).toEqual([{ key: "pin/balanced/x", value: { v: 1, id: "a/pin", since: 5 } }])
-    expect(await readRecord(storage, "pin/balanced/x")).toEqual(record)
+    expect(await readRecord(storage, "pin/balanced/x", 1)).toEqual(record)
   })
 
   test("docCacheKey is doc/cache/<fnv1a(identity)>, distinct per source identity", () => {

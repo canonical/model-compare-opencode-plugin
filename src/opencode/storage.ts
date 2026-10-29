@@ -14,16 +14,19 @@ export type Storage = {
 }
 
 // Reads a versioned record. Returns null — never throws — when the key is
-// missing, the value is not a JSON object, or `v` is missing or not 1 (§7.2:
-// corrupt or unknown-version entries are discarded and treated as absent).
-// The doc-cache layer adds its own field checks (readCachedDoc below).
+// missing, the value is not a JSON object, or `v` is not the caller's expected
+// version (§7.2: corrupt or unknown-version entries are discarded and treated
+// as absent). Every caller states the version it owns: pin records are v1,
+// the doc cache is DOC_CACHE_VERSION. The doc-cache layer adds its own field
+// checks (readCachedDoc below).
 export async function readRecord<T extends { v: number }>(
   storage: Storage,
   key: string,
+  version: number,
 ): Promise<T | null> {
   const raw: unknown = await storage.get(key)
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null
-  if ((raw as { v?: unknown }).v !== 1) return null
+  if ((raw as { v?: unknown }).v !== version) return null
   return raw as T
 }
 
@@ -39,10 +42,17 @@ export async function writeRecord(
 
 // ---- the document cache (§7.9) ------------------------------------------------
 // The last validated catalog and when the plugin acquired it:
-//   { v: 1, source: <identity>, doc: Catalog, acquiredAt: number }
+//   { v: 2, source: <identity>, doc: Catalog, acquiredAt: number }
 // stored per SOURCE IDENTITY, so a document is only ever served for the source
 // that produced it: changing `catalogURL`, `scriptPath` or `source` is a cache
 // miss, never a 6-hour stale answer from the previous source.
+//
+// The record version tracks the CATALOG era, not the storage format: v1 held a
+// schema-v5 catalog, whose `quality` is the AA index at the OpenRouter default
+// effort; v2 holds schema v6, where `quality` is the index at the best measured
+// selectable depth. The two semantics must never mix, so a v1 record is a cache
+// miss and is re-fetched (pins are unaffected: they are model-id references).
+export const DOC_CACHE_VERSION = 2
 
 export const remoteIdentity = (url: string): string => `remote:${url}`
 // The vendored copy has a fixed identity: its path changes with every install
@@ -52,13 +62,17 @@ export const localIdentity = (scriptPath: string | null): string =>
 
 export const docCacheKey = (identity: string): string => `doc/cache/${fnv1aHex(identity)}`
 
-type DocCacheRecord = { v: number; source: unknown; doc: unknown; acquiredAt: unknown }
+type DocCacheRecord = { v: typeof DOC_CACHE_VERSION; source: unknown; doc: unknown; acquiredAt: unknown }
 
 // The cached document for one source identity, or null when there is none, it
 // belongs to another identity (a key collision), or it fails validation — a
 // corrupt record is a cache miss, never an exception mid-setup.
 export async function readCachedDoc(storage: Storage, identity: string): Promise<Sourced | null> {
-  const record = await readRecord<DocCacheRecord>(storage, docCacheKey(identity))
+  const record = await readRecord<DocCacheRecord>(
+    storage,
+    docCacheKey(identity),
+    DOC_CACHE_VERSION,
+  )
   if (record === null) return null
   if (record.source !== identity) return null
   // acquiredAt must be a FINITE number, mirroring isValidPin (src/index.ts):
@@ -80,7 +94,7 @@ export async function writeCachedDoc(
   sourced: Sourced,
 ): Promise<void> {
   await writeRecord(storage, docCacheKey(identity), {
-    v: 1,
+    v: DOC_CACHE_VERSION,
     source: identity,
     doc: sourced.doc,
     acquiredAt: sourced.acquiredAt,

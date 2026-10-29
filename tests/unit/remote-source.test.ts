@@ -56,7 +56,7 @@ function memoryStorage(initial: Record<string, unknown> = {}) {
 }
 
 // Persist a record the way fetchRemote itself writes one: the validated
-// catalog plus the acquisition time under { v: 1 }.
+// catalog plus the acquisition time under { v: 2 } (the v6-catalog doc-cache era).
 async function seedCache(storage: Storage, acquiredAt: number, raw = doc()) {
   const validated = validateCatalog(raw)
   if (!validated.ok) throw new Error(`test document is invalid: ${validated.reason}`)
@@ -230,7 +230,7 @@ describe("fetchRemote", () => {
     expect(fetcher.calls()).toBe(1)
     // The record must be durable storage, i.e. written under doc/cache.
     expect(map.get(DOC_CACHE_KEY)).toEqual({
-      v: 1,
+      v: 2,
       source: remoteIdentity(REMOTE_URL),
       doc: expected.catalog,
       acquiredAt: NOW,
@@ -268,7 +268,7 @@ describe("fetchRemote", () => {
     expect(result).toEqual({ doc: expected.catalog, acquiredAt: NOW + TTL, fromCache: false, warnings: [] })
     expect(fetcher.calls()).toBe(1)
     expect(map.get(DOC_CACHE_KEY)).toEqual({
-      v: 1,
+      v: 2,
       source: remoteIdentity(REMOTE_URL),
       doc: expected.catalog,
       acquiredAt: NOW + TTL,

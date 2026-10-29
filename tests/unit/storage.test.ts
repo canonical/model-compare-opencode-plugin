@@ -61,7 +61,7 @@ function memoryStorage(record: unknown, seenKeys: string[] = []): Storage {
 
 describe("readCachedDoc record validation", () => {
   test("a well-formed record reads back as the cached Sourced under its cache key", async () => {
-    const record = { v: 1, source: IDENTITY, doc: projectedDoc(), acquiredAt: 1_000_000_000_000 }
+    const record = { v: 2, source: IDENTITY, doc: projectedDoc(), acquiredAt: 1_000_000_000_000 }
     const seenKeys: string[] = []
     const cached = await readCachedDoc(memoryStorage(record, seenKeys), IDENTITY)
     expect(seenKeys).toEqual([CACHE_KEY])
@@ -70,11 +70,21 @@ describe("readCachedDoc record validation", () => {
 
   test("a record with a non-finite acquiredAt (JSON.parse 1e999) is a cache miss", async () => {
     const record = {
-      v: 1,
+      v: 2,
       source: IDENTITY,
       doc: projectedDoc(),
       acquiredAt: JSON.parse("1e999") as number, // Infinity — the isValidPin vector
     }
+    const cached = await readCachedDoc(memoryStorage(record), IDENTITY)
+    expect(cached).toBeNull()
+  })
+
+  test("a v1-era record (the v5-era doc cache) is a cache miss", async () => {
+    // Doc-cache records are versioned by CATALOG era: v1 held a schema-v5
+    // catalog whose `quality` is the default-effort score; v2 holds the v6
+    // best-selectable-depth score. Serving v1 after the upgrade would mix the
+    // two semantics, so it must be discarded and re-fetched.
+    const record = { v: 1, source: IDENTITY, doc: projectedDoc(), acquiredAt: 1_000_000_000_000 }
     const cached = await readCachedDoc(memoryStorage(record), IDENTITY)
     expect(cached).toBeNull()
   })

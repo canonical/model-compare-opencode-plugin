@@ -526,8 +526,10 @@ describe("validateStoredCatalog (F-16)", () => {
   })
 
   test("rejects a pre-v5 stored projection (a model without qualityEffort)", () => {
-    // Old v4 cache records have no qualityEffort; accepting one would mix v4's
-    // max-row quality with v5's default-effort semantics.
+    // Version-stale doc-cache records are discarded by the record-version gate
+    // before they reach this function; this presence check is defense in depth
+    // against a hand-edited projection, which no longer says which era it
+    // came from.
     const stored = JSON.parse(JSON.stringify(recorded()))
     delete stored.models[0].qualityEffort
     const result = validateStoredCatalog(stored)

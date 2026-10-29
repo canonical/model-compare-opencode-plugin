@@ -418,7 +418,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       state.sourced = cached
       for (const p of PRIORITIES) {
         const key = pinKey(p, effectiveWeights(cached.doc, p, config.weights[p]).weights)
-        const record = await readRecord<Pin>(ctx.storage, key)
+        const record = await readRecord<Pin>(ctx.storage, key, 1)
         if (record !== null && !isValidPin(record)) {
           console.warn("[model-compare]", `corrupt pin record for ${p} (${key}); ignoring it`)
           continue

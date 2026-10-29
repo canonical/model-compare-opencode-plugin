@@ -618,7 +618,7 @@ describe("setup", () => {
       return { dispose: vi.fn(async () => {}) }
     })
     await ctx.storage.set(docCacheKey(localIdentity(null)), {
-      v: 1,
+      v: 2,
       source: localIdentity(null),
       doc: { generatedAt: "x", models: "not-an-array" },
       acquiredAt: NOW,
@@ -693,7 +693,7 @@ describe("refresh tick", () => {
       expect(storageMap.get(pinKeyFor(DOC, p))).toEqual({ v: 1, id: "acme/alpha", since: NOW })
     }
     expect(storageMap.get(docCacheKey(REMOTE_IDENTITY))).toEqual({
-      v: 1,
+      v: 2,
       source: REMOTE_IDENTITY,
       doc: DOC,
       acquiredAt: NOW,
