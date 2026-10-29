@@ -154,16 +154,24 @@ function rowsHeight(rows: readonly ListRow[], upto: number = rows.length): numbe
   return y
 }
 
-// The list dialogs' row-area cap, the host command palette's own formula:
-// min(content LINES, floor(terminal height / 2) - 6) — the first argument is
-// rowsHeight(rows), never the rows' count, or the cap clips tail rows even
-// on a roomy terminal (with the scrollbar hidden). The host's dialog layer
+// The list dialogs' row-area cap: min(content LINES, the dialog's vertical
+// budget). The budget is the host palette's half-viewport allowance minus
+// three rows (-6 loosened by three), further bounded by h - 12 so the
+// dialog's chrome (7 plugin lines plus up to two footer lines) and the host
+// panel's top blank always fit: on short terminals the h - 12 budget binds
+// before the allowance does. The first argument is rowsHeight(rows), never
+// the rows' count, or the cap clips tail rows even on a roomy terminal (with
+// the scrollbar hidden). Content-bounded: a short list keeps its natural
+// height, so the dialog never pads with blank rows. The host's dialog layer
 // caps nothing itself and anchors UNcentered dialogs a quarter viewport
 // down — without this cap an uncapped list overflows the viewport at large
 // font sizes (the report dialog did exactly that). Exported for the unit
 // rig.
 export function cappedRowsHeight(contentLines: number, terminalHeight: number): number {
-  return Math.min(contentLines, Math.max(1, Math.floor(terminalHeight / 2) - 6))
+  return Math.min(
+    contentLines,
+    Math.max(1, Math.min(Math.floor(terminalHeight / 2) - 3, terminalHeight - 12)),
+  )
 }
 
 // The terminal display width of one code point, in columns: 2 for the ranges

@@ -1277,12 +1277,20 @@ describe("strWidth (the clamps' display-column measure)", () => {
 })
 
 describe("cappedRowsHeight (the palette's list cap)", () => {
-  test("caps the row area at half the viewport minus six rows", () => {
-    expect(cappedRowsHeight(50, 40)).toBe(14)
+  test("caps the row area at half the viewport minus three, within the viewport budget", () => {
+    expect(cappedRowsHeight(50, 40)).toBe(17)
+  })
+
+  test("the viewport budget binds across the 14-17 growth band", () => {
+    expect(cappedRowsHeight(50, 14)).toBe(2)
+    expect(cappedRowsHeight(50, 15)).toBe(3)
+    expect(cappedRowsHeight(50, 17)).toBe(5)
   })
 
   test("short lists keep their natural height", () => {
     expect(cappedRowsHeight(3, 40)).toBe(3)
+    // The picks dialog's 3 rows are content-bound from h = 15 (were from 18).
+    expect(cappedRowsHeight(3, 16)).toBe(3)
   })
 
   test("a tiny viewport still shows one row", () => {
@@ -1397,11 +1405,11 @@ describe("the dialogs' viewport scroll", () => {
     const { scrollbox, frame, rerenderEffects } = await openReportScroll(scrollEntries("acme/price1"), {
       height: 6,
     })
-    // Terminal 24: the cap is 6 (floor(24/2) - 6) — under the fixture's 12
-    // content lines.
-    expect(scrollbox.props.maxHeight).toBe(6)
+    // Terminal 24: the cap is 9 (min(24/2 - 3, 24 - 12)) — under the
+    // fixture's 12 content lines.
+    expect(scrollbox.props.maxHeight).toBe(9)
 
-    active!.fireRenderer("resize", 80, 40) // the cap rises to 14
+    active!.fireRenderer("resize", 80, 40) // the cap rises to 17
     rerenderEffects() // Solid's reactive re-run of the cap expression
     expect(scrollbox.props.maxHeight).toBe(12) // the LINES count, not the 10 rows
 
@@ -1422,7 +1430,7 @@ describe("the dialogs' viewport scroll", () => {
 
 describe("the row-area cap measures content LINES", () => {
   test("a report list's cap counts its heading blanks (3 headings, 12 lines, 10 rows)", async () => {
-    // Terminal 40: the cap is 14 — above the row count but not the line
+    // Terminal 40: the cap is 17 — above the row count but not the line
     // count. Measured in rows the cap would clip the tail entries behind
     // the hidden scrollbar; measured in lines the dialog shows them all.
     const { scrollbox } = await openReportScroll(scrollEntries(), {
@@ -1437,7 +1445,7 @@ describe("the row-area cap measures content LINES", () => {
     await active.command("model-compare.picks").run()
     await drain()
     const { scrollbox } = renderDialog(active)
-    // The picks dialog: 3 rows, no heading blanks — min(3, cap 6 at
+    // The picks dialog: 3 rows, no heading blanks — min(3, cap 9 at
     // terminal 24).
     expect(scrollbox.props.maxHeight).toBe(3)
   })
