@@ -234,6 +234,66 @@ export function strWidth(value: string): number {
   return width
 }
 
+// The registry's variant ids for one concrete model, or null when the
+// registry cannot answer: the model is absent from the list (a filtered list
+// says nothing about its variants) or no matching entry carries a variants
+// array. null means UNKNOWN — the catalog's advertisement stands. An array
+// (possibly empty) means KNOWN: exactly those variants exist, and an empty
+// list is a model without variants at all (a non-reasoning model). Entries
+// are host data, read guardedly. A model can also appear as an alias view
+// (matched by modelID, carrying no variants); such an entry never masks the
+// concrete entry that carries them. Exported for the unit rig.
+export function registryVariants(entries: unknown, modelID: string): string[] | null {
+  if (!Array.isArray(entries)) return null
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue
+    const record = entry as { id?: unknown; modelID?: unknown; variants?: unknown }
+    if (record.id !== modelID && record.modelID !== modelID) continue
+    if (!Array.isArray(record.variants)) continue
+    const ids: string[] = []
+    for (const variant of record.variants) {
+      if (typeof variant !== "object" || variant === null) continue
+      const id = (variant as { id?: unknown }).id
+      if (typeof id === "string" && id !== "") ids.push(id)
+    }
+    return ids
+  }
+  return null
+}
+
+// The variant a pick may actually bind. `known` comes from registryVariants:
+// null is UNKNOWN, and the advertisement stands (fail open — a host that
+// cannot answer must not silently downgrade every pick); a list is the host's
+// own variant space, and binding a variant absent from it fails model
+// resolution for every later request in the session (switch and toast say
+// success), so the pick degrades to the bare model instead. Exported for the
+// unit rig.
+export function bindableVariant(
+  advertised: string | undefined,
+  known: string[] | null,
+): string | undefined {
+  if (advertised === undefined) return undefined
+  if (known === null) return advertised
+  return known.includes(advertised) ? advertised : undefined
+}
+
+// The pick's success toast: the flattened model id (F-20 — the raw id cannot
+// be line-injected), plus the bound variant when one was — the confirmation
+// of what the status line advertised — or the advertised variant named as
+// unavailable when the host's registry refused it. `advertised`/`bound` are
+// gateway-effort literals or host variant ids, flattened like the id.
+// Exported for the unit rig.
+export function pickNotice(
+  id: string,
+  advertised: string | undefined,
+  bound: string | undefined,
+): string {
+  const base = `switched to openrouter/${sanitizeCatalogText(id)}`
+  if (bound !== undefined) return `${base}#${sanitizeCatalogText(bound)}`
+  if (advertised !== undefined) return `${base} (variant ${sanitizeCatalogText(advertised)} unavailable)`
+  return base
+}
+
 // One report entry's defensive normalization, shared by the two paths that
 // carry report data across a trust boundary (the /model-compare command's
 // event and the TUI's direct RPC call): an entry missing any identity field
@@ -435,24 +495,24 @@ export default Plugin.define({
       }
     }
 
-    // The pick's success toast: the flattened model id (F-20 — the raw id
-    // cannot be line-injected) plus the bound variant when one was — the
-    // confirmation of what the status line advertised. The variant is one of
-    // the seven gatewayEffort literals, so appending it cannot inject.
-    const switchedToast = (id: string, variant?: string): string =>
-      `switched to openrouter/${sanitizeCatalogText(id)}${variant === undefined ? "" : `#${variant}`}`
-
     // Switch the current session straight to a concrete model (the report
-    // dialog's selection) at the variant the row advertised, if any.
-    async function switchToModel(sessionID: string, id: string, variant?: string): Promise<void> {
+    // dialog's selection) at the variant the row advertised, when the host's
+    // registry offers it (`bound` — see bindableVariant; undefined binds the
+    // model's own default).
+    async function switchToModel(
+      sessionID: string,
+      id: string,
+      advertised: string | undefined,
+      bound: string | undefined,
+    ): Promise<void> {
       try {
         await context.client.session.switchModel({
           sessionID,
-          model: { providerID: ALIAS_PROVIDER, id, ...(variant === undefined ? {} : { variant }) },
+          model: { providerID: ALIAS_PROVIDER, id, ...(bound === undefined ? {} : { variant: bound }) },
         })
         // F-20: `id` here is the raw catalog id (the switch needs it) — the
         // toast shows the flattened form so it cannot be line-injected.
-        notify(switchedToast(id, variant))
+        notify(pickNotice(id, advertised, bound))
       } catch (error) {
         notify(`switch failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
@@ -916,17 +976,26 @@ export default Plugin.define({
         `Model Compare — top 5 (data age: ${data.age ?? "unknown"})`,
         rows,
         (row) => {
+          // The advertisement is only half the contract: bind it when the
+          // host's own registry offers that variant, else fall back to the
+          // bare model (the toast names the unavailability) — an unknown
+          // variant fails model resolution for every later request.
+          const advertised = row.variant
+          const bound = bindableVariant(
+            advertised,
+            registryVariants(context.data.location.model.list(location), row.value),
+          )
           const sessionID = data.sessionID
           if (sessionID !== null) {
-            void switchToModel(sessionID, row.value, row.variant)
+            void switchToModel(sessionID, row.value, advertised, bound)
             return
           }
           // The opening screen: the pick becomes a NEW session's model —
           // the same concrete model AND variant the in-session path
           // switches to.
           void createSessionOnModel(
-            { providerID: ALIAS_PROVIDER, id: row.value, variant: row.variant },
-            switchedToast(row.value, row.variant),
+            { providerID: ALIAS_PROVIDER, id: row.value, ...(bound === undefined ? {} : { variant: bound }) },
+            pickNotice(row.value, advertised, bound),
           )
         },
         footerLines,

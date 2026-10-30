@@ -80,7 +80,7 @@ Commands:
 |---|---|
 | `alt+m` | picks dialog — all three priorities with their current picks |
 | `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
-| `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model at the variant its status line advertises (`#max`, …) |
+| `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model at the variant its status line advertises (`#max`, …), falling back to the bare model when the host's own registry does not offer that variant |
 | `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
 | `esc` | close the dialog |

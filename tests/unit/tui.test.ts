@@ -19,7 +19,13 @@ import { createRoot } from "solid-js"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { ModelCompare } from "../../src/rpc"
 import { aliasId, useBestNotice, useBestRefusal } from "../../src/opencode/usebest"
-import tuiPlugin, { cappedRowsHeight, strWidth } from "../../src/tui"
+import tuiPlugin, {
+  bindableVariant,
+  cappedRowsHeight,
+  pickNotice,
+  registryVariants,
+  strWidth,
+} from "../../src/tui"
 
 // ---- the dialog JSX's fake element model -----------------------------------
 // src/tui.tsx is Solid JSX: the transform compiles it to @opentui/solid's
@@ -174,11 +180,17 @@ const ENTRIES = [
 
 // Alias entries as the model registry reports them (the runtime plugin keeps
 // the display names current; readAliasViews picks the plugin's own out).
-function aliasEntries(): Array<{ id: string; name: string; enabled: boolean; modelID: string | null }> {
+function aliasEntries(): Array<Record<string, unknown>> {
   return [
     { id: "model-compare/balanced", name: "Model Compare: balanced → acme/alpha", enabled: true, modelID: "acme/alpha" },
     { id: "model-compare/price", name: "Model Compare: price → acme/alpha", enabled: true, modelID: "acme/alpha" },
     { id: "model-compare/quality", name: "Model Compare: quality → acme/alpha", enabled: true, modelID: "acme/alpha" },
+    // The concrete models behind the picks: the registry's own variant space
+    // (models.dev-derived), which the report pick is checked against. The
+    // alias views ignore these (readAliasViews keeps the model-compare/
+    // prefix only). beta exposes no variants, like a non-reasoning model.
+    { id: "acme/alpha", modelID: "acme/alpha", enabled: true, variants: [{ id: "high" }, { id: "max" }, { id: "medium" }] },
+    { id: "acme/beta", modelID: "acme/beta", enabled: true, variants: [] },
   ]
 }
 
@@ -925,6 +937,84 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     })
   })
 
+  test("a pick whose advertised variant the registry does not offer binds the bare model and says so", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    // acme/alpha's registry variants are high/max/medium — xhigh is real on
+    // OpenRouter-style data but absent from the host's own variant space, the
+    // divergence class that fails model resolution for every later request.
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: { sessionID: "s1", age: "3h", entries: [{ ...ENTRIES[0], effort: "xhigh" }] },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha" },
+    })
+    expect(active.toasts).toEqual([
+      { message: "switched to openrouter/acme/alpha (variant xhigh unavailable)", variant: "success" },
+    ])
+  })
+
+  test("a pick for a model the registry does not list keeps the advertised variant (fail open)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "s1",
+          age: "3h",
+          entries: [{ ...ENTRIES[0], id: "gone/model", value: "gone/model", effort: "high" }],
+        },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "gone/model", variant: "high" },
+    })
+  })
+
+  test("a model with NO registry variants never binds one (empty list is a known answer)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    // acme/beta's registry entry lists no variants, like a non-reasoning model.
+    const beta = ENTRIES[1]! // balanced rank 2: acme/beta, effort medium
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: { sessionID: "s1", age: "3h", entries: [beta] },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/beta" },
+    })
+    expect(active.toasts).toEqual([
+      { message: "switched to openrouter/acme/beta (variant medium unavailable)", variant: "success" },
+    ])
+  })
+
   test("a failed switch on the report-dialog path toasts 'switch failed'", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
@@ -1162,6 +1252,28 @@ describe("the report table's three columns and cursor status line", () => {
     expect(treeTexts(renderDialog(active).tree)).toContain("variant: -")
   })
 
+  test("an unscored model's pick toast carries no variant suffix (the no-advertisement branch)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: { sessionID: "s1", age: "3h", entries: [{ ...ENTRIES[0], effort: "" }] },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha" },
+    })
+    expect(active.toasts).toEqual([{ message: "switched to openrouter/acme/alpha", variant: "success" }])
+  })
+
   test("the status line clamps wide characters by display columns, not string length", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
@@ -1369,6 +1481,67 @@ describe("strWidth (the clamps' display-column measure)", () => {
     // ⌨️ = U+2328 + U+FE0F: the base is OUTSIDE every wide block, so only
     // the VS16 rule keeps the pair at ≥ 2 — the no-undercount guarantee.
     expect(strWidth("\u2328\uFE0F")).toBe(2)
+  })
+})
+
+describe("registryVariants / bindableVariant (the pick's registry check)", () => {
+  const REGISTRY = [
+    { id: "model-compare/balanced", modelID: "acme/alpha" }, // alias view, no variants
+    { id: "acme/alpha", modelID: "acme/alpha", variants: [{ id: "high" }, { id: "max" }, { id: 42 }] },
+    { id: "acme/plain", modelID: "acme/plain", variants: [] },
+  ]
+
+  test("returns the model's variant ids, matching an entry that carries them", () => {
+    // The alias view comes first and has no variants; the concrete entry wins.
+    expect(registryVariants(REGISTRY, "acme/alpha")).toEqual(["high", "max"])
+  })
+
+  test("a model with an empty variant list is KNOWN to have none", () => {
+    expect(registryVariants(REGISTRY, "acme/plain")).toEqual([])
+  })
+
+  test("an absent model, a non-array registry or a malformed entry is UNKNOWN (null)", () => {
+    expect(registryVariants(REGISTRY, "gone/model")).toBeNull()
+    expect(registryVariants(undefined, "acme/alpha")).toBeNull()
+    expect(registryVariants("nope", "acme/alpha")).toBeNull()
+    expect(registryVariants({}, "acme/alpha")).toBeNull()
+  })
+
+  test("a known list keeps a listed variant, drops an unlisted one", () => {
+    expect(bindableVariant("max", ["high", "max"])).toBe("max")
+    expect(bindableVariant("xhigh", ["high", "max"])).toBeUndefined()
+    expect(bindableVariant("none", [])).toBeUndefined()
+  })
+
+  test("an UNKNOWN registry lets the advertisement stand (fail open)", () => {
+    expect(bindableVariant("max", null)).toBe("max")
+  })
+
+  test("no advertisement binds nothing, whatever the registry says", () => {
+    expect(bindableVariant(undefined, ["high"])).toBeUndefined()
+    expect(bindableVariant(undefined, null)).toBeUndefined()
+  })
+})
+
+describe("pickNotice (the pick's success toast)", () => {
+  test("a bound variant is confirmed after the model id", () => {
+    expect(pickNotice("acme/alpha", "high", "high")).toBe("switched to openrouter/acme/alpha#high")
+  })
+
+  test("no advertised variant keeps the bare-model message", () => {
+    expect(pickNotice("acme/alpha", undefined, undefined)).toBe("switched to openrouter/acme/alpha")
+  })
+
+  test("an advertised variant the registry does not offer is named as unavailable", () => {
+    expect(pickNotice("acme/alpha", "max", undefined)).toBe(
+      "switched to openrouter/acme/alpha (variant max unavailable)",
+    )
+  })
+
+  test("the id is flattened onto one line (F-20); the variant is allowlisted", () => {
+    expect(pickNotice("acme/alpha\nacme/beta", "low", "low")).toBe(
+      "switched to openrouter/acme/alpha acme/beta#low",
+    )
   })
 })
 
