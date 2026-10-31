@@ -1,6 +1,6 @@
 {
   "repo": "canonical/model-compare",
-  "tag": "v0.7.0",
-  "commit": "4b47c434c861fd2c1b64de9b56b1b8f3bc98070a",
-  "sha256": "9b6bcef0e9689a63ca682daddf092119977a7c7608e531418efc76624027b3b9"
+  "tag": "v0.7.2",
+  "commit": "5d47881b2c97d07eeffd61751dfddb8f901a13a3",
+  "sha256": "1c60dba1a3b7e93d6a9430185a2dd69663e6f106b6a076687b43c585889d6b2b"
 }
