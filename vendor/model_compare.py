@@ -53,12 +53,15 @@ import json
 import math
 import os
 import re
+import shlex
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -105,7 +108,7 @@ QUALITY_CATALOG_CACHE = "published-catalog"
 # A published catalog generated more than this many days ago is stale:
 # warn but use -- the records' as_of makes the staleness visible downstream.
 QUALITY_CATALOG_MAX_AGE_DAYS = 14
-VERSION = "0.7.0"
+VERSION = "0.7.3"
 USER_AGENT = f"model-compare/{VERSION} (https://github.com/canonical/model-compare)"
 
 # opencode expects provider-qualified model ids: openrouter/<provider/model>.
@@ -1243,6 +1246,11 @@ def fetch_session_cost(args) -> dict | None:
 # `quality` means the best-selectable-depth index.
 CATALOG_QUALITY_SCHEMA_VERSION = CATALOG_SCHEMA_VERSION
 
+# One display-only unlabeled AA reference: the intelligence index and AA's
+# benchmark cost, both measured without a reasoning-effort label, plus the
+# source label and its as_of. The record deliberately has no `effort` key.
+CATALOG_UNLABELED_KEYS = ("index", "cost_per_task_usd", "source", "as_of")
+
 
 def _catalog_index(value) -> float | None:
     """A finite in-range catalog index, or None for poisoned/absent input."""
@@ -1262,9 +1270,11 @@ def _parse_catalog_v6(doc) -> tuple[dict, dict]:
 
     by_id maps id -> {"index", "source", "as_of", "effort"} for the model's
     main quality (the index at its best selectable depth). The
-    depth map maps id -> {"default_effort", "depths": {effort: record}} for
-    the model's full measured depth list; resolve_quality re-selects from
-    it using the best-selectable-depth rules and the unkeyed run's support data.
+    depth map maps id -> {"default_effort", "depths": {effort: record},
+    "unlabeled": record-or-None} for the model's full measured depth list
+    and, when AA measured it without an effort label, the display-only
+    reference; resolve_quality re-selects from it using the
+    best-selectable-depth rules and the unkeyed run's support data.
 
     Gates (design: failure modes):
     - schema_version must be an int == 6. Earlier catalogs predate the
@@ -1387,9 +1397,45 @@ def _parse_catalog_v6(doc) -> tuple[dict, dict]:
                 "source": source,
                 "as_of": as_of if as_of else None,
             }
+        unlabeled = reasoning.get("aa_unlabeled")
+        if unlabeled is not None:
+            if not isinstance(unlabeled, dict):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            if any(key not in CATALOG_UNLABELED_KEYS for key in unlabeled):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            if any(key not in unlabeled for key in CATALOG_UNLABELED_KEYS):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            index = _catalog_index(unlabeled.get("index"))
+            if index is None:
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            cost = unlabeled.get("cost_per_task_usd")
+            if cost is not None:
+                cost = _finite_cost(cost)
+                if cost is None:
+                    warn("published catalog returned an unexpected response shape")
+                    return {}, {}
+            source = unlabeled.get("source")
+            if not (isinstance(source, str) and source):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            as_of = unlabeled.get("as_of")
+            if as_of is not None and not isinstance(as_of, str):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            unlabeled = {
+                "index": index,
+                "cost_per_task_usd": cost,
+                "source": source,
+                "as_of": as_of if as_of else None,
+            }
         depths_by_id[model_id] = {
             "default_effort": default_effort if default_effort else None,
             "depths": depths,
+            "unlabeled": unlabeled,
         }
     return by_id, depths_by_id
 
@@ -2472,7 +2518,10 @@ def build_aa_lookup(entries):
         raw_index = entry.get("index")
         if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
             continue
-        index = float(raw_index)
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
         # Non-finite indexes would serialize as NaN and poison quality.
         if not math.isfinite(index):
             continue
@@ -2528,7 +2577,10 @@ def build_aa_depth_lookup(entries):
         raw_index = entry.get("index")
         if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
             continue
-        index = float(raw_index)
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
         if not math.isfinite(index):
             continue
         seen.add(dedupe_key)
@@ -2566,19 +2618,99 @@ def build_aa_depth_lookup(entries):
     return lookup
 
 
-def _depth_group(model, lookup):
-    """The candidate's matching base group (effort -> record), or None.
+def build_aa_unlabeled_lookup(entries):
+    """Index display-only AA rows that carry no reasoning-effort label.
 
+    AA sometimes ranks a model once, with no effort parenthetical and no
+    effort-suffixed slug ("GLM-5.3-Flash"). Such a row cannot fill QUAL:
+    the index is not tied to a selectable effort, so it may not be the
+    quality the user gets. It is still useful as a reference, so it is
+    indexed here, separately from build_aa_depth_lookup's effort-keyed
+    groups (which skip these rows entirely).
+
+    Each record is {"index", "cost_per_task_usd", "source": "aa", "as_of"}.
+    Rows with an effort label, an ambiguous label, a non-finite index or no
+    usable key are skipped. Duplicate base keys are stored as None
+    (ambiguous: never guessed), mirroring the depth lookup. Base keys come
+    from the name and slug with the effort label stripped, both
+    unqualified and creator-qualified ("<creator_norm>:<base_key>").
+    """
+    lookup = {}
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("id")
+        dedupe_key = (
+            entry_id
+            if isinstance(entry_id, str) and entry_id
+            else (entry.get("slug"), entry.get("name"))
+        )
+        if dedupe_key in seen:
+            continue
+        parsed = parse_aa_effort(entry.get("name") or "", entry.get("slug") or "")
+        if parsed["effort"] or parsed["ambiguous"]:
+            continue
+        raw_index = entry.get("index")
+        if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
+            continue
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
+        if not math.isfinite(index):
+            continue
+        seen.add(dedupe_key)
+        record = {
+            "index": index,
+            "cost_per_task_usd": _finite_cost(entry.get("cost_per_task")),
+            "source": "aa",
+            "as_of": (
+                entry.get("as_of") if isinstance(entry.get("as_of"), str) else None
+            ),
+        }
+        base_keys = []
+        for base in (parsed["base_name"], parsed["base_slug"]):
+            normalized = norm_key(base)
+            if normalized and normalized not in base_keys:
+                base_keys.append(normalized)
+        creator = entry.get("creator")
+        if not isinstance(creator, str) or not creator:
+            raw_creator = entry.get("model_creator")
+            if isinstance(raw_creator, dict) and isinstance(
+                raw_creator.get("name"), str
+            ):
+                creator = raw_creator["name"]
+        creator_norm = normalize_provider(creator) if isinstance(creator, str) else ""
+        keys = list(base_keys)
+        if creator_norm:
+            keys.extend(f"{creator_norm}:{base_key}" for base_key in base_keys)
+        for base_key in keys:
+            if base_key in lookup:
+                lookup[base_key] = None
+            else:
+                lookup[base_key] = record
+    return lookup
+
+
+def _depth_group(model, lookup):
+    """The candidate's matching lookup value, or None.
+
+    Used for both effort-keyed base groups (effort -> record) and the
+    unlabeled reference map (base -> record): the tier walk is identical.
     Exact tiers only, in the legacy order: full id, base id, display name,
     display name sans parentheticals. At each tier the creator-qualified
     key (the OpenRouter author prefix normalized with normalize_provider)
-    is tried before the unqualified key. The first tier that resolves a
-    base group wins; a tier whose group lacks the requested effort yields
-    nothing rather than falling through to a lower tier. Ambiguous
-    (base, effort) records are stored as None by build_aa_depth_lookup and
-    match as absent; exact-key lookup means one tier cannot otherwise
-    resolve to multiple base groups. The fuzzy pass is never used here --
-    it is the #17 conflation bug.
+    is tried before the unqualified key. The first tier with a present key
+    wins and terminates the walk; a tier whose group lacks the requested
+    effort yields nothing rather than falling through to a lower tier. The
+    walk terminates on a present key even when the stored value is None:
+    ambiguous records (a None (base, effort) record from
+    build_aa_depth_lookup, a None base value from
+    build_aa_unlabeled_lookup) match as a resolved-but-empty tier, so the
+    caller sees no record and no lower tier is consulted. Exact-key lookup
+    means one tier cannot otherwise resolve to multiple base groups. The
+    fuzzy pass is never used here -- it is the #17 conflation bug.
     """
     if not isinstance(lookup, dict):
         return None
@@ -2593,12 +2725,11 @@ def _depth_group(model, lookup):
         if not normalized:
             continue
         if creator:
-            qualified = lookup.get(f"{creator}:{normalized}")
-            if qualified is not None:
-                return qualified
-        group = lookup.get(normalized)
-        if group is not None:
-            return group
+            qualified_key = f"{creator}:{normalized}"
+            if qualified_key in lookup:
+                return lookup[qualified_key]
+        if normalized in lookup:
+            return lookup[normalized]
     return None
 
 
@@ -3140,6 +3271,7 @@ def resolve_quality(
     catalog_quality=None,
     *,
     depth_lookup=None,
+    unlabeled_lookup=None,
     catalog_depths=None,
     requested_effort="default",
 ):
@@ -3160,6 +3292,13 @@ def resolve_quality(
          no effort label, so a reasoning model never uses it as its main
          score; unknown reasoning is not non-reasoning.
       4. No record -- the candidate stays quality-blind.
+
+    A quality-blind candidate may still carry a display-only AA reference:
+    rows AA measures without an effort label cannot fill QUAL, so
+    ``unlabeled_lookup`` (keyed runs) or the catalog depth map's
+    ``unlabeled`` record (unkeyed runs) is attached as
+    ``cand["quality_unlabeled"]`` when no main record resolved. It never
+    enters quality_by_id and never changes the score.
 
     Default selection considers only finite records whose efforts are
     selectable when support metadata is non-empty; ties prefer the deeper
@@ -3184,6 +3323,9 @@ def resolve_quality(
     source_by_id = {}
     depth_mode = depth_lookup is not None or catalog_depths is not None
     for cand in candidates:
+        # A previous pass may have attached a display-only reference; a
+        # resolved record makes it stale, so never let it survive.
+        cand.pop("quality_unlabeled", None)
         record = None
         if depth_mode:
             default_effort = cand.get("default_effort")
@@ -3292,6 +3434,32 @@ def resolve_quality(
                         "as_of": bench.get("as_of"),
                     }
         if record is None:
+            # No effort-attributable record: surface an unlabeled AA
+            # measurement as a display-only reference. It never fills
+            # QUAL, and a resolved record makes it redundant.
+            reference = (
+                _depth_group(cand, unlabeled_lookup) if unlabeled_lookup else None
+            )
+            if reference is None and catalog_depths is not None:
+                catalog_entry = catalog_depths.get(cand["id"])
+                if isinstance(catalog_entry, dict):
+                    candidate_reference = catalog_entry.get("unlabeled")
+                    if isinstance(candidate_reference, dict):
+                        reference = candidate_reference
+            reference_index = (
+                reference.get("index") if isinstance(reference, dict) else None
+            )
+            if (
+                isinstance(reference_index, (int, float))
+                and not isinstance(reference_index, bool)
+                and math.isfinite(reference_index)
+            ):
+                cand["quality_unlabeled"] = {
+                    "index": float(reference_index),
+                    "cost_per_task_usd": reference.get("cost_per_task_usd"),
+                    "source": reference.get("source") or "aa",
+                    "as_of": reference.get("as_of"),
+                }
             continue
 
         # Drift: only meaningful when the winner is not OpenRouter itself.
@@ -3949,11 +4117,31 @@ def _display_default_effort(cand):
     )
 
 
+def _published_unlabeled_record(cand):
+    """The display-only unlabeled AA reference, normalized for publication.
+
+    None when the candidate has no such reference. The record keeps the
+    depth record's shape minus ``effort``: it was measured without one, so
+    publishing an effort label here would be a lie.
+    """
+    record = cand.get("quality_unlabeled")
+    if not isinstance(record, dict):
+        return None
+    return {
+        "index": record.get("index"),
+        "cost_per_task_usd": record.get("cost_per_task_usd"),
+        "source": record.get("source"),
+        "as_of": record.get("as_of"),
+    }
+
+
 def _published_reasoning_block(cand):
     """The six published reasoning keys plus the measured depth records.
 
     ``is_reasoning`` is an internal flag: neither catalog v6 nor spec §8.4
-    publishes it, so it never appears here.
+    publishes it, so it never appears here. ``aa_unlabeled`` is the
+    display-only AA reference (index with no effort label); it is null
+    when AA measured every row at a known effort.
     """
     reasoning = cand.get("reasoning") or {}
     return {
@@ -3963,6 +4151,7 @@ def _published_reasoning_block(cand):
         "mandatory": reasoning.get("mandatory"),
         "supports_max_tokens": reasoning.get("supports_max_tokens"),
         "depths": cand.get("reasoning_depths") or [],
+        "aa_unlabeled": _published_unlabeled_record(cand),
     }
 
 
@@ -4461,8 +4650,10 @@ def print_depth_detail(top):
 
     One block per model in the given (rank) order, listing the union of
     OpenRouter-supported and AA-measured efforts, deepest first. Models with
-    no measured depths get a single ``no AA depth data`` line. Display only:
-    AA $/task never enters the weighted score.
+    no measured depths get a single ``no AA depth data`` line, unless AA
+    measured them without an effort label: that index is shown with a
+    reference-only caveat instead. Display only: AA $/task never enters the
+    weighted score.
     """
     if not top:
         return
@@ -4483,6 +4674,26 @@ def print_depth_detail(top):
             return (AA_EFFORT_ORDER.index(effort), effort)
         except ValueError:
             return (len(AA_EFFORT_ORDER), effort or "")
+
+    def unlabeled_note(record):
+        """One line for an AA index measured without an effort label.
+
+        Display only: the number cannot fill QUAL, so the note says what it
+        is and warns that a selectable effort may score differently.
+        """
+        if not isinstance(record, dict):
+            return None
+        index = finite(record.get("index"))
+        if index is None:
+            return None
+        cost = finite(record.get("cost_per_task_usd"))
+        text = f"AA index {index:.1f} without an effort label"
+        if cost is not None:
+            text += f" (AA ${cost:.2f} per task)"
+        return (
+            text + "; reference only, may not be the quality you get at a "
+            "selectable effort."
+        )
 
     blocks = []
     for rank, cand in enumerate(top, 1):
@@ -4577,8 +4788,12 @@ def print_depth_detail(top):
             f"OR ${cand['price_in']:.2f} in / ${cand['price_out']:.2f} out per 1M   "
             f"default: {block['default'] or '-'}"
         )
+        note = unlabeled_note(cand.get("quality_unlabeled"))
+        if note:
+            print(f"   {note}")
         if not block["has_records"]:
-            print("   no AA depth data")
+            if not note:
+                print("   no AA depth data")
             continue
         if block["missing_default"]:
             print(f"   AA has no {block['default']} record for this model.")
@@ -4591,7 +4806,8 @@ def print_depth_detail(top):
         "* = OpenRouter default; append #effort to the model id in OpenCode; "
         "- in select = not selectable; AA $/task is AA's measured benchmark "
         "cost at AA's reference price, not the OR per-token price; it never "
-        "enters the weighted score."
+        "enters the weighted score. An AA index without an effort label is a "
+        "reference only: it never fills QUAL."
     )
 
 
@@ -4919,6 +5135,7 @@ def build_catalog(
                     "mandatory": reasoning.get("mandatory"),
                     "supports_max_tokens": reasoning.get("supports_max_tokens"),
                     "depths": depths,
+                    "aa_unlabeled": _published_unlabeled_record(cand),
                 },
                 "scores": {**scores, "overall": overall},
                 # Additive provider-aware blocks (schema v3), verbatim from
@@ -5071,6 +5288,110 @@ def color_enabled(mode: str, stream) -> bool:
     return bool(getattr(stream, "isatty", lambda: False)())
 
 
+class PagerInterrupted(Exception):
+    """Ctrl-C reached the parent while the pager was running."""
+
+
+def resolve_pager(args) -> list[str] | None:
+    """The pager argv for the human output path, or None to print directly.
+
+    None when --no-pager is set or stdout is not a TTY. $PAGER is used
+    verbatim (shlex-split, no injected flags; an empty split counts as
+    unset); the fallback pages only what exceeds one screen, keeps the SGR
+    codes and skips the alt-screen init so the stderr notes survive
+    quitting. POSIX terminals only.
+    """
+    if args.no_pager:
+        return None
+    if not getattr(sys.stdout, "isatty", lambda: False)():
+        return None
+    raw = os.environ.get("PAGER")
+    argv = []
+    if raw is not None:
+        try:
+            argv = shlex.split(raw)
+        except ValueError:
+            # Malformed $PAGER (unbalanced quote, trailing backslash):
+            # pager startup problems never crash the run or lose output --
+            # degrade to the fallback, exactly like an unset $PAGER.
+            argv = []
+    if not argv:
+        argv = ["less", "--quit-if-one-screen", "--RAW-CONTROL-CHARS", "--no-init"]
+    return argv
+
+
+@contextmanager
+def paged_stdout(argv: list[str]):
+    """Run argv as a pager taking over sys.stdout; yield True when paged.
+
+    False (direct output) when the pager cannot be started -- startup
+    problems never lose output. Restores sys.stdout in a finally, closes
+    the pager's stdin guarded against EPIPE and reaps the child. A
+    KeyboardInterrupt from the block, the close or the reap terminates the
+    pager (plain less ignores SIGINT without -K) and surfaces as
+    PagerInterrupted; the pager's own exit status is never propagated.
+    """
+    if not argv:
+        yield False
+        return
+    # Colors through a verbatim $PAGER: less reads $LESS, so a bare
+    # `PAGER=less` would otherwise show raw SGR as escape junk. Git's
+    # convention: hand the child LESS=FRX (raw control chars,
+    # quit-if-one-screen, no alt-screen init) when the user has none;
+    # their own $LESS always wins.
+    child_env = {**os.environ, "LESS": "FRX"} if "LESS" not in os.environ else None
+    # Captured before any try so the finally below can always restore it;
+    # the swap itself is the try's first statement, so a Ctrl-C landing
+    # anywhere from the spawn onward still runs the cleanup.
+    original = sys.stdout
+    interrupted = False
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stdout,
+            text=True,
+            env=child_env,
+            # Write the pipe with the encoding (and error handler) the direct
+            # path would have used: Popen's text-mode default comes from the
+            # locale, which can disagree with sys.stdout.encoding (e.g.
+            # PYTHONIOENCODING=utf-8 over a latin-1 locale) and then a
+            # non-ASCII model name crashes only the paged path.
+            encoding=getattr(sys.stdout, "encoding", None) or "utf-8",
+            errors=getattr(sys.stdout, "errors", None),
+        )
+    except OSError:
+        yield False
+        return
+    try:
+        sys.stdout = proc.stdin
+        yield True
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        sys.stdout = original
+        try:
+            proc.stdin.close()
+        except KeyboardInterrupt:
+            interrupted = True
+        except OSError:
+            pass
+        try:
+            if interrupted and proc.poll() is None:
+                proc.terminate()
+            proc.wait()
+        except KeyboardInterrupt:
+            interrupted = True
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait()
+            except KeyboardInterrupt:
+                pass
+    if interrupted:
+        raise PagerInterrupted
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -5149,8 +5470,14 @@ def parse_args(argv=None):
         "--color",
         choices=("auto", "on", "off"),
         default="auto",
-        help="colorize the table output (default: auto; honors NO_COLOR, and on "
-        "forces color when piping through less -R)",
+        help="colorize the table output (default: auto; honors NO_COLOR; the "
+        "built-in pager keeps color on under auto, and on also forces color "
+        "for manual pipes like less -R)",
+    )
+    output.add_argument(
+        "--no-pager",
+        action="store_true",
+        help="do not page the table output even on a terminal",
     )
     ranking.add_argument(
         "--input-share",
@@ -5307,6 +5634,7 @@ def run(args, models, or_cached) -> int:
         )
     exact, fuzzy = build_aa_lookup(dedupe_aa_entries_by_key(aa_entries))
     depth_lookup = build_aa_depth_lookup(aa_entries)
+    unlabeled_lookup = build_aa_unlabeled_lookup(aa_entries)
 
     filtered = []
     reasoning_by_id = build_reasoning_metadata(models, frontend_models)
@@ -5346,6 +5674,7 @@ def run(args, models, or_cached) -> int:
         aa_source,
         catalog_quality,
         depth_lookup=depth_lookup,
+        unlabeled_lookup=unlabeled_lookup,
         catalog_depths=catalog_depths,
         requested_effort=args.reasoning_effort,
     )
@@ -5409,6 +5738,7 @@ def run(args, models, or_cached) -> int:
     elif args.json:
         print_json(top)
     else:
+        pager_argv = resolve_pager(args)
         style = Style(color_enabled(args.color, sys.stdout))
         err_style = Style(color_enabled(args.color, sys.stderr))
         if not args.bare:
@@ -5445,33 +5775,52 @@ def run(args, models, or_cached) -> int:
         # quality-blind fallback line.
         unmatched = len(candidates) - len(quality_by_id)
         quality_note = quality_footer_note(quality_by_id, aa_index_version, unmatched)
-        print_table(
-            top,
-            weights,
-            quality_note,
-            detail=args.detail,
-            style=style,
-            bare=args.bare,
-            input_share=args.input_share,
-            depth_detail=(None if args.bare or args.no_depths else print_depth_detail),
-        )
-        if args.off_peak:
-            catalog_w = catalog_weights(candidates, quality_by_id)
-            # Use the exact unrounded weighted score (not overall_scores,
-            # whose rounded components can disagree by 0.001) so a candidate
-            # in both tables always prints the same SCORE under balanced.
-            balanced_w = catalog_w["balanced"]
-            balanced = {
-                cand["id"]: weighted_score(cand, balanced_w) for cand in candidates
-            }
-            schedules = build_schedules(
-                models, args, quality_by_id, aa_by_id, balanced, catalog_quality
-            )
-            # build_schedules resolves quality for any listed model; the web
-            # page's deals table shows that resolved value even for models
-            # outside the ranked pool, so keep it here too. Only SCORE is
-            # blanked for non-candidates (balanced is None for them).
-            print_deals(off_peak_deals(schedules), style=style, bare=args.bare)
+        try:
+            with paged_stdout(pager_argv):
+                print_table(
+                    top,
+                    weights,
+                    quality_note,
+                    detail=args.detail,
+                    style=style,
+                    bare=args.bare,
+                    input_share=args.input_share,
+                    depth_detail=(
+                        None if args.bare or args.no_depths else print_depth_detail
+                    ),
+                )
+                if args.off_peak:
+                    catalog_w = catalog_weights(candidates, quality_by_id)
+                    # Use the exact unrounded weighted score (not
+                    # overall_scores, whose rounded components can disagree
+                    # by 0.001) so a candidate in both tables always prints
+                    # the same SCORE under balanced.
+                    balanced_w = catalog_w["balanced"]
+                    balanced = {
+                        cand["id"]: weighted_score(cand, balanced_w)
+                        for cand in candidates
+                    }
+                    schedules = build_schedules(
+                        models,
+                        args,
+                        quality_by_id,
+                        aa_by_id,
+                        balanced,
+                        catalog_quality,
+                    )
+                    # build_schedules resolves quality for any listed model;
+                    # the web page's deals table shows that resolved value
+                    # even for models outside the ranked pool, so keep it
+                    # here too. Only SCORE is blanked for non-candidates
+                    # (balanced is None for them).
+                    print_deals(off_peak_deals(schedules), style=style, bare=args.bare)
+        except BrokenPipeError:
+            # Pager quit early: stop writing quietly (spec §Failure modes) --
+            # deliberate on the direct path too: EPIPE from a closed consumer
+            # leaves the exit status unchanged (CPython's shutdown flush).
+            pass
+        except PagerInterrupted:
+            return 130
     return 0
 
 
