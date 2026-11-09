@@ -477,6 +477,10 @@ async function openReportScroll(
   scrollbox: FakeNode
   down: Command
   up: Command
+  home: Command | undefined
+  end: Command | undefined
+  pageup: Command | undefined
+  pagedown: Command | undefined
   frame: () => void
   rerenderEffects: () => void
 }> {
@@ -497,6 +501,10 @@ async function openReportScroll(
   const modal = await open.modalCommands()
   const down = modal?.find((item) => item.id === "model-compare.list.down")
   const up = modal?.find((item) => item.id === "model-compare.list.up")
+  const home = modal?.find((item) => item.id === "model-compare.list.home")
+  const end = modal?.find((item) => item.id === "model-compare.list.end")
+  const pageup = modal?.find((item) => item.id === "model-compare.list.pageup")
+  const pagedown = modal?.find((item) => item.id === "model-compare.list.pagedown")
   if (down === undefined || up === undefined) {
     throw new Error("the list dialog movement commands were never registered")
   }
@@ -504,6 +512,10 @@ async function openReportScroll(
     scrollbox,
     down,
     up,
+    home,
+    end,
+    pageup,
+    pagedown,
     frame: () => harness.fireRenderer("frame", { frameId: 1 }),
     rerenderEffects,
   }
@@ -1830,6 +1842,90 @@ describe("the dialogs' viewport scroll", () => {
     expect(active!.ctx.ui.dialog.clear).toHaveBeenCalledTimes(1)
     frame()
     expect(scrollbox.scrollCalls).toEqual([])
+  })
+})
+
+describe("the list dialogs' jump and page navigation", () => {
+  test("home and end jump to the first and last selectable rows", async () => {
+    const { scrollbox, home, end, frame } = await openReportScroll(scrollEntries(), { height: 6 })
+    expect(home).toBeDefined()
+    expect(end).toBeDefined()
+
+    end!.run()
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6]) // last row (line 11), clamped to the maximum
+
+    home!.run()
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6, 0]) // first row (line 2)
+  })
+
+  test("pagedown moves by one screenful and clamps at the last row", async () => {
+    const { scrollbox, pagedown, frame } = await openReportScroll(scrollEntries(), { height: 2 })
+    expect(pagedown).toBeDefined()
+
+    pagedown!.run() // cursor 0 → 2 (row line 6)
+    frame()
+    pagedown!.run() // cursor 2 → 4 (row line 10)
+    frame()
+    pagedown!.run() // cursor 4 → 5 (clamped at the last row, line 11)
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6, 10, 10])
+  })
+
+  test("pageup moves by one screenful and clamps at the first row", async () => {
+    const { scrollbox, pagedown, pageup, frame } = await openReportScroll(scrollEntries(), { height: 2 })
+    expect(pageup).toBeDefined()
+
+    for (let step = 0; step < 3; step++) {
+      pagedown!.run()
+      frame()
+    }
+    pageup!.run() // cursor 5 → 3 (row line 7)
+    frame()
+    pageup!.run() // cursor 3 → 1 (row line 3)
+    frame()
+    pageup!.run() // cursor 1 → 0 (clamped at the first row, line 2)
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6, 10, 10, 6, 2, 1])
+  })
+
+  test("pagedown lands on the row at/after one screenful of CONTENT LINES (heading blanks included)", async () => {
+    const { scrollbox, pagedown, frame } = await openReportScroll(scrollEntries(), { height: 4 })
+    expect(pagedown).toBeDefined()
+
+    // Cursor 0 sits at content line 2; one 4-line screenful is line 6, whose
+    // first selectable row is index 2 (acme/price1). A ROW-based page would
+    // count four selectable rows and land on index 4 (acme/quality1, line
+    // 10), skipping the rows at lines 3 and 6 that this viewport displays.
+    pagedown!.run()
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6]) // the cursor row (line 6) revealed
+
+    const pick = await modalPick(active!)
+    pick!.run()
+    await drain()
+    expect(active!.session.create).toHaveBeenCalledWith({
+      model: { providerID: "openrouter", id: "acme/price1" },
+    })
+  })
+
+  test("pageup lands on the row at/before one screenful (the line-based mirror)", async () => {
+    const { scrollbox, pagedown, pageup, frame } = await openReportScroll(scrollEntries(), { height: 4 })
+    expect(pageup).toBeDefined()
+
+    pagedown!.run() // cursor 0 (line 2) → 2 (line 6)
+    frame()
+    pageup!.run() // target line 2: the last row at/before it is index 0 (line 2)
+    frame()
+    expect(scrollbox.scrollCalls).toEqual([6, 0])
+
+    const pick = await modalPick(active!)
+    pick!.run()
+    await drain()
+    expect(active!.session.create).toHaveBeenCalledWith({
+      model: { providerID: "openrouter", id: "acme/balanced1" },
+    })
   })
 })
 

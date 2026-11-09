@@ -82,7 +82,6 @@ Commands:
 | `alt+u` | switch the session to the default priority's pick (the `/use-best` default); on the opening screen it creates a session bound to it |
 | `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
 | `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model at the variant its status line advertises (`#max`, …), falling back to the bare model when the host's own registry does not offer that variant |
-| `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
 | `esc` | close the dialog |
 
