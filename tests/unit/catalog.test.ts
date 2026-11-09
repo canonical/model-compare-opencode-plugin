@@ -424,6 +424,64 @@ test("a model without quality_effort/reasoning projects both as absent", () => {
   expect(result.catalog.models[0].reasoning).toBeUndefined()
 })
 
+test("projects the per-endpoint list and the default precision", () => {
+  const result = validateCatalog({
+    ...doc(),
+    models: [
+      {
+        ...model(),
+        endpoints: [
+          { provider_name: "Novita", tag: "novita/fp8", quantization: "fp8", pricing: { prompt: 1 } },
+          { provider_name: "OpenInference", tag: "open-inference/fp4", quantization: "fp4" },
+        ],
+        default_precision: "fp8",
+      },
+    ],
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].endpoints).toEqual([
+    { providerName: "Novita", tag: "novita/fp8", quantization: "fp8" },
+    { providerName: "OpenInference", tag: "open-inference/fp4", quantization: "fp4" },
+  ])
+  expect(result.catalog.models[0].defaultPrecision).toBe("fp8")
+  // The raw snake_case keys never survive the projection.
+  expect(Object.hasOwn(result.catalog.models[0], "endpoints")).toBe(true)
+  expect(Object.hasOwn(result.catalog.models[0], "default_precision")).toBe(false)
+})
+
+test("a hostile endpoint list is normalized field-by-field, never passed through raw", () => {
+  const result = validateCatalog({
+    ...doc(),
+    models: [
+      {
+        ...model(),
+        endpoints: [
+          { provider_name: "Novita", tag: 7, quantization: "fp8", status: 0 },
+          { provider_name: "", tag: "empty", quantization: "fp8" }, // no provider: dropped
+          { provider_name: "NoQuant", tag: "no-quant" }, // no quantization: dropped
+          "not a record",
+        ],
+        default_precision: 42,
+      },
+    ],
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].endpoints).toEqual([
+    { providerName: "Novita", tag: "", quantization: "fp8" },
+  ])
+  expect(result.catalog.models[0].defaultPrecision).toBeNull()
+})
+
+test("a model without endpoints/default_precision projects them as absent/null", () => {
+  const result = validateCatalog(doc())
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.catalog.models[0].endpoints).toBeUndefined()
+  expect(result.catalog.models[0].defaultPrecision).toBeNull()
+})
+
 test("a hostile reasoning block is normalized field-by-field, never passed through raw", () => {
   const inf = JSON.parse("1e999")
   const result = validateCatalog({
@@ -560,6 +618,26 @@ describe("validateStoredCatalog (F-16)", () => {
       allow_fallbacks: true,
     })
     // through JSON, as storage would
+    const stored = JSON.parse(JSON.stringify(first.catalog))
+    expect(validateStoredCatalog(stored)).toEqual({ ok: true, catalog: first.catalog })
+  })
+
+  test("round-trips the per-endpoint list and the default precision", () => {
+    const first = validateCatalog({
+      ...doc(),
+      models: [
+        {
+          ...model(),
+          endpoints: [
+            { provider_name: "Novita", tag: "novita/fp8", quantization: "fp8" },
+            { provider_name: "OpenInference", tag: "open-inference/fp4", quantization: "fp4" },
+          ],
+          default_precision: "fp8",
+        },
+      ],
+    })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
     const stored = JSON.parse(JSON.stringify(first.catalog))
     expect(validateStoredCatalog(stored)).toEqual({ ok: true, catalog: first.catalog })
   })

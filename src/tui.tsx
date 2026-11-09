@@ -69,6 +69,7 @@ import {
 } from "./opencode/usebest"
 import type { ReportEntry } from "./opencode/commands"
 import { gatewayEffort } from "./core/reasoning"
+import type { EndpointAttribute, EndpointInfo } from "./core/endpoint"
 import { lastResponseLine, sanitizeCatalogText } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 
@@ -122,10 +123,6 @@ type ListRow = {
   // Trailing dim right-justified columns (the report table); when
   // present, label renders in its own span so the two tones can differ.
   columns?: string
-  // The cursor-following status line (the report table's variant): the
-  // dialog renders this row's status below the list and swaps it as the
-  // cursor moves.
-  status?: string
   selected?: string
   value?: string
   // The OpenCode variant the pick must select (`provider/model#variant`):
@@ -332,10 +329,10 @@ function toReportEntries(raw: unknown): ReportEntry[] {
   })
 }
 
-// The report payload's footer capture (the last-response line and the alt+e
-// toast's data), defensively normalized at the trust boundary like the
-// entries: anything but a well-shaped object — or one without an endpoint —
-// degrades to null (no capture), never a placeholder line.
+// The report payload's capture (the alt+e toast's data), defensively
+// normalized at the trust boundary like the entries: anything but a
+// well-shaped object — or one without an endpoint — degrades to null (no
+// capture), never a placeholder line.
 function toCapture(raw: unknown): { endpoint: string; model: string; downgrade: boolean } | null {
   if (typeof raw !== "object" || raw === null) return null
   const capture = raw as { endpoint?: unknown; model?: unknown; downgrade?: unknown }
@@ -354,6 +351,65 @@ function toCapture(raw: unknown): { endpoint: string; model: string; downgrade: 
 // non-empty string means the note does not render (no steering data).
 function toSteeringNote(raw: unknown): string | null {
   return typeof raw === "string" && raw !== "" ? raw : null
+}
+
+// One served-endpoint attribute (quantization or effort), normalized at the
+// trust boundary: the value must be a non-empty string, the relation one of
+// the closed set, and the default a string or null. Anything else degrades to
+// null (the attribute is omitted, never a placeholder).
+function toEndpointAttribute(raw: unknown): EndpointAttribute | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const attribute = raw as { value?: unknown; relation?: unknown; default?: unknown }
+  if (typeof attribute.value !== "string" || attribute.value === "") return null
+  const relation =
+    attribute.relation === "default" ||
+    attribute.relation === "sub-default" ||
+    attribute.relation === "above-default" ||
+    attribute.relation === "mixed" ||
+    attribute.relation === "unknown"
+      ? attribute.relation
+      : "unknown"
+  return {
+    value: sanitizeCatalogText(attribute.value),
+    relation,
+    default:
+      typeof attribute.default === "string" && attribute.default !== ""
+        ? sanitizeCatalogText(attribute.default)
+        : null,
+  }
+}
+
+// The report payload's endpoint attributes (the alt+e toast): both fields are
+// optional; an object with neither is no info at all.
+function toEndpointInfo(raw: unknown): EndpointInfo | null {
+  if (typeof raw !== "object" || raw === null) return null
+  const info = raw as { quantization?: unknown; effort?: unknown }
+  const quantization = toEndpointAttribute(info.quantization)
+  const effort = toEndpointAttribute(info.effort)
+  if (quantization === null && effort === null) return null
+  return { quantization, effort }
+}
+
+// The toast's display form for one attribute: the value plus its relation to
+// the model's default. Catalog-derived strings are flattened (F-20).
+function formatEndpointAttribute(attribute: EndpointAttribute): string {
+  const value = sanitizeCatalogText(attribute.value)
+  const baseline =
+    attribute.default === null ? null : sanitizeCatalogText(attribute.default)
+  switch (attribute.relation) {
+    case "default":
+      return `${value} (default)`
+    case "sub-default":
+      return baseline === null
+        ? `${value} (sub-default)`
+        : `${value} (sub-default; model default ${baseline})`
+    case "above-default":
+      return baseline === null ? `${value} (above default)` : `${value} (above default ${baseline})`
+    case "mixed":
+      return `${value} (mixed)`
+    default:
+      return value
+  }
 }
 
 export default Plugin.define({
@@ -403,7 +459,6 @@ export default Plugin.define({
       sessionID: string
       age: string | null
       entries: ReportEntry[]
-      capture: { endpoint: string; model: string; downgrade: boolean } | null
       steeringNote: string | null
     } | null>(null)
 
@@ -588,10 +643,14 @@ export default Plugin.define({
       title: string,
       rows: ListRow[],
       onPick: (row: ListRow & { value: string }) => void,
-      // The footer's extra lines (the report dialog's steering note and
-      // last-response line), rendered muted ABOVE the Details line. Absent
-      // for the other dialogs (the picks dialog carries no footer lines).
+      // The footer's extra lines (the report dialog's steering note), rendered
+      // muted ABOVE the Details line. Absent for the other dialogs (the picks
+      // dialog carries no footer lines).
       footerLines: string[] = [],
+      // The host's dialog width preset. The report table uses "large" on wide
+      // terminals (the variant column needs the room); every other dialog
+      // keeps the palette's medium width.
+      size: "medium" | "large" = "medium",
     ): void {
       const selectable = rows.filter((row) => row.value !== undefined)
       if (selectable.length === 0) {
@@ -851,14 +910,6 @@ export default Plugin.define({
                 })
               })()}
             </scrollbox>
-            {(() => {
-              const row = selectable[cursor()]
-              return row.status === undefined ? null : (
-                <box paddingLeft={4}>
-                  <text fg={muted}>{row.status}</text>
-                </box>
-              )
-            })()}
             {footerLines.map((line) => (
               <box paddingLeft={4}>
                 <text fg={muted}>{line}</text>
@@ -871,11 +922,12 @@ export default Plugin.define({
         ),
         close,
       )
-      // The palette's presentation: vertically centered at the medium width.
-      // The size/centered state persists across dialogs (the host's own set
-      // it on every open), so the explicit set also clears a stale xlarge a
-      // host dialog may have left behind.
-      context.ui.dialog.set({ size: "medium", centered: true })
+      // The palette's presentation: vertically centered at the requested width
+      // preset (medium by default, large for the report table on wide
+      // terminals). The size/centered state persists across dialogs (the host's
+      // own set it on every open), so the explicit set also clears a stale
+      // xlarge a host dialog may have left behind.
+      context.ui.dialog.set({ size, centered: true })
     }
 
     // The picks dialog: the three priorities, one cursor, palette styling.
@@ -912,10 +964,9 @@ export default Plugin.define({
       sessionID: string | null
       age: string | null
       entries: ReportEntry[]
-      // The footer (design §Steering visibility, the user's option C): the
-      // steering note above the last-response line, both omitted when their
-      // data is absent — never a placeholder.
-      capture: { endpoint: string; model: string; downgrade: boolean } | null
+      // The footer's steering note, omitted when its data is absent — never a
+      // placeholder. (The last-response line was removed: it overflowed the
+      // dialog's padding and made the picker too tall.)
       steeringNote: string | null
     }): void {
       if (data.entries.length === 0) {
@@ -934,18 +985,16 @@ export default Plugin.define({
       if (warmDirectory !== undefined && warmDirectory !== here) {
         void context.data.location.model.sync({ directory: warmDirectory }).catch(() => {})
       }
-      // The approved table now carries three columns: model name, quality
-      // and price. The scored variant (the catalog's effort) moved into a
-      // cursor-following status line below the list (see ListRow.status), so
-      // the table stays readable. No score
+      // The approved table carries four columns: model name, quality, variant
+      // and price. The variant (the catalog's effort) is an inline column after
+      // qual, so the table stays readable. No score
       // column — the transcript's text report keeps it. Column widths are clamped
-      // (qual ≤ 5, $ in/out ≤ 13) and oversized cells are truncated to their
-      // clamped width, so with the name clamp below the row budget holds
+      // (qual ≤ 5, variant = 7, $ in/out ≤ 13) and oversized cells are truncated
+      // to their clamped width, so with the name clamp below the row budget holds
       // even for hostile/absurd column strings: what the clamp guarantees is
-      // that a row and the header stay within the dialog's fixed 52-char
-      // content width (hostile values get truncated rather than pushed into
-      // wrapping — the 40-char rankless fallback label did exactly that
-      // before the name clamp).
+      // that a row and the header stay within the dialog's content width
+      // (hostile values get truncated rather than pushed into wrapping — the
+      // 40-char rankless fallback label did exactly that before the name clamp).
       const labels = data.entries.map(
         (entry) =>
           `${entry.rank === null ? "·" : entry.rank}. ${entry.id}${
@@ -955,17 +1004,25 @@ export default Plugin.define({
       const labelOf = new Map(data.entries.map((entry, index) => [entry, labels[index]]))
       const colW = (values: string[], floor: number, cap: number): number =>
         Math.min(cap, Math.max(floor, ...values.map(strWidth)))
+      // The host's dialog width presets: medium 60, large 88. The report
+      // table needs the large width for the variant column on wide terminals;
+      // below 96 columns it falls back to medium and the name column shrinks
+      // (the model names truncate, the columns stay aligned). The size is
+      // chosen at OPEN time (the host's own dialogs do the same): a resize
+      // while the dialog is open re-caps the row area but does not re-size the
+      // dialog; reopening picks up the new width class.
+      const dialogSize: "medium" | "large" = terminalSize().width > 96 ? "large" : "medium"
+      // 2 list insets + 6 row insets leave the row content budget.
+      const contentW = (dialogSize === "large" ? 88 : 60) - 8
       // Quality is a one-decimal AA index (max "100.0"); the caps leave the
-      // 52-char row budget intact (see `fixed` below) while fitting real
-      // values: "10.00/100.00" (price).
+      // row budget intact (see `fixed` below) while fitting real values:
+      // "10.00/100.00" (price).
       const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 5)
-      // The status line's variant cell keeps its 7-column clamp: the status
-      // box is a direct child of the 60-wide dialog with only its own 4-char
-      // left inset, so one text line has 56 columns — the worst case, 9
-      // ("variant: ") + 7 = 16, leaves ample slack. Clamping the cell (in
-      // display columns, see cell) keeps hostile catalog strings from
-      // wrapping.
-      const effortW = 7
+      // The variant column keeps the old status line's 7-column clamp: the
+      // effort labels are short ("max", "high", "medium"), and a hostile
+      // catalog string is truncated in display columns (see cell) so it
+      // cannot push the row past its budget.
+      const variantW = 7
       const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 13)
       // A cell wider than its clamped column is truncated to fit — measured
       // in terminal COLUMNS (strWidth), not string length: a 7-code-point
@@ -995,19 +1052,23 @@ export default Plugin.define({
       // Prices use padEnd (not padStart): padded to a common width the
       // right edges stay flush while the fixed 2-space gap between columns
       // stays exactly 2 (padStart pushed each value right by its slack).
-      // The default dialog is 60 wide: 2 list insets + 6 row insets leave 52
-      // for row content; the header shares that budget (plus its 3-indent).
-      // Column caps keep the budget even for hostile strings: 5+13 plus the
-      // two 2-char paddings and the 2-char row indent = 24, leaving plenty
-      // for the name (the name column shrinks first for real content).
-      const fixed = 2 + qualW + 2 + priceW
-      const nameW = Math.max(6, Math.min(52 - fixed, Math.max(...labels.map(strWidth))))
+      // Column caps keep the budget even for hostile strings: 5+7+13 plus
+      // the three 2-char gaps = 31, leaving the rest for the name (the name
+      // column shrinks first for real content). The 3-char row indent is part
+      // of the contentW budget (the -8 above), not of `fixed`.
+      const fixed = 2 + qualW + 2 + variantW + 2 + priceW
+      // The name column takes the whole remaining budget, so the table fills
+      // the dialog width and the columns sit at the right edge (the row boxes
+      // already stretch the full width). Long names are clamped to the budget.
+      const nameW = Math.max(6, contentW - fixed)
       const trim = (label: string): string => cell(label, nameW)
       const headerLine =
         "   " +
         " ".repeat(nameW) +
         "  " +
         "qual".padStart(qualW) +
+        "  " +
+        "variant".padEnd(variantW) +
         "  " +
         "$ in/out".padEnd(priceW)
       // Catalog v6 calls this the effort the quality was measured at: the
@@ -1017,8 +1078,6 @@ export default Plugin.define({
       // by a user-pointed catalogURL. OpenCode calls the selectable option a
       // VARIANT, so the TUI says "variant" to match the model picker. An
       // unscored model's missing effort renders as "-".
-      const statusOf = (entry: ReportEntry): string =>
-        `variant: ${cell(entry.effort || "-", effortW)}`
       const rows: ListRow[] = [{ label: "", headerLine }]
       for (const priority of PRIORITIES) {
         const section = data.entries.filter((entry) => entry.priority === priority)
@@ -1031,11 +1090,12 @@ export default Plugin.define({
               "  " +
               padStartW(cell(entry.quality, qualW), qualW) +
               "  " +
+              padEndW(cell(entry.effort || "-", variantW), variantW) +
+              "  " +
               padEndW(cell(entry.price, priceW), priceW),
-            status: statusOf(entry),
             // F-20 id split: the row DISPLAYS the sanitized id (in `label`)
             // but picks `value`, the raw catalog id switchToModel needs. The
-            // variant is the gateway-valid effort the status line advertises;
+            // variant is the gateway-valid effort the column advertises;
             // a blank effort and the catalog's "reasoning" sentinel are not
             // OpenCode variants.
             value: entry.value,
@@ -1044,13 +1104,12 @@ export default Plugin.define({
           })
         }
       }
-      // The report dialog's footer (design §Decisions, option C): the
-      // steering note ABOVE the last-response line, both omitted when their
-      // data is absent — never a placeholder line.
+      // The report dialog's footer: the steering note, omitted when its data
+      // is absent — never a placeholder line. The last-response line was
+      // removed: it overflowed the dialog's padding and made the picker too
+      // tall (the alt+e toast carries the same capture).
       const footerLines: string[] = []
       if (data.steeringNote !== null) footerLines.push(data.steeringNote)
-      const lastResponse = lastResponseLine(data.capture)
-      if (lastResponse !== null) footerLines.push(lastResponse)
       showListDialog(
         `Model Compare — top 5 (data age: ${data.age ?? "unknown"})`,
         rows,
@@ -1091,6 +1150,7 @@ export default Plugin.define({
           )
         },
         footerLines,
+        dialogSize,
       )
     }
 
@@ -1110,7 +1170,6 @@ export default Plugin.define({
           sessionID?: unknown
           age?: unknown
           entries?: unknown
-          capture?: unknown
           steeringNote?: unknown
         }
       }
@@ -1122,13 +1181,13 @@ export default Plugin.define({
       const eventSessionID = data.sessionID
       // Ownerless callback: park the report on the signal — the app slot's
       // in-tree effect opens the dialog (see pendingReport above). The
-      // footer's fields ride the payload like the entries (defensively
-      // normalized at this trust boundary).
+      // steering note rides the payload like the entries (defensively
+      // normalized at this trust boundary); the capture is no longer part of
+      // the dialog (the alt+e toast owns it).
       setPendingReport({
         sessionID: eventSessionID,
         age: typeof data.age === "string" ? data.age : null,
         entries,
-        capture: toCapture(data.capture),
         steeringNote: toSteeringNote(data.steeringNote),
       })
     })
@@ -1290,13 +1349,12 @@ export default Plugin.define({
             here === undefined ? undefined : { location: { directory: here } },
           )
           const data = report as
-            | { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown }
+            | { age?: unknown; entries?: unknown; steeringNote?: unknown }
             | undefined
           showReportDialog({
             sessionID: null,
             age: typeof data?.age === "string" ? data.age : null,
             entries: toReportEntries(data?.entries),
-            capture: toCapture(data?.capture),
             steeringNote: toSteeringNote(data?.steeringNote),
           })
         } catch (error) {
@@ -1338,14 +1396,25 @@ export default Plugin.define({
             { sessionID },
             sessionDirectory === undefined ? undefined : { location: { directory: sessionDirectory } },
           )
-          const capture = toCapture((report as { capture?: unknown } | undefined)?.capture)
+          const payload = report as
+            | { capture?: unknown; endpointInfo?: unknown }
+            | undefined
+          const capture = toCapture(payload?.capture)
           if (capture === null) return
-          // F-20: the endpoint is response data — flattened for the toast.
-          notify(
-            capture.downgrade
-              ? `! served by ${sanitizeCatalogText(capture.endpoint)} — not in steering order`
-              : `last response served by ${sanitizeCatalogText(capture.endpoint)}`,
-          )
+          const info = toEndpointInfo(payload?.endpointInfo)
+          // The toast is multi-line: the response line, the endpoint's
+          // attributes (when the catalog could resolve them), and the
+          // steering verdict. Every catalog-derived string is flattened by
+          // lastResponseLine / formatEndpointAttribute (F-20).
+          const lines = [lastResponseLine(capture)!]
+          if (info?.quantization !== null && info?.quantization !== undefined) {
+            lines.push(`quantization: ${formatEndpointAttribute(info.quantization)}`)
+          }
+          if (info?.effort !== null && info?.effort !== undefined) {
+            lines.push(`effort: ${formatEndpointAttribute(info.effort)}`)
+          }
+          lines.push(capture.downgrade ? "steering: ! NOT in order" : "steering: in order")
+          notify(lines.join("\n"))
         } catch (error) {
           notify(
             `endpoint lookup failed: ${error instanceof Error ? error.message : String(error)}`,

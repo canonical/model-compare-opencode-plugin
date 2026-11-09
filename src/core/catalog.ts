@@ -51,6 +51,30 @@ function steer(raw: unknown): ModelEntry["steering"] {
   return steering
 }
 
+// The v6 per-endpoint list, projected to the three fields the served-endpoint
+// toast reads. The raw entries carry pricing/status/context too; the toast
+// never reads them, and the projection must not let a hostile catalogURL's
+// extra fields survive into the stored document. Entries without a provider
+// display name or a quantization are dropped (they cannot be matched). An
+// absent/invalid list reads as absent, like every other advisory block.
+function projectEndpoints(
+  raw: unknown,
+): Array<{ providerName: string; tag: string; quantization: string }> | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const endpoints: Array<{ providerName: string; tag: string; quantization: string }> = []
+  for (const record of raw) {
+    if (!isObject(record)) continue
+    if (typeof record.provider_name !== "string" || record.provider_name === "") continue
+    if (typeof record.quantization !== "string" || record.quantization === "") continue
+    endpoints.push({
+      providerName: record.provider_name,
+      tag: typeof record.tag === "string" ? record.tag : "",
+      quantization: record.quantization,
+    })
+  }
+  return endpoints.length === 0 ? undefined : endpoints
+}
+
 function finiteOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
@@ -221,12 +245,23 @@ export function validateCatalog(
     // The v6 quality_effort/reasoning fields project the same way: strip the
     // raw keys before the spread so the camelCase projection is the only
     // representation on the entry (a hostile block never survives verbatim).
-    const { steering: _rawSteering, quality_effort: _rawQualityEffort, reasoning: _rawReasoning, ...passthrough } =
-      entry
+    const {
+      steering: _rawSteering,
+      quality_effort: _rawQualityEffort,
+      reasoning: _rawReasoning,
+      endpoints: _rawEndpoints,
+      default_precision: _rawDefaultPrecision,
+      ...passthrough
+    } = entry
     const steering = steer(entry.steering)
     const qualityEffort =
       typeof entry.quality_effort === "string" && entry.quality_effort !== "" ? entry.quality_effort : null
     const reasoning = projectReasoning(entry.reasoning)
+    const endpoints = projectEndpoints(entry.endpoints)
+    const defaultPrecision =
+      typeof entry.default_precision === "string" && entry.default_precision !== ""
+        ? entry.default_precision
+        : null
     models.push({
       ...passthrough,
       id: entry.id,
@@ -243,6 +278,8 @@ export function validateCatalog(
       qualityEffort,
       reasoning,
       steering,
+      ...(endpoints === undefined ? {} : { endpoints }),
+      defaultPrecision,
     })
   }
 
@@ -309,6 +346,21 @@ export function validateStoredCatalog(
         }
         if (entry.reasoning !== undefined) raw.reasoning = entry.reasoning
         if (entry.steering !== undefined) raw.steering = { model: entry.id, provider: entry.steering }
+        // The endpoint projection is a three-field shape; rebuild the raw
+        // snake_case entries the validator expects. A record from an older
+        // projection lacks these keys and reads as absent, exactly like a raw
+        // document without them.
+        if (Array.isArray(entry.endpoints)) {
+          raw.endpoints = entry.endpoints.map((endpoint) => {
+            if (!isObject(endpoint)) return endpoint
+            return {
+              provider_name: endpoint.providerName,
+              tag: endpoint.tag,
+              quantization: endpoint.quantization,
+            }
+          })
+        }
+        if (entry.defaultPrecision !== undefined) raw.default_precision = entry.defaultPrecision
         return raw
       })
     : stored.models

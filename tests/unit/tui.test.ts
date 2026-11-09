@@ -230,7 +230,13 @@ function makeHarness() {
   // directory's registry to pin WHICH registry a cross-location pick
   // validates its advertised variant against.
   const modelRegistries = new Map<string, Array<Record<string, unknown>>>([["/repo", entries]])
-  const reportPayload: { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown } = {}
+  const reportPayload: {
+    age?: unknown
+    entries?: unknown
+    capture?: unknown
+    endpointInfo?: unknown
+    steeringNote?: unknown
+  } = {}
 
   const session = {
     create: vi.fn(
@@ -1381,7 +1387,10 @@ describe("the alt+e toast (the served endpoint)", () => {
     await drain()
 
     expect(active.toasts).toEqual([
-      { message: "last response served by Novita", variant: "success" },
+      {
+        message: "last response: acme/alpha @ Novita\nsteering: in order",
+        variant: "success",
+      },
     ])
     // The lookup is addressed to the CURRENT session's id and routed to the
     // session's OWN directory — the options half of the contract the old
@@ -1390,6 +1399,161 @@ describe("the alt+e toast (the served endpoint)", () => {
       input: { sessionID: "s1" },
       options: { location: { directory: "/wt" } },
     })
+  })
+
+  test("alt+e toasts the endpoint's quantization and effort attributes", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "fp8", relation: "default", default: "fp8" },
+      effort: { value: "max", relation: "above-default", default: "high" },
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          "last response: acme/alpha @ Novita\nquantization: fp8 (default)\neffort: max (above default high)\nsteering: in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e names a sub-default quantization and its model default", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "OpenInference", model: "acme/alpha", downgrade: true }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "fp4", relation: "sub-default", default: "fp8" },
+      effort: { value: "high", relation: "default", default: "high" },
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          "last response: acme/alpha @ OpenInference\nquantization: fp4 (sub-default; model default fp8)\neffort: high (default)\nsteering: ! NOT in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e ignores a malformed endpointInfo payload", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: 42, relation: "default", default: "fp8" },
+      effort: { value: "max", relation: "bogus", default: "high" },
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    // The malformed quantization is dropped; the unknown relation degrades to
+    // the bare value (no false default/sub-default claim).
+    expect(active.toasts).toEqual([
+      {
+        message: "last response: acme/alpha @ Novita\neffort: max\nsteering: in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e renders a mixed quantization", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Mixed", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "fp4/fp8", relation: "mixed", default: "fp8" },
+      effort: null,
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message: "last response: acme/alpha @ Mixed\nquantization: fp4/fp8 (mixed)\nsteering: in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e renders above-default with no published default", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "HighPrecision", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "bf16", relation: "above-default", default: null },
+      effort: null,
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          "last response: acme/alpha @ HighPrecision\nquantization: bf16 (above default)\nsteering: in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e renders sub-default with no published default", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "OpenInference", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "fp4", relation: "sub-default", default: null },
+      effort: null,
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          "last response: acme/alpha @ OpenInference\nquantization: fp4 (sub-default)\nsteering: in order",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e flattens control characters in an endpointInfo value", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.endpointInfo = {
+      quantization: { value: "fp8\nfp4", relation: "default", default: "fp8" },
+      effort: null,
+    }
+    await drain()
+
+    await active.command("model-compare.endpoint").run()
+    await drain()
+
+    // The newline is flattened to a space at the trust boundary, so the toast
+    // stays one line per attribute.
+    expect(active.toasts).toEqual([
+      {
+        message: "last response: acme/alpha @ Novita\nquantization: fp8 fp4 (default)\nsteering: in order",
+        variant: "success",
+      },
+    ])
   })
 
   test("alt+e toasts the downgrade copy when the capture is a downgrade", async () => {
@@ -1402,7 +1566,10 @@ describe("the alt+e toast (the served endpoint)", () => {
     await drain()
 
     expect(active.toasts).toEqual([
-      { message: "! served by Novita — not in steering order", variant: "success" },
+      {
+        message: "last response: acme/alpha @ Novita\nsteering: ! NOT in order",
+        variant: "success",
+      },
     ])
   })
 
@@ -1438,7 +1605,9 @@ describe("the alt+e toast (the served endpoint)", () => {
 
     await active.command("model-compare.endpoint").run()
     await drain()
-    expect(active.toasts).toEqual([{ message: "last response served by Novita", variant: "success" }])
+    expect(active.toasts).toEqual([
+      { message: "last response: acme/alpha @ Novita\nsteering: in order", variant: "success" },
+    ])
 
     // A different session must surface ITS payload — a stale s1 record would
     // re-toast Novita here. The payloads differ so the toast content itself
@@ -1448,8 +1617,8 @@ describe("the alt+e toast (the served endpoint)", () => {
     await active.command("model-compare.endpoint").run()
     await drain()
     expect(active.toasts).toEqual([
-      { message: "last response served by Novita", variant: "success" },
-      { message: "last response served by DeepInfra", variant: "success" },
+      { message: "last response: acme/alpha @ Novita\nsteering: in order", variant: "success" },
+      { message: "last response: acme/beta @ DeepInfra\nsteering: in order", variant: "success" },
     ])
     // The lookup routes to the session's own directory: s2's location is
     // unknown to the fake data layer, so it falls back to the plugin's own
@@ -1461,13 +1630,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   })
 })
 
-// ---- the report table's columns and cursor status line ----------------------
-// The report table carries the model name, quality and price only. The scored
-// variant moved off the table into a status line below the list, which
-// follows the cursor from row to row. The TUI says "variant" to match
-// OpenCode even though the catalog calls it effort.
-describe("the report table's three columns and cursor status line", () => {
-  test("the table has only model, qual and price columns", async () => {
+// ---- the report table's columns --------------------------------------------
+// The report table carries the model name, quality, variant and price. The
+// variant is inline (the old cursor-following status line is gone); the TUI
+// says "variant" to match OpenCode even though the catalog calls it effort.
+describe("the report table's columns", () => {
+  test("the table has model, qual, variant and price columns", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
@@ -1479,34 +1647,58 @@ describe("the report table's three columns and cursor status line", () => {
     const header = texts.find((text) => text.includes("qual") && text.includes("$ in/out"))
 
     expect(header).toBeDefined()
+    expect(header).toContain("variant")
     expect(header).not.toContain("effort")
     expect(header).not.toContain("alt")
 
-    // The row's trailing columns carry quality and price, not effort/alt.
+    // The row's trailing columns carry quality, variant and price.
     const rowColumns = texts.find((text) => text.includes("8.0") && text.includes("$1/$2"))
     expect(rowColumns).toBeDefined()
-    expect(rowColumns).not.toContain("high")
+    expect(rowColumns).toContain("high")
     expect(rowColumns).not.toContain("max 56.0")
   })
 
-  test("the status line uses OpenCode's variant terminology and follows the cursor", async () => {
+  test("the header line fits the dialog budget in both layouts", async () => {
+    // Medium (default 80-col terminal): the header includes the 3-space indent
+    // and must fit the 58-column scrollbox content (60-wide dialog − 2 insets).
+    active = await activate()
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+    await active.command("model-compare.report").run()
+    await drain()
+    const mediumHeader = treeTexts(renderDialog(active).tree).find(
+      (text) => text.includes("qual") && text.includes("$ in/out"),
+    )
+    expect(mediumHeader).toBeDefined()
+    expect(strWidth(mediumHeader!)).toBeLessThanOrEqual(58)
+
+    // Large (120-col terminal): the 88-wide dialog leaves 86 columns of content.
+    const harness = makeHarness()
+    harness.ctx.renderer.width = 120
+    active = await activate(harness)
+    active.reportPayload.age = "1h"
+    active.reportPayload.entries = ENTRIES
+    await active.command("model-compare.report").run()
+    await drain()
+    const largeHeader = treeTexts(renderDialog(active).tree).find(
+      (text) => text.includes("qual") && text.includes("$ in/out"),
+    )
+    expect(largeHeader).toBeDefined()
+    expect(strWidth(largeHeader!)).toBeLessThanOrEqual(86)
+  })
+
+  test("the variant column shows each row's effort", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
 
     await active.command("model-compare.report").run()
     await drain()
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: high")
+    const texts = treeTexts(renderDialog(active).tree)
 
-    const modal = await active.modalCommands()
-    const down = modal?.find((item) => item.id === "model-compare.list.down")
-    expect(down).toBeDefined()
-
-    down!.run() // acme/alpha (balanced) → acme/beta (medium, no alternative)
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: medium")
-
-    down!.run() // acme/beta → acme/alpha (quality: max, no alternative)
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: max")
+    expect(texts.find((text) => text.includes("$1/$2") && text.includes("high"))).toBeDefined()
+    expect(texts.find((text) => text.includes("$3/$4") && text.includes("medium"))).toBeDefined()
+    expect(texts.find((text) => text.includes("$1/$2") && text.includes("max"))).toBeDefined()
   })
 
   test("an unscored model's empty effort renders as a dash", async () => {
@@ -1515,7 +1707,9 @@ describe("the report table's three columns and cursor status line", () => {
     active.reportPayload.entries = [{ ...ENTRIES[0], effort: "" }]
     await active.command("model-compare.report").run()
     await drain()
-    expect(treeTexts(renderDialog(active).tree)).toContain("variant: -")
+    const columns = treeTexts(renderDialog(active).tree).find((text) => text.includes("$1/$2"))
+    expect(columns).toBeDefined()
+    expect(columns).toContain("-")
   })
 
   test("an unscored model's pick toast carries no variant suffix (the no-advertisement branch)", async () => {
@@ -1540,25 +1734,23 @@ describe("the report table's three columns and cursor status line", () => {
     expect(active.toasts).toEqual([{ message: "switched to openrouter/acme/alpha", variant: "success" }])
   })
 
-  test("the status line clamps wide characters by display columns, not string length", async () => {
+  test("the variant column clamps wide characters by display columns, not string length", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     // 深 (U+6DF1) is East Asian Wide: 2 terminal columns each. The effort is
-    // 8 code points (16 columns) — the old length-based clamp would have cut
-    // it to 7 LENGTH units, which still render 14 columns wide and push the
-    // line past its 56-column box.
+    // 8 code points (16 columns) — a length-based clamp would cut it to 7
+    // LENGTH units, which still render 14 columns wide and push the row past
+    // its budget.
     active.reportPayload.entries = [{ ...ENTRIES[0], effort: "深度深度深度深度" }]
 
     await active.command("model-compare.report").run()
     await drain()
-    const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
-    expect(status).toBeDefined()
+    const columns = treeTexts(renderDialog(active).tree).find((text) => text.includes("$1/$2"))
+    expect(columns).toBeDefined()
     // Truncated to 6 display columns (3 wide chars) + the ellipsis = 7
-    // columns — exactly the effort cap. No mid-character cut.
-    expect(status).toBe("variant: 深度深…")
-    // The general guarantee: the rendered line fits the status box's
-    // 56-column budget (60-wide dialog − 4 left inset), worst case 53.
-    expect(strWidth(status!)).toBeLessThanOrEqual(56)
+    // columns — exactly the variant cap. No mid-character cut.
+    expect(columns).toContain("深度深…")
+    expect(strWidth(columns!)).toBeLessThanOrEqual(26)
   })
 
   test("a table row clamps wide cells by display columns and keeps the row budget", async () => {
@@ -1582,20 +1774,24 @@ describe("the report table's three columns and cursor status line", () => {
     await drain()
     const texts = treeTexts(renderDialog(active).tree)
     // The quality cell clamps to its 5-column cap ("深度" + ellipsis); the
-    // columns segment (quality + price) keeps its exact fixed widths.
+    // columns segment (quality + variant + price) keeps its exact fixed
+    // widths.
     const columns = texts.find((text) => text.includes("$1/$2") && text.includes("深度"))
-    expect(columns).toBe("  深度…  $1/$2   ")
-    // The name column truncates at its 35-column clamp (the ellipsis is the
-    // 34th column; one pad column follows) instead of rendering 40+.
+    expect(columns).toBeDefined()
+    expect(columns).toContain("深度…")
+    expect(columns).toContain("high")
+    expect(strWidth(columns!)).toBeLessThanOrEqual(27)
+    // The name column truncates at its 25-column clamp (the medium layout's
+    // budget) instead of rendering 40+.
     const label = texts.find((text) => text.startsWith("1. 深度"))
     expect(label).toBeDefined()
-    expect(label!.endsWith("… ")).toBe(true)
-    expect(strWidth(label!)).toBeLessThanOrEqual(35)
+    expect(label!.includes("…")).toBe(true)
+    expect(strWidth(label!)).toBeLessThanOrEqual(26)
     // Together the row lands exactly on the 52-char content budget.
     expect(strWidth(label!) + strWidth(columns!)).toBeLessThanOrEqual(52)
   })
 
-  test("the status line clamps emoji by display columns too (transport, dingbat)", async () => {
+  test("the variant column clamps emoji by display columns too (transport, dingbat)", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     // 🚀 (U+1F680, transport) renders 2 columns but sits OUTSIDE the East
@@ -1605,21 +1801,20 @@ describe("the report table's three columns and cursor status line", () => {
 
     await active.command("model-compare.report").run()
     await drain()
-    const status = treeTexts(renderDialog(active).tree).find((text) => text.startsWith("variant: "))
-    expect(status).toBeDefined()
-    // 3 rockets (6 columns) + ellipsis = the 7-column effort cap.
-    expect(status).toBe("variant: 🚀🚀🚀…")
-    expect(strWidth(status!)).toBeLessThanOrEqual(56)
+    const columns = treeTexts(renderDialog(active).tree).find((text) => text.includes("$1/$2"))
+    expect(columns).toBeDefined()
+    // 3 rockets (6 columns) + ellipsis = the 7-column variant cap.
+    expect(columns).toContain("🚀🚀🚀…")
+    expect(strWidth(columns!)).toBeLessThanOrEqual(26)
   })
 })
 
-// ---- the report dialog's footer (option C) ----------------------------------
-// The report dialog's footer (design §Decisions): the steering note ABOVE the
-// last-response line `last response: <model> @ <endpoint>`. The last-response
-// line is omitted entirely when nothing was captured (never a placeholder);
-// an empty captured model omits the model part.
-describe("the report dialog footer (option C)", () => {
-  test("the footer renders the steering note above the last-response line", async () => {
+// ---- the report dialog's footer --------------------------------------------
+// The report dialog's footer carries the steering note only. The
+// last-response line was removed: it overflowed the dialog's padding and made
+// the picker too tall (the alt+e toast carries the same capture).
+describe("the report dialog footer", () => {
+  test("the footer renders the steering note and no last-response line", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
@@ -1632,44 +1827,26 @@ describe("the report dialog footer (option C)", () => {
     const texts = treeTexts(tree)
 
     expect(texts).toContain("routing steered to fp8, fp4, fp16 endpoints (aliases only)")
-    expect(texts).toContain("last response: acme/alpha @ Novita")
-    expect(texts.indexOf("routing steered to fp8, fp4, fp16 endpoints (aliases only)")).toBeLessThan(
-      texts.indexOf("last response: acme/alpha @ Novita"),
-    )
-  })
-
-  test("with no capture the footer omits the last-response line entirely", async () => {
-    active = await activate()
-    active.reportPayload.age = "1h"
-    active.reportPayload.entries = ENTRIES
-    active.reportPayload.capture = null
-    active.reportPayload.steeringNote = "routing steered to fp8, fp4, fp16 endpoints (aliases only)"
-
-    await active.command("model-compare.report").run()
-    await drain()
-    const { tree } = renderDialog(active)
-    const texts = treeTexts(tree)
-
-    expect(texts).toContain("routing steered to fp8, fp4, fp16 endpoints (aliases only)")
     expect(texts.some((text) => text.startsWith("last response:"))).toBe(false)
   })
 
-  test("an empty captured model omits the model part from the footer line", async () => {
+  test("with no steering note the footer carries no capture line either", async () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
-    active.reportPayload.capture = { endpoint: "Novita", model: "", downgrade: false }
+    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.steeringNote = null
 
     await active.command("model-compare.report").run()
     await drain()
     const { tree } = renderDialog(active)
     const texts = treeTexts(tree)
 
-    expect(texts).toContain("last response: Novita")
-    expect(texts.some((text) => text.includes(" @ "))).toBe(false)
+    expect(texts.some((text) => text.startsWith("last response:"))).toBe(false)
+    expect(texts.some((text) => text.startsWith("routing steered"))).toBe(false)
   })
 
-  test("the report event's footer fields flow into the dialog", async () => {
+  test("the report event's steering note flows into the dialog and the capture is ignored", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
     await drain()
@@ -1692,7 +1869,7 @@ describe("the report dialog footer (option C)", () => {
     const texts = treeTexts(tree)
 
     expect(texts).toContain("routing steered to fp8 endpoints (aliases only)")
-    expect(texts).toContain("last response: acme/beta @ DeepInfra")
+    expect(texts.some((text) => text.startsWith("last response:"))).toBe(false)
   })
 })
 
@@ -1721,6 +1898,41 @@ describe("dialog presentation and viewport fitting", () => {
     await drain()
 
     expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+  })
+
+  test("the report dialog uses the large width on wide terminals and keeps full names", async () => {
+    const harness = makeHarness()
+    harness.ctx.renderer.width = 120
+    active = await activate(harness)
+    const longId = "deepseek/deepseek-v4.1-flash-1017"
+    active.reportPayload.age = "2h"
+    active.reportPayload.entries = [{ ...ENTRIES[0], id: longId, value: longId }]
+
+    await active.command("model-compare.report").run()
+    await drain()
+
+    expect(active.dialogSets).toEqual([{ size: "large", centered: true }])
+    const texts = treeTexts(renderDialog(active).tree)
+    expect(texts.some((text) => text.startsWith(`1. ${longId}`))).toBe(true)
+  })
+
+  test("the report dialog falls back to medium and truncates long names on narrow terminals", async () => {
+    const harness = makeHarness()
+    harness.ctx.renderer.width = 80
+    active = await activate(harness)
+    const longId = "deepseek/deepseek-v4.1-flash-1017"
+    active.reportPayload.age = "2h"
+    active.reportPayload.entries = [{ ...ENTRIES[0], id: longId, value: longId }]
+
+    await active.command("model-compare.report").run()
+    await drain()
+
+    expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+    const texts = treeTexts(renderDialog(active).tree)
+    const label = texts.find((text) => text.startsWith("1. deepseek"))
+    expect(label).toBeDefined()
+    expect(label!.includes("…")).toBe(true)
+    expect(strWidth(label!)).toBeLessThanOrEqual(27)
   })
 })
 

@@ -139,12 +139,40 @@ export function injectReasoning(body: unknown, effort: string): unknown {
   return { ...body, reasoning: { effort } }
 }
 
+// The effort the request actually asked for, recorded alongside the endpoint
+// capture for the alt+e toast: the body's own reasoning field first (the
+// plugin never clobbers it), then the catalog effort the plugin injected,
+// then an explicit #variant. "default" is OpenCode's no-selection sentinel,
+// not an effort. Null means the request left the model's default in place (or
+// the effort is unknowable).
+export function requestedEffortOf(
+  body: unknown,
+  variant: string | undefined,
+  injected: string | null,
+): string | null {
+  if (isPlainObject(body)) {
+    const reasoning = body.reasoning
+    if (
+      isPlainObject(reasoning) &&
+      typeof reasoning.effort === "string" &&
+      reasoning.effort !== ""
+    ) {
+      return reasoning.effort
+    }
+    if (typeof body.reasoning_effort === "string" && body.reasoning_effort !== "") {
+      return body.reasoning_effort
+    }
+  }
+  if (injected !== null) return injected
+  return variant !== undefined && variant !== "default" ? variant : null
+}
+
 // normalize_provider (vendor/model_compare.py): casefold the name and strip
 // ALL non-alphanumeric characters — "Z.AI", "z-ai" and "z ai" all normalize
 // to "zai". JS toLowerCase stands in for Python's casefold (provider display
 // names are ASCII in practice; a non-ASCII residue the casefold would keep is
 // stripped by the character class either way).
-function normalizeProvider(name: string): string {
+export function normalizeProvider(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "")
 }
 
@@ -153,7 +181,7 @@ function normalizeProvider(name: string): string {
 // string when it carries none — a served display name (`Novita`) is therefore
 // its own provider part. Applied to BOTH sides symmetrically (spike fact 3:
 // the served string is a display name, never the script's tagged-slug form).
-function providerPart(ref: string): string {
+export function providerPart(ref: string): string {
   const slash = ref.indexOf("/")
   return slash === -1 ? ref : ref.slice(0, slash)
 }
