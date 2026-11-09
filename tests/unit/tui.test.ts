@@ -1183,7 +1183,7 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
   test("the cannot-steer event toasts the fallback message", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    expect(active.listenCallbacks).toHaveLength(2) // the report listener + the cannot-steer listener
+    expect(active.listenCallbacks).toHaveLength(3) // the report, cannot-steer and use-best listeners
 
     active.listenCallbacks[1]({
       details: {
@@ -1238,6 +1238,124 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
       details: { type: "rpc.model-compare.report", data: { sessionID: "s1" } },
     })
     expect(active.toasts).toEqual([])
+  })
+})
+
+// ---- the /use-best toast (the server command's event) ----------------------
+// The slash command is server-side: it switches the session and writes a
+// synthetic transcript notice that only surfaces at the next turn. The TUI
+// half owns the immediate feedback, so the command emits a useBest event and
+// this listener toasts it for the CURRENT session (the same session scope as
+// the report and cannot-steer listeners; the event's location is irrelevant).
+describe("the /use-best toast (the server command's event)", () => {
+  test("the useBest event toasts the server's success message", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        location: { directory: "/elsewhere" },
+        data: {
+          sessionID: "s1",
+          message: "model-compare: switched to openrouter/model-compare/price (currently acme/alpha)",
+          ok: true,
+        },
+      },
+    })
+
+    expect(active.toasts).toEqual([
+      {
+        message: "model-compare: switched to openrouter/model-compare/price (currently acme/alpha)",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("a refusal event toasts the error variant", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: {
+          sessionID: "s1",
+          message:
+            "model-compare: openrouter/model-compare/balanced is currently disabled (no ranking data); not switching",
+          ok: false,
+        },
+      },
+    })
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          "model-compare: openrouter/model-compare/balanced is currently disabled (no ranking data); not switching",
+        variant: "error",
+      },
+    ])
+  })
+
+  test("a useBest event for a non-current session is ignored", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: { sessionID: "s2", message: "model-compare: switched", ok: true },
+      },
+    })
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("a useBest event with no message is ignored", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: { sessionID: "s1", ok: true },
+      },
+    })
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("the listener flattens and caps the bridged message (F-20)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    // The refusal copy embeds the raw slash argument, so it can carry a
+    // newline and unbounded length across the data bridge. The transcript
+    // keeps the exact copy; the toast must be the flattened, capped form.
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: {
+          sessionID: "s1",
+          message:
+            'model-compare: unknown priority "a\nb"; valid priorities: balanced, price, quality' +
+            "x".repeat(80),
+          ok: false,
+        },
+      },
+    })
+
+    expect(active.toasts).toEqual([
+      {
+        message:
+          'model-compare: unknown priority "a b"; valid priorities: balanced, price, quality' +
+          "x".repeat(38) +
+          "…",
+        variant: "error",
+      },
+    ])
+    expect(active.toasts[0]!.message).not.toContain("\n")
+    expect(active.toasts[0]!.message.length).toBe(120)
   })
 })
 
