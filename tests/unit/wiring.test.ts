@@ -80,6 +80,12 @@ const steeredRaw = {
           allow_fallbacks: true,
         },
       },
+      endpoints: [
+        { provider_name: "Novita", tag: "novita/fp8", quantization: "fp8" },
+        { provider_name: "DeepInfra", tag: "deepinfra/fp8", quantization: "fp8" },
+        { provider_name: "OpenInference", tag: "open-inference/fp4", quantization: "fp4" },
+      ],
+      default_precision: "fp8",
     },
   ],
 }
@@ -1632,6 +1638,7 @@ describe("response capture hook", () => {
         endpoint: "streamlake/fp8",
         model: "moonshotai/kimi-k3.1-fp8",
         downgrade: false,
+        requestedEffort: null,
         at: NOW,
       },
     })
@@ -1652,6 +1659,7 @@ describe("response capture hook", () => {
       endpoint: "streamlake/fp8",
       model: "moonshotai/kimi-k3.1-fp8",
       downgrade: true,
+      requestedEffort: "high",
       at: NOW,
     })
   })
@@ -1781,6 +1789,7 @@ describe("response capture hook", () => {
       endpoint: "streamlake/fp8",
       model: "moonshotai/kimi-k3.1-fp8",
       downgrade: false,
+      requestedEffort: null,
       at: NOW,
     })
   })
@@ -1808,6 +1817,42 @@ describe("response capture hook", () => {
       downgrade: false,
     })
     expect(report.steeringNote).toBe("routing steered to fp8 endpoints (aliases only)")
+  })
+
+  test("the report RPC derives the served endpoint's quantization and effort", async () => {
+    const { hookCallbacks, rpcHandlers } = await wired()
+    await injectForS1(hookCallbacks)
+    const DEEPINFRA =
+      'data: {"id":"gen-3","provider":"DeepInfra","model":"acme/alpha","choices":[]}\n\n'
+    const event = responseEvent({ response: streamResponse([DEEPINFRA]) })
+    await hookCallbacks[2](event)
+    await (event.response as Response).text()
+
+    const report = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      endpointInfo: unknown
+    }
+    expect(report.endpointInfo).toEqual({
+      quantization: { value: "fp8", relation: "default", default: "fp8" },
+      effort: { value: "high", relation: "default", default: "high" },
+    })
+  })
+
+  test("the report RPC marks a sub-default endpoint quantization", async () => {
+    const { hookCallbacks, rpcHandlers } = await wired()
+    await injectForS1(hookCallbacks)
+    const OPENINFERENCE =
+      'data: {"id":"gen-4","provider":"OpenInference","model":"acme/alpha","choices":[]}\n\n'
+    const event = responseEvent({ response: streamResponse([OPENINFERENCE]) })
+    await hookCallbacks[2](event)
+    await (event.response as Response).text()
+
+    const report = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      endpointInfo: unknown
+    }
+    expect(report.endpointInfo).toEqual({
+      quantization: { value: "fp4", relation: "sub-default", default: "fp8" },
+      effort: { value: "high", relation: "default", default: "high" },
+    })
   })
 
   // F3/NEW-1: sessionID values colliding with Object.prototype keys must read
@@ -2067,5 +2112,8 @@ describe("commands", () => {
     expect(name).toBe("report")
     expect((data as { sessionID: string; entries: unknown[] }).sessionID).toBe("s12")
     expect((data as { entries: unknown[] }).entries).toEqual([])
+    // The event schema has additionalProperties: false and no endpointInfo;
+    // the no-data branch must not leak the reportFooter's endpointInfo.
+    expect(data).not.toHaveProperty("endpointInfo")
   })
 })

@@ -52,6 +52,15 @@ export type ModelEntry = {
   // legacy projected entries: validateCatalog always writes it (null or a
   // string), and validateStoredCatalog requires it on cached records.
   qualityEffort?: string | null
+  // The per-endpoint catalog entries (v6 `endpoints`), projected to the
+  // fields the served-endpoint toast reads: the provider display name, the
+  // tagged slug, and the endpoint's quantization. Optional for hand-built /
+  // legacy projected entries.
+  endpoints?: Array<{ providerName: string; tag: string; quantization: string }>
+  // The model's derived default precision (v6 `default_precision`), used to
+  // mark an endpoint's quantization as default/sub-default/above-default.
+  // Optional for hand-built / legacy projected entries.
+  defaultPrecision?: string | null
   // Present when the raw block projects cleanly (absent stays absent).
   reasoning?: Reasoning
   // The steering block (F-11/F-12): upstream records the provider's
@@ -97,7 +106,7 @@ export type Sourced = { doc: Catalog; acquiredAt: number }
 // The served-endpoint capture record (design §Steering visibility): what the
 // http.response hook wrote for one session's most recent primary response.
 // `endpoint` is the served `provider` string verbatim (a display name like
-// "Novita" or a tagged slug like "novita/fp8" — spike fact 3); `model` is the
+// "Novita" — spike fact 3: never the tagged-slug form); `model` is the
 // response's concrete model id, captured alongside it (the spike confirmed
 // OpenRouter responses carry both). `downgrade` is captureEndpoint's verdict
 // — true ONLY when a non-empty steering order was actually applied to the
@@ -107,5 +116,10 @@ export type EndpointCapture = {
   endpoint: string
   model: string
   downgrade: boolean
+  // The reasoning effort the request asked for: the injected catalog effort,
+  // an explicit #variant, or the body's own reasoning field. Null when the
+  // request left the model's default in place (or the effort is unknowable).
+  // Display-only, like the rest of the capture.
+  requestedEffort: string | null
   at: number
 }

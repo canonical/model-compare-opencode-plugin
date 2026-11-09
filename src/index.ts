@@ -24,8 +24,10 @@ import {
   injectReasoning,
   injectSteering,
   reasoningEffortFor,
+  requestedEffortOf,
   steeringFor,
 } from "./core/steering"
+import { endpointInfoFor } from "./core/endpoint"
 import { formatReport, humanizeAge, reportEntries, steeringNote } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
@@ -303,6 +305,13 @@ export type WireState = {
   plan: AliasPlan
   registryDisabled: Partial<Record<Priority, boolean>>
   appliedSteering: Record<string, string[] | null>
+  // The reasoning effort the session's most recent request asked for (the
+  // injected catalog effort, an explicit #variant, or the body's own reasoning
+  // field); null when the request left the model's default in place. The
+  // response hook copies it into the capture record for the alt+e toast.
+  // Best-effort, last-request-per-session like appliedSteering: concurrent
+  // same-session requests can read the wrong effort (display-only).
+  appliedEffort: Record<string, string | null>
   lastEndpoints: Record<string, EndpointCapture>
   cannotSteerToasted: Record<string, boolean>
 }
@@ -391,6 +400,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     // mutate — the prototype chain (a plain-object lookup would return
     // Object.prototype junk and poison the report footer).
     appliedSteering: Object.create(null) as Record<string, string[] | null>,
+    appliedEffort: Object.create(null) as Record<string, string | null>,
     lastEndpoints: Object.create(null) as Record<string, EndpointCapture>,
     cannotSteerToasted: Object.create(null) as Record<string, boolean>,
   }
@@ -501,6 +511,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       const p = parseAliasRef(event.model)
       if (p === null) {
         state.appliedSteering[event.sessionID] = null
+        state.appliedEffort[event.sessionID] = null
         return
       }
       // The Q2 fallback (Task 6): a steerable alias request (alias ref + a
@@ -512,6 +523,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // The body is never reassigned — the request proceeds untouched.
       if (state.sourced === null) {
         state.appliedSteering[event.sessionID] = null
+        state.appliedEffort[event.sessionID] = requestedEffortOf(undefined, event.model.variant, null)
         const pick = state.picks[p]
         // The whole toast block needs the RPC registration (the emit's event
         // bridge): while it is still undefined the block is skipped ENTIRELY —
@@ -564,6 +576,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       } catch {
         // No JSON body (or unreadable): untouched, fail open.
         state.appliedSteering[event.sessionID] = null
+        state.appliedEffort[event.sessionID] = requestedEffortOf(undefined, event.model.variant, null)
         return
       }
       const byId = new Map(
@@ -593,6 +606,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         byId,
       )
       if (effort !== null) modified = injectReasoning(modified, effort)
+      // The effort the request actually asks for, for the capture's display:
+      // the body's own field wins (injectReasoning never clobbers it), then
+      // the injected catalog effort, then an explicit #variant.
+      state.appliedEffort[event.sessionID] = requestedEffortOf(body, event.model.variant, effort)
       if (modified === body) {
         // Neither block had anything to add: no steering data, no scored
         // effort, or the body already carries the corresponding field.
@@ -622,6 +639,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // Fail open: any error leaves the original request proceeding
       // untouched, and records that nothing was injected.
       state.appliedSteering[event.sessionID] = null
+      state.appliedEffort[event.sessionID] = null
     }
   })
 
@@ -666,6 +684,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       // toast and the report footer; nothing about the sent request depends
       // on this read.
       const order = state.appliedSteering[event.sessionID] ?? null
+      const requestedEffort = state.appliedEffort[event.sessionID] ?? null
 
       const decoder = new TextDecoder()
       let captured = ""
@@ -687,6 +706,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           // point), with an empty id standing in for the missing field.
           model: model ?? "",
           downgrade: verdict.downgrade,
+          requestedEffort,
           at: now(),
         }
       }
@@ -774,11 +794,25 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       record === undefined
         ? null
         : { endpoint: record.endpoint, model: record.model, downgrade: record.downgrade }
+    // The served endpoint's attributes (the alt+e toast): match the response's
+    // provider display name to the catalog's per-endpoint entries and compare
+    // the endpoint's quantization and the requested effort to the model's
+    // defaults. Without a catalog there is nothing to match against; the
+    // capture still travels (the toast then shows the provider and verdict).
+    let endpointInfo: ReturnType<typeof endpointInfoFor> | null = null
+    if (record !== undefined && state.sourced !== null) {
+      const doc = state.sourced.doc
+      const model =
+        doc.models.find((entry) => entry.id === record.model) ??
+        doc.models.find((entry) => entry.id === record.model.replace(/#.*$/, ""))
+      const info = endpointInfoFor(model, record.endpoint, record.requestedEffort)
+      if (info.quantization !== null || info.effort !== null) endpointInfo = info
+    }
     // The steering note needs the catalog: without a source there is no data
     // to derive it from, and the note does not render.
     const steeringNoteFor =
       state.sourced === null ? null : steeringNote(state.sourced.doc, state.picks, state.enabled)
-    return { capture, steeringNote: steeringNoteFor }
+    return { capture, steeringNote: steeringNoteFor, endpointInfo }
   }
 
   rpcRegistration = await ctx.rpc.register(ModelCompare, {
@@ -897,10 +931,15 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         // transcript notice is the durable copy, not the fast path).
         if (sourced === null || ranks === null) {
           try {
+            // Emit ONLY the event schema's fields: reportFooter also carries
+            // endpointInfo (the alt+e toast's data), which the report event
+            // schema does not declare (additionalProperties: false).
+            const footer = reportFooter(sessionID)
             await rpcRegistration.events.emit("report", {
               sessionID,
               age: null,
-              ...reportFooter(sessionID),
+              capture: footer.capture,
+              steeringNote: footer.steeringNote,
               entries: [],
             })
           } catch {

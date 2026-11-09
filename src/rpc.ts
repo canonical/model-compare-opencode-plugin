@@ -23,6 +23,31 @@ const captureSchema = {
   additionalProperties: false,
 } as const
 
+// One served-endpoint attribute (quantization or reasoning effort): the value
+// the catalog reports, its relation to the model's default, and that default
+// (null when the catalog does not publish one). The relation is a closed set
+// the TUI validates again at its trust boundary.
+const endpointAttributeSchema = {
+  type: ["object", "null"],
+  properties: {
+    value: { type: "string" },
+    relation: { type: "string" },
+    default: { type: ["string", "null"] },
+  },
+  required: ["value", "relation", "default"],
+  additionalProperties: false,
+} as const
+
+const endpointInfoSchema = {
+  type: ["object", "null"],
+  properties: {
+    quantization: endpointAttributeSchema,
+    effort: endpointAttributeSchema,
+  },
+  required: ["quantization", "effort"],
+  additionalProperties: false,
+} as const
+
 export const ModelCompare = Rpc.define({
   id: "model-compare",
   methods: {
@@ -42,6 +67,7 @@ export const ModelCompare = Rpc.define({
           text: { type: "string" },
           age: { type: ["string", "null"] },
           capture: captureSchema,
+          endpointInfo: endpointInfoSchema,
           steeringNote: { type: ["string", "null"] },
           entries: {
             type: "array",
@@ -77,7 +103,7 @@ export const ModelCompare = Rpc.define({
             },
           },
         },
-        required: ["text", "age", "capture", "steeringNote", "entries"],
+        required: ["text", "age", "capture", "endpointInfo", "steeringNote", "entries"],
         additionalProperties: false,
       },
     },
