@@ -217,6 +217,19 @@ function makeHarness() {
   const closes: Array<() => void> = []
   const listenCallbacks: Array<(event: unknown) => void> = []
   const entries = aliasEntries()
+  // The data layer's session cache (`data.session.get`), by directory: s1
+  // lives in the plugin's own /repo; s2 is deliberately ABSENT — an unknown
+  // session reads as unknown location and the TUI falls back to the
+  // plugin's own (pinned by the alt+e stale-lookup test). Tests re-seed s1
+  // to a worktree directory to pin cross-location routing.
+  const sessions = new Map<string, string>([["s1", "/repo"]])
+  // The model registry PER DIRECTORY: the plugin's own /repo serves the
+  // shared alias entries (with the concrete models' variant spaces); any
+  // other directory is a location this instance has never synced, so list()
+  // returns undefined — the TUI reads UNKNOWN. Tests seed a foreign
+  // directory's registry to pin WHICH registry a cross-location pick
+  // validates its advertised variant against.
+  const modelRegistries = new Map<string, Array<Record<string, unknown>>>([["/repo", entries]])
   const reportPayload: { age?: unknown; entries?: unknown; capture?: unknown; steeringNote?: unknown } = {}
 
   const session = {
@@ -233,7 +246,15 @@ function makeHarness() {
     ),
     command: vi.fn(async (_input: { sessionID: string; name: string; text: string }) => ({})),
   }
-  const report = vi.fn(async (_input: unknown, _options: unknown) => reportPayload)
+  // The report RPC, OPTIONS INCLUDED: where a call ROUTES is half its
+  // contract (the options pick the location's plugin instance that answers),
+  // and the old mock that discarded its second argument hid exactly that
+  // half. Every call is recorded so tests can assert the routing.
+  const reportCalls: Array<{ input: unknown; options: unknown }> = []
+  const report = vi.fn(async (input: unknown, options: unknown) => {
+    reportCalls.push({ input, options })
+    return reportPayload
+  })
   const rpc = vi.fn((_rpcClass: unknown) => ({ report }))
   const navigate = vi.fn((_route: unknown) => {})
 
@@ -308,11 +329,28 @@ function makeHarness() {
         listenCallbacks.push(cb)
         return () => {}
       }),
-      location: { model: { list: vi.fn(() => entries), sync: vi.fn(async () => {}) } },
+      session: {
+        get: vi.fn((sessionID: string) => {
+          const directory = sessions.get(sessionID)
+          return directory === undefined ? undefined : { location: { directory } }
+        }),
+      },
+      location: {
+        model: {
+          // Location-aware: the shared entries answer the plugin's own /repo
+          // (or an unaddressed call), and a foreign directory answers only
+          // what the test seeded for it (undefined = never synced, UNKNOWN).
+          list: vi.fn((loc?: { directory?: string }) => {
+            const directory = loc?.directory
+            return directory === undefined ? entries : modelRegistries.get(directory)
+          }),
+          sync: vi.fn(async (_loc?: { directory?: string }) => {}),
+        },
+      },
     },
   }
 
-  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, rpc, navigate, entries, reportPayload, fireRenderer, rendererListeners, ctx }
+  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, reportCalls, rpc, navigate, entries, sessions, modelRegistries, reportPayload, fireRenderer, rendererListeners, ctx }
 }
 
 type Harness = ReturnType<typeof makeHarness> & {
@@ -826,7 +864,68 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     expect(active.session.create).not.toHaveBeenCalled()
   })
 
+  test("a report event from another directory opens the dialog (worktree session)", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/elsewhere" },
+        data: { sessionID: "s1", age: "3h", entries: ENTRIES },
+      },
+    })
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1)
+    expect(treeTexts(renderDialog(active).tree).some((text) => text.includes("acme/alpha"))).toBe(true)
+  })
+
+  test("a cross-location pick validates the variant against the SESSION's registry (worktree)", async () => {
+    // s1 lives in /wt (a worktree tab) while the plugin runs in /repo, and
+    // the two registries DISAGREE on acme/alpha's variant space: /repo
+    // offers high/max/medium, /wt only max. The switch resolves the model
+    // against /wt's registry, so the advertised "high" must be checked THERE
+    // and downgraded to the bare model — checking /repo's registry (the bug
+    // this pins) would bind "high" and fail model resolution for every later
+    // request in the session. The warm-up sync must also target /wt.
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.sessions.set("s1", "/wt")
+    active.modelRegistries.set("/wt", [
+      { id: "acme/alpha", modelID: "acme/alpha", enabled: true, variants: [{ id: "max" }] },
+    ])
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/wt" },
+        data: { sessionID: "s1", age: "3h", entries: [{ ...ENTRIES[0], effort: "high" }] },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+
+    // Downgraded: no `variant` key at all — /wt's registry refused "high".
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha" },
+    })
+    expect(active.session.switchModel.mock.calls[0]![0].model).not.toHaveProperty("variant")
+    expect(active.toasts).toEqual([
+      { message: "switched to openrouter/acme/alpha (variant high unavailable)", variant: "success" },
+    ])
+    // The dialog data prep warmed the SESSION's registry, not this
+    // location's (whose resync already covers it).
+    expect(active.ctx.data.location.model.sync).toHaveBeenCalledWith({ directory: "/wt" })
+  })
+
   test("a report pick switches the session to the concrete model (the event path)", async () => {
+    // Also the same-location mirror of the cross-location test above: s1
+    // lives in the plugin's OWN /repo, where the registry carries the
+    // advertised "high" — the pick binds it.
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
     active.listenCallbacks[0]({
@@ -1040,11 +1139,11 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
 
   // The Q2 fallback (Task 6): the server hook's once-per-session cannot-steer
   // event surfaces as a toast with the exact fallback copy, but ONLY for the
-  // user's current session in this directory. A session in a foreign
-  // directory is never viewable here, and a session the user isn't currently
-  // viewing drops its notice — the emit is once-per-session, so that notice
-  // is lost forever (the accepted trade-off: noise from unopened sessions is
-  // the worse failure).
+  // user's current session — the event's location is irrelevant, because a
+  // session opened in a tab can live in another directory (a worktree). A
+  // session the user isn't currently viewing drops its notice — the emit is
+  // once-per-session, so that notice is lost forever (the accepted
+  // trade-off: noise from unopened sessions is the worse failure).
   test("the cannot-steer event toasts the fallback message", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
@@ -1065,7 +1164,7 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     expect(active.dialogRenders).toHaveLength(0)
   })
 
-  test("a cannot-steer event from a foreign directory is ignored", async () => {
+  test("a cannot-steer event from another directory still toasts (worktree session)", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
 
@@ -1077,7 +1176,9 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
       },
     })
 
-    expect(active.toasts).toEqual([])
+    expect(active.toasts).toEqual([
+      { message: "cannot steer this session; OpenRouter default routing applies", variant: "success" },
+    ])
   })
 
   test("a cannot-steer event for a non-current session is ignored", async () => {
@@ -1113,6 +1214,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e toasts the served endpoint from the current session's capture (normal)", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
+    // s1 lives in /wt (a worktree tab): the capture record lives in /wt's
+    // plugin instance — the hook records the served endpoint where the
+    // session's requests run — so the lookup must be ROUTED there. Asking
+    // this instance's own /repo (the bug this pins) reads the wrong
+    // location's capture state and toasts nothing.
+    active.sessions.set("s1", "/wt")
     active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
     await drain()
 
@@ -1122,11 +1229,13 @@ describe("the alt+e toast (the served endpoint)", () => {
     expect(active.toasts).toEqual([
       { message: "last response served by Novita", variant: "success" },
     ])
-    // The lookup is addressed to the CURRENT session's id.
-    expect(active.report).toHaveBeenCalledWith(
-      { sessionID: "s1" },
-      { location: { directory: "/repo" } },
-    )
+    // The lookup is addressed to the CURRENT session's id and routed to the
+    // session's OWN directory — the options half of the contract the old
+    // mock discarded.
+    expect(active.reportCalls.at(-1)).toEqual({
+      input: { sessionID: "s1" },
+      options: { location: { directory: "/wt" } },
+    })
   })
 
   test("alt+e toasts the downgrade copy when the capture is a downgrade", async () => {
@@ -1188,6 +1297,9 @@ describe("the alt+e toast (the served endpoint)", () => {
       { message: "last response served by Novita", variant: "success" },
       { message: "last response served by DeepInfra", variant: "success" },
     ])
+    // The lookup routes to the session's own directory: s2's location is
+    // unknown to the fake data layer, so it falls back to the plugin's own
+    // /repo (the honest default for an unresolvable session location).
     expect(active.report).toHaveBeenLastCalledWith(
       { sessionID: "s2" },
       { location: { directory: "/repo" } },

@@ -434,6 +434,24 @@ export default Plugin.define({
       return null
     }
 
+    // The directory a SESSION lives in (host data, read guardedly). A
+    // session opened in a tab can live in a worktree — a DIFFERENT directory
+    // than this plugin instance's `location` — and everything addressed to
+    // that session must route THERE: the report RPC's endpoint capture lives
+    // in that directory's plugin instance, and a model switch resolves
+    // against that directory's registry (validating a variant against THIS
+    // location's registry checks the wrong host's variant space). undefined
+    // when the session or its location is unknown — callers fall back to
+    // this instance's own location, NOT to "any": registryVariants(undefined)
+    // fails OPEN, so an unknown location must not silently drop the check.
+    function sessionDirectoryOf(sessionID: string): string | undefined {
+      const info = context.data.session.get(sessionID) as
+        | { location?: { directory?: unknown } }
+        | undefined
+      const directory = info?.location?.directory
+      return typeof directory === "string" && directory !== "" ? directory : undefined
+    }
+
     // The runtime plugin's configured default priority, read through the
     // client's config API: the config documents carry `plugins[].options`.
     // Falls back to "balanced" when the option is absent or unreadable.
@@ -855,6 +873,18 @@ export default Plugin.define({
         notify("no ranking data available yet", "error")
         return
       }
+      // Warm the SESSION's directory's registry before a pick reads it (see
+      // sessionDirectoryOf): only THIS location's registry is kept fresh —
+      // the create root's initial sync and 30s resync below — so a worktree's
+      // registry may never have been synced into this instance, and a cold
+      // list() reads UNKNOWN and fails every advertised variant OPEN. Best
+      // effort and fire-and-forget (a pick may still race it), like the
+      // resync; skipped when the session lives here — the resync already
+      // covers this location's own registry.
+      const warmDirectory = data.sessionID === null ? undefined : sessionDirectoryOf(data.sessionID)
+      if (warmDirectory !== undefined && warmDirectory !== here) {
+        void context.data.location.model.sync({ directory: warmDirectory }).catch(() => {})
+      }
       // The approved table now carries three columns: model name, quality
       // and price. The scored variant (the catalog's effort) moved into a
       // cursor-following status line below the list (see ListRow.status), so
@@ -981,9 +1011,22 @@ export default Plugin.define({
           // bare model (the toast names the unavailability) — an unknown
           // variant fails model resolution for every later request.
           const advertised = row.variant
+          // The registry consulted is the SESSION's directory's (see
+          // sessionDirectoryOf): the switch resolves the model THERE, so
+          // this location's registry cannot vouch for a worktree session's
+          // variant space — checking it would bind a variant the session's
+          // own registry does not carry (or drop one it does). The opening
+          // screen (no session) and an unknown session location fall back to
+          // THIS location's registry: the new session is created here, and
+          // an unknown location must not fail open through
+          // registryVariants(undefined).
+          const pickDirectory =
+            data.sessionID === null ? undefined : sessionDirectoryOf(data.sessionID)
+          const pickLocation =
+            pickDirectory === undefined ? location : { directory: pickDirectory }
           const bound = bindableVariant(
             advertised,
-            registryVariants(context.data.location.model.list(location), row.value),
+            registryVariants(context.data.location.model.list(pickLocation), row.value),
           )
           const sessionID = data.sessionID
           if (sessionID !== null) {
@@ -1004,13 +1047,16 @@ export default Plugin.define({
 
     // The report dialog rides the /model-compare command's RPC event: ONE
     // command serves both worlds — headless gets the transcript notice, the
-    // TUI gets this instant selectable dialog. Filtered to this plugin's
-    // location and the currently viewed session, so a headless run's report
-    // never pops a dialog over an unrelated session.
+    // TUI gets this instant selectable dialog. Scoped ONLY by the currently
+    // viewed session: session IDs are globally unique, so a headless run's
+    // report never pops a dialog over an unrelated session. The event's
+    // LOCATION is deliberately not compared with this plugin's location —
+    // a session opened in a tab can live in another directory (a worktree),
+    // and dropping its events left alt+shift+m and /model-compare silent
+    // there (observed live, 2026-11-08).
     const offReportEvent = context.data.listen(({ details }) => {
       const event = details as {
         type?: unknown
-        location?: { directory?: unknown }
         data?: {
           sessionID?: unknown
           age?: unknown
@@ -1020,12 +1066,6 @@ export default Plugin.define({
         }
       }
       if (event.type !== REPORT_EVENT) return
-      if (
-        typeof event.location?.directory === "string" &&
-        here !== undefined &&
-        event.location.directory !== here
-      )
-        return
       const data = event.data
       if (typeof data?.sessionID !== "string" || data.sessionID !== currentSessionID()) return
       if (!Array.isArray(data.entries)) return
@@ -1048,8 +1088,9 @@ export default Plugin.define({
     // once per session when a steerable alias request finds no steering data
     // (no catalog source). The TUI surfaces it as a toast with the exact
     // fallback copy; headless shows nothing — like every TUI-coupled surface.
-    // Scoped exactly like the report listener: a foreign directory's session
-    // is never viewable here, and only the CURRENTLY viewed session toasts.
+    // Scoped exactly like the report listener: only the CURRENTLY viewed
+    // session toasts, regardless of the directory it lives in (a worktree
+    // tab's session is still the session the user interacts with).
     // Trade-off: a cannotSteer notice for a same-project background session
     // (or a session the user isn't currently viewing) is dropped forever —
     // the emit is once-per-session — but noise from unopened sessions is the
@@ -1057,16 +1098,9 @@ export default Plugin.define({
     const offCannotSteerEvent = context.data.listen(({ details }) => {
       const event = details as {
         type?: unknown
-        location?: { directory?: unknown }
         data?: { sessionID?: unknown }
       }
       if (event.type !== CANNOT_STEER_EVENT) return
-      if (
-        typeof event.location?.directory === "string" &&
-        here !== undefined &&
-        event.location.directory !== here
-      )
-        return
       const data = event.data
       if (typeof data?.sessionID !== "string" || data.sessionID !== currentSessionID()) return
       notify(CANNOT_STEER_COPY)
@@ -1219,10 +1253,21 @@ export default Plugin.define({
       run: async () => {
         const sessionID = currentSessionID()
         if (sessionID === null) return
+        // The capture lives in the SESSION's directory's plugin instance —
+        // the hook records the served endpoint where the session's requests
+        // run — and a tab's session can live in a worktree. Routing the
+        // lookup to this instance's `here` asks the wrong location's capture
+        // state (empty, or another session's stale record). An unknown
+        // session location falls back to `here`, this instance's honest
+        // default. (The opening-screen reportCommand pull above needs no
+        // routing: with no session, `here` IS the session-less default; the
+        // with-session reportCommand branch posts the session COMMAND, which
+        // the host routes by the session itself.)
+        const sessionDirectory = sessionDirectoryOf(sessionID) ?? here
         try {
           const report: unknown = await context.client.rpc(ModelCompare).report(
             { sessionID },
-            here === undefined ? undefined : { location: { directory: here } },
+            sessionDirectory === undefined ? undefined : { location: { directory: sessionDirectory } },
           )
           const capture = toCapture((report as { capture?: unknown } | undefined)?.capture)
           if (capture === null) return
