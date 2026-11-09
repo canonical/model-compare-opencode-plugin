@@ -1886,6 +1886,53 @@ describe("commands", () => {
     })
   })
 
+  test("/use-best emits the useBest event for the TUI's immediate toast", async () => {
+    const { ctx, commands, rpcEmit } = makeCtx()
+    await seedDocCache(ctx.storage)
+    for (const p of PRIORITIES) {
+      await seedPin(ctx.storage, DOC, p, { v: 1, id: "acme/alpha", since: NOW })
+    }
+    await wire(ctx, deps(vi.fn(), fakeTimers()))
+
+    const useBest = commands.find((c) => c.name === "use-best")!
+    await useBest.execute({ sessionID: "s2", prompt: { text: "price" } })
+
+    expect(rpcEmit).toHaveBeenCalledWith("useBest", {
+      sessionID: "s2",
+      message: "model-compare: switched to openrouter/model-compare/price (currently acme/alpha)",
+      ok: true,
+    })
+  })
+
+  test("/use-best emits the useBest event on a disabled-alias refusal", async () => {
+    const { ctx, commands, rpcEmit } = makeCtx()
+    await wire(ctx, deps(vi.fn(), fakeTimers()))
+
+    const useBest = commands.find((c) => c.name === "use-best")!
+    await useBest.execute({ sessionID: "s1", prompt: { text: "" } })
+
+    expect(rpcEmit).toHaveBeenCalledWith("useBest", {
+      sessionID: "s1",
+      message:
+        "model-compare: openrouter/model-compare/balanced is currently disabled (no ranking data); not switching",
+      ok: false,
+    })
+  })
+
+  test("/use-best emits the useBest event on an unknown-priority refusal", async () => {
+    const { ctx, commands, rpcEmit } = makeCtx()
+    await wire(ctx, deps(vi.fn(), fakeTimers()))
+
+    const useBest = commands.find((c) => c.name === "use-best")!
+    await useBest.execute({ sessionID: "s1", prompt: { text: "fastest" } })
+
+    expect(rpcEmit).toHaveBeenCalledWith("useBest", {
+      sessionID: "s1",
+      message: expect.stringContaining('unknown priority "fastest"'),
+      ok: false,
+    })
+  })
+
   test("/model-compare with no data says so", async () => {
     const { ctx, commands, raw } = makeCtx()
     await wire(ctx, deps(vi.fn(), fakeTimers()))

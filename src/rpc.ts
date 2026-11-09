@@ -144,5 +144,22 @@ export const ModelCompare = Rpc.define({
         additionalProperties: false,
       },
     },
+    // The /use-best command's immediate feedback: the server command switches
+    // the session and writes a synthetic transcript notice (visible only at
+    // the next turn), so it emits this event for the TUI half to toast. The
+    // message is the exact copy the transcript carries; `ok` picks the toast
+    // variant (success or error). Headless clients ignore the event.
+    useBest: {
+      schema: {
+        type: "object",
+        properties: {
+          sessionID: { type: "string" },
+          message: { type: "string" },
+          ok: { type: "boolean" },
+        },
+        required: ["sessionID", "message", "ok"],
+        additionalProperties: false,
+      },
+    },
   },
 })

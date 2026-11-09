@@ -840,6 +840,19 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           enabled: (p) => state.enabled[p] === true,
         })
         if (!decision.ok) {
+          // The TUI's immediate feedback: the synthetic notice below only
+          // surfaces at the session's next turn, so the event carries the
+          // same copy to the toast listener. Best-effort — the refusal is
+          // already durable in the transcript.
+          try {
+            await rpcRegistration.events.emit("useBest", {
+              sessionID,
+              message: decision.message,
+              ok: false,
+            })
+          } catch {
+            // Emission failures must not fail the command.
+          }
           await ctx.session.synthetic({ sessionID, text: decision.message, resume: false })
           return
         }
@@ -849,10 +862,19 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           model: { providerID: ALIAS_PROVIDER, id: aliasId(p) },
         })
         const pickId = state.picks[p]?.id ?? null
+        const message = useBestNotice(p, pickId)
+        // The switch is done; the toast event goes first so the TUI does not
+        // wait behind the synthetic's admission (the same ordering as the
+        // report command). Best-effort, like the transcript notice.
+        try {
+          await rpcRegistration.events.emit("useBest", { sessionID, message, ok: true })
+        } catch {
+          // Emission failures must not fail the command.
+        }
         try {
           await ctx.session.synthetic({
             sessionID,
-            text: useBestNotice(p, pickId),
+            text: message,
             resume: false,
           })
         } catch {

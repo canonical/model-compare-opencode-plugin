@@ -87,6 +87,10 @@ const REPORT_EVENT = "rpc.model-compare.report"
 // fallback's runtime notification. The toast copy below is the whole message.
 const CANNOT_STEER_EVENT = "rpc.model-compare.cannotSteer"
 const CANNOT_STEER_COPY = "cannot steer this session; OpenRouter default routing applies"
+// The event the /use-best command emits for the TUI's immediate toast: the
+// server command's synthetic transcript notice only surfaces at the next
+// turn, so the event carries the same message (and its success/error variant).
+const USE_BEST_EVENT = "rpc.model-compare.useBest"
 
 // The list dialogs' lifecycle token (see showListDialog): a module-scope
 // generation counter, bumped every time a dialog is armed, plus the armed
@@ -1106,6 +1110,26 @@ export default Plugin.define({
       notify(CANNOT_STEER_COPY)
     })
 
+    // The /use-best command's immediate feedback: the server command emits
+    // this event with the exact transcript copy and its variant, and the TUI
+    // toasts it for the CURRENT session (the same session scope as the report
+    // and cannot-steer listeners; the event's location is irrelevant). The
+    // palette command and the picks dialog toast directly, so this listener
+    // is the slash command's half of the same feedback.
+    const offUseBestEvent = context.data.listen(({ details }) => {
+      const event = details as {
+        type?: unknown
+        data?: { sessionID?: unknown; message?: unknown; ok?: unknown }
+      }
+      if (event.type !== USE_BEST_EVENT) return
+      const data = event.data
+      if (typeof data?.sessionID !== "string" || data.sessionID !== currentSessionID()) return
+      if (typeof data.message !== "string") return
+      // F-20: the message crosses the data bridge, so the listener flattens
+      // and caps it before the toast; the transcript keeps the exact copy.
+      notify(sanitizeCatalogText(data.message), data.ok === false ? "error" : "success")
+    })
+
     createRoot((dispose) => {
       disposeRoot = dispose
 
@@ -1385,6 +1409,7 @@ export default Plugin.define({
       context.renderer.off("resize", onRendererResize)
       offReportEvent()
       offCannotSteerEvent()
+      offUseBestEvent()
       disposeRoot()
       disposeAppSlot()
       disposeHomeFooter()
