@@ -1286,14 +1286,15 @@ export default Plugin.define({
       },
     }
 
-    // The palette-only use-best: the immediate-toast variant. The SLASH
-    // surface is left to the server command (one entry everywhere); the
-    // palette is TUI-layer territory, where this variant's instant feedback
-    // lives.
+    // The use-best command: the immediate-toast variant, reachable from the
+    // palette and the alt+u keybind. The SLASH surface is left to the server
+    // command (one entry everywhere); the palette and keybind are TUI-layer
+    // territory, where this variant's instant feedback lives.
     const useBestCommand: KeymapCommand = {
       id: "model-compare.use-best",
       title: "Use best model",
       group: "Model Compare",
+      bind: "alt+u",
       palette: true,
       run: async (input: string | undefined) => {
         const decision = useBestDecision({
