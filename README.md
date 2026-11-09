@@ -79,13 +79,14 @@ Commands:
 | Key | Action |
 |---|---|
 | `alt+m` | picks dialog — all three priorities with their current picks |
+| `alt+u` | switch the session to the default priority's pick (the `/use-best` default); on the opening screen it creates a session bound to it |
 | `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
 | `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model at the variant its status line advertises (`#max`, …), falling back to the bare model when the host's own registry does not offer that variant |
 | `up` / `down` | move the dialog cursor |
 | `return` | select the highlighted row (picks dialog: switch to that priority) |
 | `esc` | close the dialog |
 
-Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before. The TUI has no `/use-best` keybinding: the slash command already covers switching.
+Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before.
 
 Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries only the pick (plus the fallback marker); the report dialog's status line carries the variant. The footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
 

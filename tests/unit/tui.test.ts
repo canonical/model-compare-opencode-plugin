@@ -741,6 +741,30 @@ describe("the shortcuts from the opening screen (no session)", () => {
   })
 })
 
+// ---- the alt+u keybind (issue #9) ------------------------------------------
+
+describe("the alt+u keybind", () => {
+  test("binds the use-best command and switches to the default priority", async () => {
+    const harness = makeHarness()
+    harness.state.route = { type: "session", sessionID: "s1" }
+    active = await activate(harness)
+
+    const command = active.command("model-compare.use-best") as Command & { bind?: string }
+    expect(command.bind).toBe("alt+u")
+
+    await command.run()
+    await drain()
+
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: aliasId("balanced") },
+    })
+    expect(active.toasts).toEqual([
+      { message: useBestNotice("balanced", "acme/alpha"), variant: "success" },
+    ])
+  })
+})
+
 // ---- the dialog close paths (no pick) --------------------------------------
 
 describe("a dialog closes without picking (the host's close callback)", () => {
