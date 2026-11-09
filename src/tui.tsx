@@ -574,6 +574,9 @@ export default Plugin.define({
     // it to a modal layer.
     const [listKeys, setListKeys] = createSignal<{
       move: (delta: number) => void
+      page: (delta: number) => void
+      first: () => void
+      last: () => void
       pick: () => void
     } | null>(null)
 
@@ -703,6 +706,42 @@ export default Plugin.define({
         // the user has already moved the cursor off it.
         revealOnFrame(false)
       }
+      // jump() clamps instead of wrapping: home/end and the page keys stop at
+      // the ends (the host's own dialog.select behavior), unlike move().
+      const jump = (index: number) => {
+        setCursor(Math.max(0, Math.min(index, selectable.length - 1)))
+        revealOnFrame(false)
+      }
+      // One screenful is the scrollbox's visible LINE count. Paging lands on
+      // the selectable row at/after (down) or at/before (up) that content
+      // line, so the heading blank lines are accounted for like every other
+      // consumer of the rowsHeight arithmetic (a selectable row is not always
+      // one line apart). The scrollbox exists once the dialog has rendered
+      // (the keymap layer is armed from the same render), so the fallback
+      // only covers a keypress that somehow lands before the ref.
+      const page = (delta: number) => {
+        if (delta === 0) return
+        const step = Math.max(1, listScroll?.height ?? 1)
+        const lineOf = (index: number): number => rowOffset(rows.indexOf(selectable[index]!))
+        const targetLine = lineOf(cursor()) + delta * step
+        let target = delta > 0 ? selectable.length - 1 : 0
+        if (delta > 0) {
+          for (let k = 0; k < selectable.length; k++) {
+            if (lineOf(k) >= targetLine) {
+              target = k
+              break
+            }
+          }
+        } else {
+          for (let k = selectable.length - 1; k >= 0; k--) {
+            if (lineOf(k) <= targetLine) {
+              target = k
+              break
+            }
+          }
+        }
+        jump(target)
+      }
       const pick = () => {
         const row = selectable[cursor()]
         close()
@@ -714,7 +753,13 @@ export default Plugin.define({
       // now the armed one (the lifecycle token above).
       armedClose = close
       armedReveal = revealOnFrame
-      setListKeys({ move, pick })
+      setListKeys({
+        move,
+        page,
+        first: () => jump(0),
+        last: () => jump(selectable.length - 1),
+        pick,
+      })
 
       context.ui.dialog.show(
         () => (
@@ -1346,6 +1391,34 @@ export default Plugin.define({
                   group: "Dialog",
                   bind: "up",
                   run: () => keys.move(-1),
+                },
+                {
+                  id: "model-compare.list.home",
+                  title: "First row",
+                  group: "Dialog",
+                  bind: "home",
+                  run: () => keys.first(),
+                },
+                {
+                  id: "model-compare.list.end",
+                  title: "Last row",
+                  group: "Dialog",
+                  bind: "end",
+                  run: () => keys.last(),
+                },
+                {
+                  id: "model-compare.list.pageup",
+                  title: "Page up",
+                  group: "Dialog",
+                  bind: "pageup",
+                  run: () => keys.page(-1),
+                },
+                {
+                  id: "model-compare.list.pagedown",
+                  title: "Page down",
+                  group: "Dialog",
+                  bind: "pagedown",
+                  run: () => keys.page(1),
                 },
                 {
                   id: "model-compare.list.pick",
