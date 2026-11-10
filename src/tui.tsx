@@ -421,6 +421,28 @@ export default Plugin.define({
     const notify = (message: string, variant: "success" | "error" = "success") =>
       context.ui.toast.show({ title: "model-compare", message, variant, duration: TOAST_MS })
 
+    // Update notice: the server already checks unpinned package plugins for
+    // updates at startup (and every 24 hours), but only /plugins shows the
+    // result. Surface it once here so the user does not have to open that
+    // dialog to learn about it. Local plugins are skipped — `plugin update`
+    // does not touch them — and the check is best-effort: a server that is
+    // not ready yet, or a network failure, must not affect the TUI half.
+    void context.client.plugin
+      .check({ location, target: "model-compare-opencode-plugin" })
+      .then((result) => {
+        const current = result.data.find(
+          (plugin) => plugin.id === "model-compare" && plugin.state.status === "active",
+        )
+        if (current?.source.type !== "package" || current.source.outdated !== true) return
+        context.ui.toast.show({
+          title: "model-compare",
+          message: "New version available - open /plugins to install",
+          variant: "info",
+          duration: TOAST_MS,
+        })
+      })
+      .catch(() => {})
+
     // The terminal's size, reactive: the renderer emits "resize" carrying the
     // fresh dimensions, and the dialogs' row-area caps must track font-size
     // and window changes the way the host's own dialogs do (the palette caps

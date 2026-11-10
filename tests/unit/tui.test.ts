@@ -263,6 +263,12 @@ function makeHarness() {
   })
   const rpc = vi.fn((_rpcClass: unknown) => ({ report }))
   const navigate = vi.fn((_route: unknown) => {})
+  // The server's package-plugin update check. Defaults to "nothing to
+  // report"; the update-notice tests seed an outdated package entry.
+  const pluginCheck = vi.fn(async (_input?: unknown) => ({
+    location: { directory: "/repo" },
+    data: [] as Array<Record<string, unknown>>,
+  }))
 
   // The renderer's captured listeners and the test-side event trigger.
   type RendererListener = (...args: unknown[]) => void
@@ -283,7 +289,7 @@ function makeHarness() {
 
   const ctx = {
     location: { directory: "/repo" },
-    client: { session, config: { get: vi.fn(async () => []) }, rpc },
+    client: { session, config: { get: vi.fn(async () => []) }, rpc, plugin: { check: pluginCheck } },
     ui: {
       toast: {
         show: vi.fn((input: { message: string; variant?: string }) => {
@@ -356,7 +362,7 @@ function makeHarness() {
     },
   }
 
-  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, reportCalls, rpc, navigate, entries, sessions, modelRegistries, reportPayload, fireRenderer, rendererListeners, ctx }
+  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, reportCalls, rpc, navigate, entries, sessions, modelRegistries, reportPayload, fireRenderer, rendererListeners, pluginCheck, ctx }
 }
 
 type Harness = ReturnType<typeof makeHarness> & {
@@ -2279,5 +2285,82 @@ describe("the row-area cap measures content LINES", () => {
     // The picks dialog: 3 rows, no heading blanks — min(3, cap 9 at
     // terminal 24).
     expect(scrollbox.props.maxHeight).toBe(3)
+  })
+})
+
+// ---- the update notice -----------------------------------------------------
+// The TUI half surfaces the server's package-plugin update check once, at
+// startup, so the user does not have to open /plugins to learn about it.
+// Local plugins are skipped: `plugin update` does not touch them.
+describe("the update notice", () => {
+  const checkResult = (source: Record<string, unknown>) => ({
+    location: { directory: "/repo" },
+    data: [
+      {
+        id: "model-compare",
+        source,
+        features: { server: true, tui: true },
+        state: { status: "active" },
+      },
+    ],
+  })
+
+  test("toasts when the active package plugin is outdated", async () => {
+    const harness = makeHarness()
+    harness.pluginCheck.mockResolvedValueOnce(
+      checkResult({
+        type: "package",
+        target: "model-compare-opencode-plugin",
+        version: "0.7.0",
+        outdated: true,
+      }),
+    )
+
+    active = await activate(harness)
+    await drain()
+
+    expect(harness.pluginCheck).toHaveBeenCalledWith({
+      location: { directory: "/repo" },
+      target: "model-compare-opencode-plugin",
+    })
+    expect(active.toasts).toEqual([
+      { message: "New version available - open /plugins to install", variant: "info" },
+    ])
+  })
+
+  test("stays quiet when the package is current", async () => {
+    const harness = makeHarness()
+    harness.pluginCheck.mockResolvedValueOnce(
+      checkResult({
+        type: "package",
+        target: "model-compare-opencode-plugin",
+        version: "0.7.0",
+      }),
+    )
+
+    active = await activate(harness)
+    await drain()
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("stays quiet when the active copy is local", async () => {
+    const harness = makeHarness()
+    harness.pluginCheck.mockResolvedValueOnce(checkResult({ type: "local", path: "/repo/src" }))
+
+    active = await activate(harness)
+    await drain()
+
+    expect(active.toasts).toEqual([])
+  })
+
+  test("a failed check is ignored", async () => {
+    const harness = makeHarness()
+    harness.pluginCheck.mockRejectedValueOnce(new Error("server not ready"))
+
+    active = await activate(harness)
+    await drain()
+
+    expect(active.toasts).toEqual([])
   })
 })
