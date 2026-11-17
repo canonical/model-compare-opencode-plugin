@@ -1,6 +1,7 @@
 # model-compare-opencode-plugin
 
-![NPM Version](https://img.shields.io/npm/v/model-compare-opencode-plugin)
+<a href="https://www.npmjs.com/package/model-compare-opencode-plugin">
+  <img src="https://img.shields.io/npm/v/model-compare-opencode-plugin" /></a>
 
 An [OpenCode](https://opencode.ai) v2 plugin that keeps three model aliases pointed at the best value-for-money OpenRouter picks from [model-compare.dev](https://model-compare.dev/) (GitHub: [canonical/model-compare](https://github.com/canonical/model-compare)).
 
@@ -62,7 +63,7 @@ model: openrouter/model-compare/quality
 Or pass an alias on the command line for headless runs:
 
 ```sh
-opencode run --model "openrouter/model-compare/price" "Summarize test failures"
+opencode run --model "openrouter/model-compare/price" "Fix bugs"
 ```
 
 Note that an agent's frontmatter `model` applies to subagent launches everywhere and to primary agents selected in the TUI; headless `opencode run --agent ...` runs use the root default or `--model` instead.
@@ -135,10 +136,10 @@ In OpenCode's UI, selectable depths are called **variants** (`provider/model#var
 ## Development
 
 ```sh
-npm ci                     # install dependencies
-npm run dev                # launch OpenCode in an isolated scratch config pointing at ./src
-npm test                   # run hermetic unit + vendored-script conformance suites
-npm run build              # precompile src/tui.tsx -> dist/tui.js
+npm ci         # install dependencies
+npm run dev    # launch OpenCode in an isolated scratch config pointing at ./src
+npm test       # run hermetic unit + vendored-script conformance suites
+npm run build  # precompile src/tui.tsx -> dist/tui.js
 ```
 
 To test a local checkout manually in `opencode.jsonc`, set `"package": "./src"` (restart OpenCode after editing source files, and prefer `npm run dev` if the npm package is installed globally so duplicate plugin IDs cannot shadow `./src`).
