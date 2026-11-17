@@ -1,23 +1,23 @@
 # model-compare-opencode-plugin
 
-An [OpenCode](https://opencode.ai) v2 plugin that picks the best value-for-money OpenRouter model from [canonical/model-compare](https://github.com/canonical/model-compare)'s ranking, for three priorities: `balanced`, `price`, `quality`. Ranking data comes from a vendored copy of upstream's `model_compare.py` (default) or the published `catalog.json`.
+![NPM Version](https://img.shields.io/npm/v/model-compare-opencode-plugin)
 
-Each priority is a live alias inside the existing OpenRouter provider — no new provider, no new credentials:
+An [OpenCode](https://opencode.ai) v2 plugin that keeps three model aliases pointed at the best value-for-money OpenRouter picks from [model-compare.dev](https://model-compare.dev/) (GitHub: [canonical/model-compare](https://github.com/canonical/model-compare)).
+
+Each priority is registered inside your existing `openrouter` provider — no extra provider setup and no separate credentials:
 
 | Alias | Resolves to |
 |---|---|
-| `openrouter/model-compare/balanced` | best all-round value pick |
-| `openrouter/model-compare/price` | best price pick |
-| `openrouter/model-compare/quality` | best quality pick |
+| `openrouter/model-compare/balanced` | Best all-round value pick |
+| `openrouter/model-compare/price` | Best price pick (bulk or mechanical work) |
+| `openrouter/model-compare/quality` | Best quality pick (planning or code review) |
 
-The alias re-points at the current pick while OpenCode runs (refresh every 30 minutes, data cache 6 hours). It also pins the catalog's scored reasoning effort on each request, so the model runs at the depth its `quality` score was measured at. OpenCode's model picker shows it as `Model Compare: <priority> → <pick>`, with `(fallback)` while the fallback is serving and `(unavailable)` when the alias is disabled. The alias name deliberately carries no catalog effort or alternative: OpenCode shows the selected variant itself, and a baked-in depth would not follow your `#variant` choice.
-
-**Effort vs variant.** The model-compare catalog and the request body call this reasoning level the *effort* (`quality_effort`, pinned as `reasoning.effort`); OpenCode calls the selectable model option a *variant* (`provider/model#variant`). The alias byline shows only the pick; the report dialog's status line uses “variant” and shows the highlighted model's variant.
+While OpenCode runs, the plugin refreshes rankings every 30 minutes (caching catalog data for 6 hours), steers alias requests to the backend endpoints that earned the model its rank, and pins the reasoning depth behind its quality score. OpenCode sessions display the aliases as `Model Compare: <priority> → <pick>` (with `(fallback)` when running on your fallback model, or `(unavailable)` when disabled).
 
 
 ## Install
 
-Add a `plugins` entry to `opencode.jsonc` (project or global):
+Add `model-compare-opencode-plugin` (published on npm at [model-compare-opencode-plugin](https://www.npmjs.com/package/model-compare-opencode-plugin)) to `opencode.jsonc` (project or global):
 
 ```json
 {
@@ -35,12 +35,12 @@ Add a `plugins` entry to `opencode.jsonc` (project or global):
 }
 ```
 
-All options are optional — see [Configuration](#configuration). The package is on npm; OpenCode resolves and loads it itself. The terminal-UI half ships precompiled (`dist/tui.js`): OpenCode compiles plugin JSX itself only for local sources — files under a `node_modules` directory skip its Solid JSX transform and would fall back to a React compile that cannot resolve — so the published package must not ship raw JSX. To run a checkout of this repo instead, see [Development](#development).
+OpenCode downloads and loads the npm package automatically, and shows a startup toast whenever a newer plugin version is ready to install via `/plugins`. All `options` are optional — see [Configuration](#configuration).
 
 
-## Usage
+## Use
 
-Point sessions at an alias — as the root default in `opencode.jsonc`:
+Set an alias as your default model in `opencode.jsonc`:
 
 ```json
 {
@@ -49,7 +49,7 @@ Point sessions at an alias — as the root default in `opencode.jsonc`:
 }
 ```
 
-Per agent (in the `.md` frontmatter):
+Bind specific subagents (or TUI-selected primary agents) in their `.md` frontmatter:
 
 ```md
 ---
@@ -59,174 +59,93 @@ model: openrouter/model-compare/quality
 ---
 ```
 
-Or via `--model`:
+Or pass an alias on the command line for headless runs:
 
+```sh
+opencode run --model "openrouter/model-compare/price" "Summarize test failures"
 ```
-opencode run --model "openrouter/model-compare/price" "msg"
-```
+
+Note that an agent's frontmatter `model` applies to subagent launches everywhere and to primary agents selected in the TUI; headless `opencode run --agent ...` runs use the root default or `--model` instead.
 
 
-**Where the alias binds.** An agent's `model` applies to subagent launches everywhere, and to primary agents only when you select the agent in the TUI. Headless runs (`opencode run --agent …`) and server-side agent switches do **not** apply it — the root default (or `--model`, or `/use-best`) governs.
+### Slash commands
 
-Commands:
-
-- `/use-best [priority]` — switch the session to `openrouter/model-compare/<p>` (defaults to `defaultPriority`). Refuses a disabled alias.
-- `/model-compare` — top 5 per priority with scores and data age; each line also shows the reasoning effort behind `quality` (`· high`) and the best selectable measured alternative (`· alt max 56.0`). Priorities whose `weights` override actually takes effect are labelled `(custom weights)` with recomputed scores, and each alias's current pick is marked `← current pick`. The output is a synthetic message (`resume: false`): it costs no model turn and, in a headless session, surfaces in the transcript at the next turn. In the TUI it opens the report dialog instead, with model, quality and price columns and a status line that follows the cursor and shows the highlighted model's variant.
+- `/use-best [priority]` — switch the current session to `openrouter/model-compare/<priority>` (case-insensitive; defaults to `defaultPriority` and refuses to switch to a disabled alias).
+- `/model-compare` — inspect the top 5 models per priority (marking active picks with `← current pick` and recomputing `(custom weights)` scores when `weights` overrides apply). Opens the interactive report dialog in the TUI, and records a synthetic transcript summary (`resume: false`, costing no extra model turn) when run inside a session.
 
 
 ### Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| `alt+m` | picks dialog — all three priorities with their current picks |
-| `alt+u` | switch the session to the default priority's pick (the `/use-best` default); on the opening screen it creates a session bound to it |
-| `alt+e` | toast the last response's served endpoint, alias responses only (`!` prefix flags a downgrade — not in the steering order) |
-| `alt+shift+m` | report dialog — the top-5 table with a cursor-following variant status line; `return` switches the session to the highlighted model at the variant its status line advertises (`#max`, …), falling back to the bare model when the host's own registry does not offer that variant |
-| `return` | select the highlighted row (picks dialog: switch to that priority) |
-| `esc` | close the dialog |
+| `alt+m` | Open the current-picks dialog for `balanced`, `price`, and `quality` |
+| `alt+shift+m` | Open the top-5 report dialog (same as `/model-compare`) |
+| `alt+u` | Switch the session to your `defaultPriority` pick (same as `/use-best`) |
+| `alt+e` | Show a toast with the endpoint, quantization, effort, and steering status of the last alias reply |
 
-Both dialogs open anywhere — including the opening screen, where no session exists yet. There, picking a row (a priority in the picks dialog, a model in the report) creates a new session already bound to that model and opens it; merely opening a dialog never creates a session. With a session open, a pick switches that session as before.
-
-Status: the footer shows `MC: balanced → <pick>` (balanced only — `disabled`/`unavailable`/`(fallback)` as applicable; all three priorities live in the picks dialog). The picker's alias name carries only the pick (plus the fallback marker); the report dialog's status line carries the variant. The footer stays a compact served-model line. Toasts announce `/use-best` outcomes and pick changes (never for the first observation after load), the `alt+e` served endpoint, and the cannot-steer notice — see [Steering and served endpoints](#steering-and-served-endpoints). Headless, command feedback is synthetic transcript messages at the next turn; the steering toasts have no headless surface.
+Both dialogs and `alt+u` also work on OpenCode's opening screen before a session exists: selecting a priority or model creates and opens a new session bound to that choice. The TUI footer shows `MC: balanced → <pick>` as a compact status indicator, and toasts announce pick changes when a refresh flips an alias.
 
 
 ## Configuration
 
-Options live under `plugins[].options`:
+Configure the plugin under `plugins[].options` in `opencode.jsonc`:
 
-| Option | Default | Meaning |
+| Option | Default | Description |
 |---|---|---|
-| `source` | `auto` | `auto`, `local`, or `remote`. `auto` uses the vendored script when `python3` 3.10+ is available, otherwise the remote catalog |
-| `defaultPriority` | `balanced` | Priority used by `/use-best` with no argument |
-| `fallback` | unset | `openrouter/<id>` used when no pick is available. Only OpenRouter models work: the alias's `modelID` lives inside the `openrouter` provider. Runnability is checked at each resolution |
-| `weights` | upstream | Partial overrides per named priority (`quality`, `price`, `context`, `age`), merged with upstream's weights and renormalized to sum 1 |
-| `pinDays` | `14` | Age in days after which a pick is re-evaluated |
-| `minLead` | `0.03` | Score lead needed to replace a pinned pick |
-| `catalogURL` | published catalog | Remote source URL. The catalog is published at `https://model-compare.dev/catalog.json` — the plugin's built-in default, fetched directly over https. (The old `https://canonical.github.io/model-compare/catalog.json` home redirects to a plaintext `http://` target; the plugin fails closed on any redirect that leaves https.) Only point it at a source you trust: it decides which models can be picked |
-| `scriptPath` | vendored copy | Development override for a local `model_compare.py` |
+| `source` | `"auto"` | `"auto"`, `"local"`, or `"remote"`. `"auto"` runs the vendored Python 3.10+ script when available and falls back to the remote catalog otherwise |
+| `defaultPriority` | `"balanced"` | Priority used by `/use-best` (without arguments) and `alt+u` |
+| `fallback` | unset | `openrouter/<model-id>` (OpenRouter models only, without a `#variant` suffix), checked for runnability on each refresh and used when no ranked pick is available |
+| `weights` | from `model-compare` | Partial per-priority overrides (`quality`, `price`, `context`, `age`), merged with `model-compare` defaults and renormalized |
+| `pinDays` | `14` | Days before a pinned pick is re-evaluated from scratch |
+| `minLead` | `0.03` | Score lead (`0`–`1` scale) required to unseat a pinned pick early |
+| `catalogURL` | `https://model-compare.dev/catalog.json` | HTTPS URL for `remote` (and `auto` fallback); point this only at a source you trust |
+| `scriptPath` | vendored copy | Path override for testing a local `model_compare.py` |
 
-A present-but-invalid value logs a warning and applies the default (`weights` drop invalid entries individually; the valid remainder applies). Absent options apply defaults silently. Setup never throws; the aliases stay functional.
-
-
-## Pinning and fallback
-
-Per priority the plugin keeps one pin/last-known-good record in plugin storage, keyed by the effective weights so different weight configurations don't collide. With a fresh catalog:
-
-- No pin: adopt the best candidate.
-- Pinned model gone or not runnable: switch to the best candidate now.
-- Pin older than `pinDays`: re-evaluate (which may re-adopt the same model; `since` resets on every adoption).
-- Otherwise: switch only when the best candidate leads the pinned pick by at least `minLead` (upstream's 0–1 score scale).
-
-Resolution order: pin (if runnable) → best runnable candidate → `fallback` (if runnable) → the alias is disabled. The fallback is never stored as a pin. Pins are advisory: concurrent OpenCode processes refresh independently, last writer wins.
+To avoid constant model churn as prices twitch, each priority pins its chosen model and switches early only if the model disappears, becomes unrunnable, or trails a newcomer by at least `minLead`. Invalid option values log a warning and fall back to their defaults without breaking setup.
 
 
 ## Steering and served endpoints
 
-Requests made through one of the three aliases carry the resolved pick's routing: the catalog's per-model `steering` block is injected into the request body under OpenRouter's `provider` key, so the call is routed onto the endpoints whose pricing the ranking actually ranked — not onto whatever OpenRouter's default routing picks, which can be a sub-default-quantization endpoint at a price the ranking never saw.
+On OpenRouter, a single model ID is often hosted by several providers at different quantizations and rates. When a session uses one of the three `model-compare` aliases, the plugin injects the catalog's `steering.provider` routing block (`order`, `ignore`, `quantizations`, and `allow_fallbacks`) into each OpenRouter request, so your calls go to the baseline-eligible endpoints behind the ranking.
 
-The block comes from the catalog, whichever source produced it: the vendored script derives it from the same per-model endpoint data its pricing uses, and the published catalog carries it ready-made. Only the block's `provider` sub-object is injected — its top-level `model` field never reaches the body — and the routing object is built field by field:
+Steering stays out of your way when you don't want it:
+- **Aliases only:** picking a concrete model ID directly leaves routing untouched, even if it happens to be the same model an alias currently points to.
+- **Explicit `provider` wins:** if a request body already sets `provider`, the plugin leaves it alone.
+- **Graceful fallback:** if no catalog data is available (for example, while offline on `options.fallback`), requests proceed with OpenRouter's default routing, and the TUI shows a one-time notice.
 
-- `order` — the endpoints the ranking priced, cheapest blended price first; eligible endpoints whose price can't be computed are appended last rather than dropped.
-- `ignore` — the live endpoints the ranking excluded, so OpenRouter cannot route onto pricing it never ranked (sub-default quantizations, schedule-gate failures, variants).
-- `quantizations` — the precision floor: the model's default precision and anything more precise among its live endpoints. The key is omitted entirely when the model has no default precision — never sent as an empty list, which would exclude every endpoint.
-- `allow_fallbacks` — always `true`: when nothing in `order` can serve, OpenRouter may still route outside the list.
-
-The rules, and the exceptions:
-
-- **Aliases only.** Steering fires only when the session's model is one of the three aliases and the request's model is that alias's current pick. What decides is the request's model reference: alias references steer, concrete references never do — a model you picked directly is untouched even when it is the exact model an alias currently resolves to. Primary turns and compaction alike are steered; auxiliary calls that run a different model (title generation) are not.
-- **A pre-existing `provider` key wins.** If the request body already carries a `provider` key — routing you or a provider integration configured — the plugin does not inject; it never clobbers routing it did not choose.
-- **No steering data, no injection.** When the plugin has no catalog source, or the current pick's catalog entry carries no `steering` block, the request proceeds untouched: OpenRouter's default routing applies and the run completes normally — unsteered, not failed. With no catalog source at all, the TUI says so once per session, on the first alias request that has a pick to steer: `cannot steer this session; OpenRouter default routing applies` (skipped when that request already carries its own `provider` — then default routing is not what applies). Headless runs render no toasts; the routing behavior is identical. A disabled alias steers nothing and toasts nothing; what serves then is the binding's own fallback behavior (see [Troubleshooting](#troubleshooting)).
-- **Always-on.** No option turns steering off. It is what makes the plugin's value promise — the ranked price is what you pay — true.
-
-`order` is a preference list, not a pinned destination: OpenRouter works down the list and serves from whichever ranked endpoint can take the call — which one serves is OpenRouter's decision, and with fallbacks allowed it can even land outside the list.
-
-**Which endpoint served a call.** Three ways to check:
-
-- The `alt+e` toast (see [Keyboard shortcuts](#keyboard-shortcuts)) — the current session's last primary alias response's served endpoint: `last response served by <endpoint>`, or `! served by <endpoint> — not in steering order` when the served provider matched no entry of the steering order actually applied. The report dialog's footer carries the same capture as `last response: <model> @ <endpoint>`, under the note `routing steered to <quant> endpoints (aliases only)`.
-- The response body — every OpenRouter response names its serving endpoint in the `provider` field.
-- OpenRouter's dashboard — per-request endpoint records.
-
-The alt+e capture is best-effort by design, and alias-scoped: only a session whose model is one of the three aliases has responses peeked and recorded — a direct pick's or another agent's response is never read, let alone modified. The plugin peeks at only the first 4 KB of the response body — a pass-through read; the body itself flows byte-for-byte. Streaming responses carry `provider` in the first chunk, so the peek normally catches them; a non-streaming response whose `provider` field sits beyond the peek window is forwarded uncaptured, and `alt+e` then toasts nothing. The response body's `provider` field and OpenRouter's dashboard remain the authoritative verification paths.
+Press `alt+e` after an alias reply to see which provider served it, how its quantization and reasoning effort compare to the model's defaults, and whether the provider was in the steered `order` list (`steering: in order` vs. `steering: ! NOT in order`).
 
 
 ### Reasoning depths
 
-The catalog's `reasoning.depths` records are the measured reasoning efforts behind a model's `quality` score: each row carries the effort (`max`, `high`, …), the AA intelligence index measured at that effort, and the AA `$/task` cost. `quality` is the index at `quality_effort` — the depth the ranking scored — and the plugin pins that effort on alias requests that do not already set a reasoning field or an explicit `#variant` (`reasoning: { effort }`), so the alias runs at the depth its score represents. The depths are advisory metadata, not ranking input: they explain the score and the alternative, they do not change the pick.
+Artificial Analysis (used for model-quality scores) benchmarks reasoning models across multiple thinking budgets (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). `model-compare` scores each model at its best measured depth that OpenRouter supports (`quality_effort`), and the plugin pins `reasoning: { effort }` on alias requests to match — unless you already selected an explicit `#variant` (such as `openrouter/model-compare/balanced#high`) or set `reasoning` in the request body.
 
-The `/model-compare` line's `alt` label shows the best **selectable** measured alternative: the highest-index selectable effort that scores strictly higher than the scored depth (`alt max 56.0`). It is empty when the scored depth is already the best measured selectable depth — the normal case for the plugin's own sources (the vendored `--catalog` run and the published remote). A user-pointed `catalogURL` can serve an explicit-effort document where a deeper row scores higher; the label then names it.
-
-Only efforts OpenRouter can actually select are advertised: an effort must appear in the model's expanded `supported_efforts`, or be the single-state `#none` toggle. An AA row for an unlisted effort is display-only and never becomes an `alt`. The catalog's `reasoning` sentinel is a producer label for a single-state reasoning model, not a gateway value, and is never sent. An explicit `#variant` selection, or a body that already sets `reasoning`/`reasoning_effort`, wins and is never overwritten.
-
-
-## Data sources
-
-- `auto` — vendored `vendor/model_compare.py` run with `python3` (no shell, 60 s timeout, minimal environment); degrades to remote when python3 is missing or the run fails.
-- `local` — the vendored script only; failures are reported and the pin/last-known-good pick is kept.
-- `remote` — HTTPS fetch of `catalogURL` with a 6-hour cache (upstream republishes every 6 hours).
-
-The last validated catalog is persisted, so ranking and `/model-compare` work offline after a restart. The cache is keyed by source (URL or script path), so changing the source never serves the previous source's data. The persisted record also carries a catalog-era version: upgrading to 0.6.2 (doc-cache records moved to v2 for the schema-v6 era) discards the cached catalog, so the first launch after the upgrade re-acquires and the aliases run on the configured fallback until that first refresh succeeds. Script exit code 2 means "no candidates" *or* an argparse usage error — never read it as "no candidates" alone.
-
-**Vendored pin:** `vendor/model_compare.py` is byte-identical to upstream `v0.7.0` (`vendor/UPSTREAM.json` records repo, tag, commit, sha256). The catalog is schema v6 (since upstream 0.7.0): `quality` is the AA intelligence index at the model's best measured selectable reasoning effort (the highest AA index at an effort OpenRouter supports, ties to the deeper effort), and every entry carries `quality_effort` plus a `reasoning` block (`default_effort`, the expanded `supported_efforts`, the raw flags, and the measured `depths` with AA `$/task` — see [Reasoning depths](#reasoning-depths)). The plugin accepts schema v6 ONLY — `validateCatalog` rejects anything else — and releases are gated on the live remote serving v6 (the release-gate check pipes `https://model-compare.dev/catalog.json` through `scripts/canary-check.mjs`, which fails closed when the served document is not the expected schema). Each alias request pins exactly the pick's `quality_effort` in its body (`reasoning: { effort }`), so the alias runs at the depth its score represents — which since 0.7.0 may be a deeper effort than the model's OpenRouter default (`quality_effort` is the scored depth, not `default_effort`); an explicit `#variant` selection, or a body that already sets `reasoning`/`reasoning_effort`, wins and is never overwritten. The catalog's `reasoning` sentinel is display-only and never sent to the gateway. Effective-tier pricing semantics still apply: `pricing` scalars hold effective-tier values — the tier in effect at 1M-token prompts — so models with OpenRouter price overrides are ranked at what a long session actually pays.
-
-**Vendored 0.7.0 cold-cache network profile:** since 0.4.0 the vendored script performs per-model endpoint-pricing fetches when building a fresh catalog (78 candidates in the recorded run). Each fetch fails closed per model — after the script's internal retries, a failed endpoint fetch drops that model and the catalog shrinks silently (429-class responses raise without retry) — so a degraded network costs pool coverage, not pricing correctness. Unkeyed runs hydrate quality from the published catalog (one fetch of `https://model-compare.dev/catalog.json`, cached under `published-catalog`; keyed runs consult the AA API — the primary quality source — and never fetch the published catalog); every quality hydration fails closed to "no quality data" per model, and a missing record at the selected effort shows `-` rather than borrowing another effort's score. A cold cache under a slow network can exceed the plugin's 60-second local budget, in which case the plugin warns and falls back (`auto` → remote, `local` → its cached document).
-
-**Upgrading the pin** — reviewed PRs only; nothing merges automatically:
-
-1. `node scripts/sync-vendor.mjs <tag>` — fetches the script at that commit, reports the sha256 change, re-pins `UPSTREAM.json`, prints the matching CHANGELOG section (`--check` verifies offline).
-2. Conformance tests check `--version`, schema v6, required fields, recomputed `overall` scores, and the standard-library-only import allowlist.
-3. The upgrade PR body lists script lines touching imports, URLs, environment variables, subprocess calls and file writes, for reviewer attention.
-4. Release with a changelog line naming the upstream tag; users run `opencode plugin update` (OpenCode checks but doesn't apply).
-
-A scheduled workflow opens a draft upgrade PR when upstream publishes a newer release (never a downgrade); a nightly canary exercises the vendored script against live upstream data and asserts the generated catalog is schema v6 (`scripts/canary-check.mjs` pins `EXPECTED_SCHEMA_VERSION = 6` and exits nonzero on any other version); releases additionally gate on the live remote itself (see the publishing gates below); a weekly drift check compares the vendored sha256 against upstream's pinned commit and the published rankings against the published scores.
+In OpenCode's UI, selectable depths are called **variants** (`provider/model#variant`). The `alt+shift+m` report dialog lists each model's scored depth in its `variant` column, and pressing `return` binds both the model and that variant when supported.
 
 
 ## Troubleshooting
 
-- **`model-compare: no ranking data for openrouter/model-compare/<p>`** — an agent whose `model` is that alias made a primary request while the alias was disabled. The guard aborts the request — even when the root-governed effective model is healthy — to protect the configuration's intent. Set `options.fallback` or fix the data source. Primary requests only; title/compaction/generation are untouched.
-- **Primary run answered with a model I didn't configure** — the root default (and `/use-best`-switched sessions) fall back silently to OpenCode's choice when the alias is disabled. Agent `model` doesn't apply on headless primary runs anyway — see the binding note above.
-- **Where are the plugin's warnings?** Nowhere, currently: `opencode serve` prints nothing to stdio and plugin `console.warn` reaches no log. The visible diagnosis surface is `/model-compare` — its data-age and no-data lines.
-- **A pick change takes a minute or two to land, and runs started meanwhile wait.** When a pick changes (at most once per 30-minute refresh), the plugin replays OpenCode's provider/model/agent registries; the harness measured ~90–105 s, with runs started during the replay blocking. Nothing is wrong.
-- **`Model unavailable: openrouter/model-compare/<p>`** — a subagent configured with a disabled alias; OpenCode fails the launch before any request, so the guard is not involved.
-- **Data age in `/model-compare`** — the plugin's own acquisition time of the document, not upstream's `generated_at` (set at build time even when serving inputs from cache).
-- **No aliases at all** — the aliases live inside the `openrouter` provider; if it is not connected in the project, they cannot be created. The plugin warns at setup and on every refresh; primary runs fall back silently.
-- **`Cannot find package 'react'` for `src/tui.tsx` in the CLI log** — an OpenCode install of a release that still shipped the TUI half as raw TSX: OpenCode's Solid JSX transform skips `node_modules` paths, so the installed TSX fell to a React compile. Update the plugin to a release that ships the precompiled `dist/tui.js` entry (the server half is unaffected either way). If the warning persists after updating, restart the TUI so the new package generation is picked up.
+- **`model-compare: no ranking data for openrouter/model-compare/<p>`** — an agent configured with that alias tried to run a primary turn while the alias was disabled (including headless `opencode run --agent …`, where the guard still inspects the agent's frontmatter `model`). Configure `options.fallback` or check your network/Python setup. (Root-default sessions fall back to OpenCode's own choice instead of aborting.)
+- **`Model unavailable: openrouter/model-compare/<p>`** — a subagent configured with that alias launched while the alias was disabled; OpenCode rejects the launch before any request starts.
+- **No aliases appear in the picker** — make sure the `openrouter` provider is connected in your OpenCode setup; the aliases are registered inside it.
+- **A pick change takes ~90–105 seconds to settle** — when a 30-minute refresh switches a pick, OpenCode reloads its provider, model, and agent registries; runs started mid-reload wait until it finishes.
+- **Checking plugin health** — `opencode serve` suppresses plugin `console.warn` output, so run `/model-compare` to check catalog data age (when the plugin itself acquired the catalog, not `model-compare`'s `generated_at` timestamp) or diagnose missing data.
 
 
 ## Development
 
-Run a checkout instead of the npm package:
-
-```json
-{
-  "plugins": [
-    {
-      "package": "./src",
-      "options": {
-        "source": "auto"
-      }
-    }
-  ]
-}
-```
-
-OpenCode's local loader resolves a directory target strictly as `<dir>/index.*` — `exports` are ignored for local paths, and file targets are rejected. `src/` has the physical entry files (`src/index.ts`, `src/tui.tsx`); the plugin's imports resolve from the repo's `node_modules` (`npm ci` once at the repo root). The repo ships this setup as [`.test/`](.test/README.md). Two caveats: the watcher only watches package-style entries, so source edits need an OpenCode restart; and a bare package name is always npm-installed by OpenCode — it is not read from `node_modules` — so local testing must use the directory form.
-
 ```sh
-npm run dev                                           # launch the TUI against this checkout
-npm test                                              # unit + vendored-conformance suites (hermetic)
-npm run build                                         # regenerate dist/tui.js from src/tui.tsx
-MC_INTEGRATION=1 npx vitest run tests/integration/    # live-server suite (opt-in)
+npm ci                     # install dependencies
+npm run dev                # launch OpenCode in an isolated scratch config pointing at ./src
+npm test                   # run hermetic unit + vendored-script conformance suites
+npm run build              # precompile src/tui.tsx -> dist/tui.js
 ```
 
-- `npm run dev` writes a scratch project under `/tmp/opencode/model-compare-dev`, points its plugin entry at this checkout's `src/`, hides the global OpenCode config for the run (so an installed `model-compare-opencode-plugin` cannot shadow the local copy), and runs `opencode --standalone` there. The isolation is config-only: the scratch project shares your OpenCode data directory (auth, plugin state, sessions), so alias switches made in the dev session rewrite your live aliases. Pass extra flags after `--` (for example `npm run dev -- --auto`), or use `--print-config` to inspect the generated project config. `MC_DEV_DIR` overrides the scratch location. Source edits need an OpenCode restart.
-- Local development loads `src/` directly and needs no build; the *published* package does — OpenCode's Solid JSX transform skips `node_modules` paths, so the npm-installed raw TSX cannot load (see [Install](#install) and the troubleshooting entry). `npm run build` precompiles `src/tui.tsx` through the same Babel pipeline as the host's loader (taken from the pinned `@opentui/solid`) into `dist/tui.js`, rebasing relative imports from `src/`-relative to `dist/`-relative; `prepublishOnly` runs it, and CI builds before the packaging check. `dist/` is regenerated, never committed.
-- The integration files skip unless `MC_INTEGRATION=1`, so plain `npm test` stays hermetic. The suite drives a real `opencode serve` on 127.0.0.1:14721 and needs the `opencode` CLI and `python3` (skips cleanly when either is missing); one case needs network access and the `sqlite3` CLI.
-- `node scripts/pack-smoke.mjs` (also in CI, after `node scripts/build-tui.mjs`) packs the plugin and checks the tarball against the packaging list (files, `exports`, relative imports, and that the TUI artifact is precompiled — no react import). It does **not** load the package in OpenCode — install the tarball into a scratch project and confirm OpenCode loads it before publishing.
-- Publishing: cut a GitHub release tagged `vX.Y.Z` and `.github/workflows/release.yaml` stages the package on npm through trusted publishing (tokenless OIDC — no token secret; the npmjs.com trusted-publisher entry must name `release.yaml`, the `canonical/model-compare-opencode-plugin` repository and the `release` environment, with "Allow npm publish" and "Allow npm dist-tag" unchecked — stage-only, npm's recommended posture). Nothing goes live until a maintainer approves it with 2FA on npmjs.com (package page → Staged Packages) or via `npm stage approve`. The workflow fails closed when the tag does not match `package.json`'s version, and the gates (build, typecheck, tests, pack-smoke, live-remote canary) run before staging.
-- `fixtures/catalog-v0.7.0.json` is the sole contract fixture — a recorded schema-v6 catalog; `fixtures/catalog-no-quality.json` is derived from it by `scripts/make-no-quality-fixture.py` (the vendored script's own quality-blind weights, so its scores are internally consistent). No pre-v6 fixture exists; the v6-only gate rejects one. `node scripts/sync-vendor.mjs --check` verifies the pin's sha256 offline.
-- Repo layout: `src/core/` (pure ranking/pinning), `src/sources/` (local + remote acquisition), `src/opencode/` (aliases, guard, commands, storage, refresh), `dist/` (generated `tui.js` artifact, gitignored), `vendor/` (pinned upstream script), `tests/{unit,conformance,integration}`.
+To test a local checkout manually in `opencode.jsonc`, set `"package": "./src"` (restart OpenCode after editing source files, and prefer `npm run dev` if the npm package is installed globally so duplicate plugin IDs cannot shadow `./src`).
+
+Internal architecture, pin storage, the 4 KB pass-through response peek, Solid/OpenTUI precompilation, vendored script upgrades, and staged npm publishing are documented in [DESIGN.md](DESIGN.md).
 
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). The vendored `vendor/model_compare.py` comes from [canonical/model-compare](https://github.com/canonical/model-compare) (GPL-3.0).
+GPL-3.0 — see [LICENSE](LICENSE). Includes `vendor/model_compare.py` from [canonical/model-compare](https://github.com/canonical/model-compare) (GPL-3.0).
