@@ -137,8 +137,8 @@ In OpenCode's UI, selectable depths are called **variants** (`provider/model#var
 
 ```sh
 npm ci         # install dependencies
-npm run dev    # launch OpenCode in an isolated scratch config pointing at ./src
-npm test       # run hermetic unit + vendored-script conformance suites
+npm run dev    # launch OpenCode with scratch config pointed at ./src
+npm test       # run hermetic unit + vendored-script conformance tests
 npm run build  # precompile src/tui.tsx -> dist/tui.js
 ```
 
