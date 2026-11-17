@@ -14,3 +14,7 @@ __pycache__/
 
 # Local test config: points plugins at ./src for in-repo test sessions
 /opencode.json
+
+# Superpowers docs
+/docs/superpowers/
+
