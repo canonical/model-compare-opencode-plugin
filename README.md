@@ -86,6 +86,8 @@ Note that an agent's frontmatter `model` applies to subagent launches everywhere
 
 Both dialogs and `alt+u` also work on OpenCode's opening screen before a session exists: selecting a priority or model creates and opens a new session bound to that choice. The TUI footer shows `MC: balanced → <pick>` as a compact status indicator, and toasts announce pick changes when a refresh flips an alias.
 
+OpenCode currently keeps the prompt's model selection separate from the session's, so a plugin-initiated alias switch does not always reach the prompt ([upstream bug #57771](https://github.com/anomalyco/opencode/issues/57771)). When Model Compare detects that the switch did not follow, it warns and points at the `ctrl+x m` → **Select model** picker, which does update the prompt selection. Press `d` in the warning to stop showing it; that opt-out is stored durably.
+
 
 ## Configuration
 

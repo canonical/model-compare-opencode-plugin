@@ -184,6 +184,11 @@ export const ModelCompare = Rpc.define({
           sessionID: { type: "string" },
           message: { type: "string" },
           ok: { type: "boolean" },
+          // The priority a SUCCESSFUL switch moved to. Refusals carry no
+          // target (nothing was switched), so the field is optional; the TUI
+          // uses it to check whether its prompt selection followed the
+          // switch (OpenCode bug #57771).
+          priority: { type: "string", enum: ["balanced", "price", "quality"] },
         },
         required: ["sessionID", "message", "ok"],
         additionalProperties: false,

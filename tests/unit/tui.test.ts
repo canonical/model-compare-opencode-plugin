@@ -15,7 +15,7 @@
 // registration is captured, dialogs are driven through the modal keymap
 // layer's commands, and assertions go to the host calls the plugin makes
 // (session.create/switchModel/command, router.navigate, toasts, dialogs).
-import { createRoot } from "solid-js"
+import { createRoot, onCleanup } from "solid-js"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { ModelCompare } from "../../src/rpc"
 import { aliasId, useBestNotice, useBestRefusal } from "../../src/opencode/usebest"
@@ -200,6 +200,12 @@ async function drain(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+// A real-time wait for the warning check's settle loop (it polls the data
+// layer for the committed session model before judging the prompt).
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 // A mocked TUI plugin context. `state.route` is the router's current route —
 // undefined is the opening screen (no session); a session route carries its
 // id. Every host surface the TUI touches is a vi.fn() the tests assert on.
@@ -208,6 +214,7 @@ function makeHarness() {
   const toasts: Array<{ message: string; variant: string }> = []
   const slots: Array<{ append: string; render: () => unknown }> = []
   const layerFactories: Array<() => unknown> = []
+  const activeLayers = new Set<() => unknown>()
   const dialogRenders: Array<() => unknown> = []
   const dialogSets: Array<unknown> = []
   // The host dialog's close callbacks, in show() order: a dialog's close()
@@ -223,6 +230,21 @@ function makeHarness() {
   // plugin's own (pinned by the alt+e stale-lookup test). Tests re-seed s1
   // to a worktree directory to pin cross-location routing.
   const sessions = new Map<string, string>([["s1", "/repo"]])
+  // The data layer's session MODEL (`data.session.get(...).model`), updated
+  // by switchModel the way the host's session.model.selected event updates
+  // it. Undefined means the session has no model yet.
+  const sessionModels = new Map<string, { providerID: string; id: string }>()
+  // The prompt's selected model (`ui.model.current`): the TUI's own state,
+  // deliberately SEPARATE from the session model — that separation is the
+  // OpenCode bug the warning dialog works around.
+  const promptModel: {
+    current: { providerID: string; modelID: string; variant?: string } | undefined
+  } = { current: { providerID: "openrouter", modelID: aliasId("balanced") } }
+  // The durable "Don't show again" preference (context.storage.store): one
+  // mutable object the plugin and the tests share. Starts empty so unseeded
+  // tests hydrate from options.initial, while pre-mutated tests keep their
+  // seeded value on the same object reference.
+  const preferences = {} as { warnMaskedSwitch: boolean }
   // The model registry PER DIRECTORY: the plugin's own /repo serves the
   // shared alias entries (with the concrete models' variant spaces); any
   // other directory is a location this instance has never synced, so list()
@@ -245,10 +267,18 @@ function makeHarness() {
       }),
     ),
     switchModel: vi.fn(
-      async (_input: {
+      async (input: {
         sessionID: string
         model: { providerID: string; id: string; variant?: string }
-      }) => {},
+      }) => {
+        // The host commits the switch and publishes session.model.selected;
+        // this fake applies that commit synchronously, so a warning check
+        // that waits for the session model sees it on its first read.
+        sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      },
     ),
     command: vi.fn(async (_input: { sessionID: string; name: string; text: string }) => ({})),
   }
@@ -311,6 +341,9 @@ function makeHarness() {
         }),
         clear: vi.fn(),
       },
+      model: {
+        current: vi.fn(() => promptModel.current),
+      },
     },
     theme: { surface: vi.fn(() => THEME) },
     // The host's live renderer: the TUI entry tracks its resize events for
@@ -333,8 +366,40 @@ function makeHarness() {
     keymap: {
       layer: vi.fn((factory: () => unknown) => {
         layerFactories.push(factory)
+        activeLayers.add(factory)
+        onCleanup(() => {
+          activeLayers.delete(factory)
+        })
         return () => {}
       }),
+      dispatch: vi.fn((_id: string) => {}),
+    },
+    // The durable TUI storage (the "Don't show again" preference). The
+    // fake store hydrates options.initial in-place when unseeded and hands
+    // the plugin the same mutable object the tests inspect; mutations are
+    // applied synchronously.
+    storage: {
+      store: vi.fn(
+        (
+          key: string,
+          options: { initial: { warnMaskedSwitch: boolean } },
+        ): readonly [
+          { warnMaskedSwitch: boolean },
+          (mutation: (draft: { warnMaskedSwitch: boolean }) => void) => Promise<void>,
+        ] => {
+          expect(key).toBe("preferences")
+          if (Object.keys(preferences).length === 0) {
+            Object.assign(preferences, options.initial)
+          }
+          return [
+            preferences,
+            async (mutation) => {
+              mutation(preferences)
+            },
+          ]
+        },
+      ),
+      memory: vi.fn(),
     },
     data: {
       listen: vi.fn((cb: (event: unknown) => void) => {
@@ -344,8 +409,11 @@ function makeHarness() {
       session: {
         get: vi.fn((sessionID: string) => {
           const directory = sessions.get(sessionID)
-          return directory === undefined ? undefined : { location: { directory } }
+          if (directory === undefined) return undefined
+          const model = sessionModels.get(sessionID)
+          return { location: { directory }, ...(model === undefined ? {} : { model }) }
         }),
+        sync: vi.fn(async (_sessionID: string) => {}),
       },
       location: {
         model: {
@@ -362,7 +430,7 @@ function makeHarness() {
     },
   }
 
-  return { state, toasts, slots, layerFactories, dialogRenders, dialogSets, closes, listenCallbacks, session, report, reportCalls, rpc, navigate, entries, sessions, modelRegistries, reportPayload, fireRenderer, rendererListeners, pluginCheck, ctx }
+  return { state, toasts, slots, layerFactories, activeLayers, dialogRenders, dialogSets, closes, listenCallbacks, session, report, reportCalls, rpc, navigate, entries, sessions, sessionModels, promptModel, preferences, modelRegistries, reportPayload, fireRenderer, rendererListeners, pluginCheck, ctx }
 }
 
 type Harness = ReturnType<typeof makeHarness> & {
@@ -397,13 +465,18 @@ async function activate(harness = makeHarness()): Promise<Harness> {
     if (found === undefined) throw new Error(`keymap command ${id} is not registered`)
     return found
   }
-  // The modal list-dialog layer appears only once a dialog has opened (the
-  // in-tree effect registers it on a scheduled run; the drain flushes it).
+  // Active modal dialog layer: registered by an in-tree effect while a dialog
+  // is open and removed via Solid onCleanup when disarmed. More than one
+  // active modal layer at a time is a lifecycle bug (conflicting bindings).
   const modalCommands = async (): Promise<Command[] | null> => {
     await drain()
-    const modal = harness.layerFactories.slice(globalCount).at(-1)
-    if (modal === undefined) return null
-    return (modal() as { commands: Command[] }).commands
+    const modals = [...harness.activeLayers]
+      .map((factory) => factory() as { mode?: string; commands: Command[] })
+      .filter((layer) => layer.mode === "modal")
+    if (modals.length > 1) {
+      throw new Error(`expected at most one active modal layer, got ${modals.length}`)
+    }
+    return modals[0]?.commands ?? null
   }
 
   return { ...harness, cleanup, disposeRender, command, modalCommands }
@@ -786,6 +859,457 @@ describe("the alt+u keybind", () => {
     expect(active.toasts).toEqual([
       { message: useBestNotice("balanced", "acme/alpha"), variant: "success" },
     ])
+  })
+})
+
+// ---- the masked-switch warning dialog --------------------------------------
+// OpenCode bug #57771: a plugin's session.switchModel updates the session,
+// but the TUI's prompt selection is its own state and keeps the previous
+// model, so the next submit silently sends there. The TUI half detects the
+// divergence after the switch lands and explains how to complete it from the
+// Select model picker. The dialog is styled (italic quoted phrases, a
+// clickable bug link) and carries a durable "Don't show again" preference.
+const BUG_URL = "https://github.com/anomalyco/opencode/issues/57771"
+
+// The warning dialog's rendered content: every text fragment in order, the
+// italic spans (the quoted phrases) and the links.
+function warningView(active: Harness): {
+  tree: FakeNode
+  text: string
+  texts: string[]
+  italics: string[]
+  links: Array<{ href: string; text: string }>
+} {
+  const tree = active.dialogRenders.at(-1)!() as FakeNode
+  const texts = treeTexts(tree)
+  const ofTag = (tag: string): FakeNode[] => {
+    const found: FakeNode[] = []
+    const walk = (node: FakeNode): void => {
+      if (node.tag === tag) found.push(node)
+      for (const child of node.children) walk(child)
+    }
+    walk(tree)
+    return found
+  }
+  return {
+    tree,
+    text: texts.join(""),
+    texts,
+    italics: ofTag("i").map((node) => treeTexts(node).join("")),
+    links: ofTag("a").map((node) => ({
+      href: String(node.props.href),
+      text: treeTexts(node).join(""),
+    })),
+  }
+}
+
+// A session whose TUI prompt still selects a concrete model: the state the
+// bug produces after a plugin switch.
+function maskedSwitchHarness(): ReturnType<typeof makeHarness> {
+  const harness = makeHarness()
+  harness.state.route = { type: "session", sessionID: "s1" }
+  harness.promptModel.current = { providerID: "openrouter", modelID: "acme/alpha" }
+  return harness
+}
+
+describe("the masked-switch warning", () => {
+  test("alt+u warns when the prompt selection did not follow the switch", async () => {
+    active = await activate(maskedSwitchHarness())
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    // The switch itself still succeeded and toasted; the warning explains
+    // why the prompt will not use it.
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: aliasId("balanced") },
+    })
+    expect(active.toasts).toEqual([
+      { message: useBestNotice("balanced", "acme/alpha"), variant: "success" },
+    ])
+    expect(active.dialogRenders).toHaveLength(1)
+    expect(active.dialogSets).toEqual([{ size: "medium", centered: true }])
+
+    const view = warningView(active)
+    expect(view.texts).toContain("Model Compare: switch not applied")
+    expect(view.text).toContain(
+      "To switch to 'Model Compare: balanced', select it from the 'Select model' picker (ctrl+x m).",
+    )
+    expect(view.text).toContain(`See OpenCode bug #57771: ${BUG_URL}`)
+    expect(view.italics).toEqual(["Model Compare: balanced", "Select model"])
+    expect(view.links).toEqual([{ href: BUG_URL, text: BUG_URL }])
+    expect(view.text).toContain("enter select model")
+    expect(view.text).toContain("d don't show again")
+    expect(view.text).toContain("esc dismiss")
+
+    // Layout: single 4-col horizontal inset on the body column, stacked text
+    // lines (no nested padded row box squishing the 50-col URL), and a
+    // wrapping footer row.
+    const [, bodyBox, footerBox] = view.tree.children
+    expect(bodyBox?.props).toMatchObject({
+      paddingLeft: 4,
+      paddingRight: 4,
+      flexDirection: "column",
+    })
+    expect(bodyBox?.children.map((child) => child.tag)).toEqual(["text", "text", "text"])
+    expect(footerBox?.props).toMatchObject({
+      paddingLeft: 4,
+      paddingRight: 4,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      columnGap: 2,
+      rowGap: 0,
+    })
+  })
+
+  test("no warning when the prompt already selects the target identity", async () => {
+    const harness = makeHarness()
+    harness.state.route = { type: "session", sessionID: "s1" }
+    harness.promptModel.current = { providerID: "openrouter", modelID: aliasId("balanced") }
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("no warning when the prompt model is undefined", async () => {
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = undefined
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("a provider mismatch with the same modelID still warns", async () => {
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = { providerID: "anthropic", modelID: aliasId("balanced") }
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1)
+  })
+
+  test("a variant-only difference is not a warning", async () => {
+    const harness = makeHarness()
+    harness.state.route = { type: "session", sessionID: "s1" }
+    harness.promptModel.current = {
+      providerID: "openrouter",
+      modelID: aliasId("balanced"),
+      variant: "high",
+    }
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("no warning when the session never confirms the switch", async () => {
+    const harness = maskedSwitchHarness()
+    // The switch resolves but the session data never publishes the new
+    // model: the divergence cannot be confirmed, so the warning stays silent
+    // rather than guessing.
+    harness.session.switchModel.mockImplementationOnce(async () => {})
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await sleep(250) // the settle loop's full budget
+
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("delayed async session confirmation warns once the session model settles", async () => {
+    const harness = maskedSwitchHarness()
+    harness.session.switchModel.mockImplementationOnce(async (input) => {
+      setTimeout(() => {
+        harness.sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      }, 25)
+    })
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run("quality")
+    await sleep(60)
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1)
+    expect(warningView(active).text).toContain("Model Compare: quality")
+  })
+
+  test("a cold session triggers data.session.sync once and warns when synced", async () => {
+    const harness = maskedSwitchHarness()
+    harness.sessions.delete("s1")
+    harness.ctx.data.session.sync.mockImplementationOnce(async (sessionID: string) => {
+      await sleep(15)
+      harness.sessions.set(sessionID, "/repo")
+      harness.sessionModels.set(sessionID, {
+        providerID: "openrouter",
+        id: aliasId("balanced"),
+      })
+    })
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await sleep(45)
+    await drain()
+
+    expect(active.ctx.data.session.sync).toHaveBeenCalledTimes(1)
+    expect(active.ctx.data.session.sync).toHaveBeenCalledWith("s1")
+    expect(active.dialogRenders).toHaveLength(1)
+  })
+
+  test("route changes mid-poll or superseding concrete switches suppress stale warnings", async () => {
+    const harness = maskedSwitchHarness()
+    // 1. Navigating to another session mid-poll drops the warning.
+    harness.session.switchModel.mockImplementationOnce(async (input) => {
+      setTimeout(() => {
+        harness.sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      }, 25)
+    })
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    active.state.route = { type: "session", sessionID: "s2" }
+    await sleep(50)
+    await drain()
+    expect(active.dialogRenders).toHaveLength(0)
+
+    // 2. Switching back to s1 and superseding an in-flight alias check with a
+    // report-dialog concrete-model switch cancels the alias warning.
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.sessionModels.clear()
+    harness.session.switchModel.mockImplementationOnce(async (input) => {
+      setTimeout(() => {
+        harness.sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      }, 30)
+    })
+    await active.command("model-compare.use-best").run("price")
+
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1) // report dialog
+    const pick = await modalPick(active)
+    pick!.run() // switchToModel("s1", "acme/alpha") supersedes the pending price check
+    await sleep(55)
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1)
+  })
+
+  test("the picks dialog path warns too", async () => {
+    active = await activate(maskedSwitchHarness())
+
+    await active.command("model-compare.picks").run()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(2) // the picks dialog + the warning
+    expect(warningView(active).text).toContain(
+      "To switch to 'Model Compare: balanced', select it from the 'Select model' picker (ctrl+x m).",
+    )
+  })
+
+  test("the /use-best event warns with the priority the server switched to", async () => {
+    const harness = maskedSwitchHarness()
+    active = await activate(harness)
+    // The server command already committed the switch; only the session data
+    // has the target, while the prompt still selects the concrete model.
+    active.sessionModels.set("s1", { providerID: "openrouter", id: aliasId("price") })
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: {
+          sessionID: "s1",
+          message: "model-compare: switched to openrouter/model-compare/price (currently acme/alpha)",
+          ok: true,
+          priority: "price",
+        },
+      },
+    })
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1)
+    expect(warningView(active).text).toContain(
+      "To switch to 'Model Compare: price', select it from the 'Select model' picker (ctrl+x m).",
+    )
+  })
+
+  test("/use-best refusal or priority-less event stays silent even when sessionModels holds an alias", async () => {
+    const harness = maskedSwitchHarness()
+    active = await activate(harness)
+    active.sessionModels.set("s1", { providerID: "openrouter", id: aliasId("balanced") })
+
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: {
+          sessionID: "s1",
+          message: useBestRefusal("balanced"),
+          ok: false,
+          priority: "balanced",
+        },
+      },
+    })
+    active.listenCallbacks[2]({
+      details: {
+        type: "rpc.model-compare.useBest",
+        data: {
+          sessionID: "s1",
+          message: "model-compare: switched to openrouter/model-compare/balanced (currently acme/alpha)",
+          ok: true,
+        },
+      },
+    })
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(0)
+  })
+
+  test("Select model closes the warning and opens the host's picker", async () => {
+    active = await activate(maskedSwitchHarness())
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    const modal = await active.modalCommands()
+    const select = modal?.find((item) => item.id === "model-compare.warning.select")
+    expect(select).toBeDefined()
+    select!.run()
+    select!.run() // idempotent once disarmed
+    expect(await active.modalCommands()).toBeNull()
+    await sleep(0)
+
+    expect(active.ctx.ui.dialog.clear).toHaveBeenCalledTimes(1)
+    expect(active.ctx.keymap.dispatch).toHaveBeenCalledTimes(1)
+    expect(active.ctx.keymap.dispatch).toHaveBeenCalledWith("model.list")
+  })
+
+  test("plugin cleanup cancels a pending Select model dispatch and in-flight poll", async () => {
+    const harness = maskedSwitchHarness()
+    active = await activate(harness)
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    const modal = await active.modalCommands()
+    modal?.find((item) => item.id === "model-compare.warning.select")!.run()
+
+    // Also start a slow in-flight switch check before unloading the plugin.
+    harness.session.switchModel.mockImplementationOnce(async (input) => {
+      setTimeout(() => {
+        harness.sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      }, 15)
+    })
+    await active.command("model-compare.use-best").run("price")
+
+    await active.cleanup()
+    await sleep(35)
+    await drain()
+
+    expect(active.ctx.keymap.dispatch).not.toHaveBeenCalled()
+    expect(active.dialogRenders).toHaveLength(1)
+  })
+
+  test("Dismiss (escape and mouse-up) closes without mutating preferences or dispatching model.list", async () => {
+    active = await activate(maskedSwitchHarness())
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1)
+
+    const modal = await active.modalCommands()
+    const dismiss = modal?.find((item) => item.id === "model-compare.warning.dismiss")
+    expect(dismiss).toBeDefined()
+    dismiss!.run()
+    expect(await active.modalCommands()).toBeNull()
+    await sleep(0)
+
+    expect(active.preferences.warnMaskedSwitch).toBe(true)
+    expect(active.ctx.keymap.dispatch).not.toHaveBeenCalled()
+    expect(active.ctx.ui.dialog.clear).toHaveBeenCalledTimes(1)
+
+    // Subsequent masked switches warn again; both header "esc" and footer "esc dismiss" mouse-up close cleanly.
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(2)
+    const headerEsc = warningView(active).tree.children[0]!.children[1]!
+    ;(headerEsc.props.onMouseUp as () => void)()
+    expect(await active.modalCommands()).toBeNull()
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(3)
+    const footerBox = warningView(active).tree.children[2]!
+    expect(typeof footerBox.children[0]!.props.onMouseUp).toBe("function")
+    expect(typeof footerBox.children[1]!.props.onMouseUp).toBe("function")
+    const escHint = footerBox.children[2]!
+    ;(escHint.props.onMouseUp as () => void)()
+    expect(await active.modalCommands()).toBeNull()
+    expect(active.preferences.warnMaskedSwitch).toBe(true)
+    expect(active.ctx.keymap.dispatch).not.toHaveBeenCalled()
+  })
+
+  test("Don't show again persists the preference and suppresses later warnings", async () => {
+    active = await activate(maskedSwitchHarness())
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1)
+
+    const modal = await active.modalCommands()
+    const suppress = modal?.find((item) => item.id === "model-compare.warning.suppress")
+    expect(suppress).toBeDefined()
+    suppress!.run()
+    expect(await active.modalCommands()).toBeNull()
+
+    expect(active.preferences.warnMaskedSwitch).toBe(false)
+    expect(active.ctx.ui.dialog.clear).toHaveBeenCalled()
+
+    // A later masked switch is silent: the dialog count does not grow.
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1)
+  })
+
+  test("a stored Don't show again preference suppresses from the start, while a missing key defaults to enabled", async () => {
+    const harness = maskedSwitchHarness()
+    harness.preferences.warnMaskedSwitch = false
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(0)
+
+    // If persisted preferences exist without warnMaskedSwitch (undefined), warnings stay enabled.
+    delete (active.preferences as { warnMaskedSwitch?: boolean }).warnMaskedSwitch
+    await active.command("model-compare.use-best").run()
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1)
   })
 })
 
