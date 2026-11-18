@@ -20,7 +20,10 @@
 //     over the plugin's RPC (no session command to post it to) and a pick
 //     creates a session bound to that model;
 //   * a toast when a pick flips (at most one per changed priority per
-//     reload, and never for the first observation after load).
+//     reload, and never for the first observation after load);
+//   * a warning dialog when an alias switch did not reach the TUI's prompt
+//     selection (OpenCode bug #57771), pointing at the host's own model
+//     picker and offering a durable "Don't show again" opt-out.
 //
 // The headless path (servers, `opencode run`, API clients) has no TUI: its
 // notices stay inbox items delivered at the session's next turn (the
@@ -92,6 +95,18 @@ const CANNOT_STEER_COPY = "cannot steer this session; OpenRouter default routing
 // server command's synthetic transcript notice only surfaces at the next
 // turn, so the event carries the same message (and its success/error variant).
 const USE_BEST_EVENT = "rpc.model-compare.useBest"
+// The upstream bug the masked-switch warning works around: a plugin's
+// session.switchModel updates the session, but the TUI's prompt selection is
+// its own state and keeps the previous model, so the next submit silently
+// sends there instead. The warning names the bug and links to it.
+const MASKED_SWITCH_BUG_URL = "https://github.com/anomalyco/opencode/issues/57771"
+// The durable preference key (context.storage.store): the warning's
+// "Don't show again" opt-out survives TUI restarts.
+const PREFERENCES_KEY = "preferences"
+
+function isPriority(value: unknown): value is Priority {
+  return PRIORITIES.includes(value as Priority)
+}
 
 // The list dialogs' lifecycle token (see showListDialog): a module-scope
 // generation counter, bumped every time a dialog is armed, plus the armed
@@ -433,6 +448,18 @@ export default Plugin.define({
     const notify = (message: string, variant: "success" | "error" = "success") =>
       context.ui.toast.show({ title: "model-compare", message, variant, duration: TOAST_MS })
 
+    // Durable TUI preferences (the warning's "Don't show again"). Plugin
+    // storage is scoped to this plugin, so the bare key is safe; the value
+    // is read at warning time (never cached in a closure), so a suppression
+    // written by another running TUI instance takes effect immediately.
+    const [preferences, updatePreferences] = context.storage.store<{ warnMaskedSwitch?: boolean }>(
+      PREFERENCES_KEY,
+      {
+        initial: { warnMaskedSwitch: true },
+      },
+    )
+    const isWarningSuppressed = () => preferences.warnMaskedSwitch === false
+
     // Update notice: the server already checks unpinned package plugins for
     // updates at startup (and every 24 hours), but only /plugins shows the
     // result. Surface it once here so the user does not have to open that
@@ -482,6 +509,9 @@ export default Plugin.define({
     let disposeHomeFooter = () => {}
     let disposeAppSlot = () => {}
     let resyncTimer: ReturnType<typeof setInterval> | undefined
+    let disposed = false
+    let selectTimer: ReturnType<typeof setTimeout> | undefined
+    let switchCheckSeq = 0
     // The report dialog's hand-off: the /model-compare event callback runs
     // ownerless (data.listen), and a dialog mounted from an ownerless
     // callback renders but its keyboard never attaches — the mount lands
@@ -494,6 +524,16 @@ export default Plugin.define({
       age: string | null
       entries: ReportEntry[]
       steeringNote: string | null
+    } | null>(null)
+    // The masked-switch warning's hand-off, for the same ownerless-callback
+    // reason: the warning can be triggered by the /use-best RPC event (and by
+    // the keymap commands), so checkMaskedSwitch only PARKS the session and
+    // priority and the app slot's in-tree effect opens the styled dialog.
+    // The session id is part of the payload so a slow settle cannot pop the
+    // warning over a session the user has since moved to.
+    const [pendingWarning, setPendingWarning] = createSignal<{
+      sessionID: string
+      priority: Priority
     } | null>(null)
 
     // The registry view, reactive: OpenCode's data layer updates the list
@@ -595,15 +635,70 @@ export default Plugin.define({
         )
         return
       }
+      const seq = ++switchCheckSeq
+      setPendingWarning(null)
       try {
         await context.client.session.switchModel({
           sessionID,
           model: { providerID: ALIAS_PROVIDER, id: aliasId(priority) },
         })
         notify(notice)
+        // The switch landed on the session; whether the TUI's PROMPT follows
+        // is a separate question (bug #57771). Best-effort and off the
+        // command's critical path — the switch already succeeded.
+        void checkMaskedSwitch(sessionID, priority, seq).catch(() => {})
       } catch (error) {
         notify(`use-best failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
+    }
+
+    // Detect a switch the TUI's prompt selection did not follow (OpenCode bug
+    // #57771): session.switchModel updates the session, but the prompt keeps
+    // its own selected model, so the next submit silently sends to the OLD
+    // model. Judge only after the session data CONFIRMS the target — the host
+    // publishes session.model.selected asynchronously, and the /use-best RPC
+    // event can arrive before that update. An unconfirmed switch, an absent
+    // prompt selection, or a matching identity (provider + model id; a
+    // variant-only difference is still the same model) stays silent, so the
+    // warning never guesses.
+    async function checkMaskedSwitch(
+      sessionID: string,
+      priority: Priority,
+      seq: number,
+    ): Promise<void> {
+      if (disposed || seq !== switchCheckSeq) return
+      if (isWarningSuppressed()) return
+      const target = { providerID: ALIAS_PROVIDER, id: aliasId(priority) }
+      let confirmed = false
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (disposed || seq !== switchCheckSeq) return
+        const info = context.data.session.get(sessionID) as
+          | { model?: { providerID?: unknown; id?: unknown } }
+          | undefined
+        const model = info?.model
+        if (model?.providerID === target.providerID && model.id === target.id) {
+          confirmed = true
+          break
+        }
+        // Cold session (e.g. a cross-location tab not yet hydrated in the data
+        // store): session.model.selected only updates cached entries, so kick a
+        // one-shot sync to populate it within the settle window.
+        if (attempt === 0 && info === undefined) {
+          void context.data.session.sync(sessionID).catch(() => {})
+        }
+        // ~200 ms total: enough for the host's own event to reach the data
+        // layer on a slow tick, short enough that a missed update is dropped
+        // rather than warning about a switch the user cannot see.
+        if (attempt < 19) await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      if (!confirmed || disposed || seq !== switchCheckSeq) return
+      if (currentSessionID() !== sessionID) return
+      const prompt = context.ui.model.current()
+      if (prompt === undefined) return
+      if (prompt.providerID === target.providerID && prompt.modelID === target.id) return
+      // The suppression may have been turned on while the switch settled.
+      if (isWarningSuppressed()) return
+      setPendingWarning({ sessionID, priority })
     }
 
     // Switch the current session straight to a concrete model (the report
@@ -616,6 +711,8 @@ export default Plugin.define({
       advertised: string | undefined,
       bound: string | undefined,
     ): Promise<void> {
+      ++switchCheckSeq
+      setPendingWarning(null)
       try {
         await context.client.session.switchModel({
           sessionID,
@@ -671,6 +768,13 @@ export default Plugin.define({
       first: () => void
       last: () => void
       pick: () => void
+    } | null>(null)
+
+    // The warning dialog's keymap hand-off, the same pattern as listKeys.
+    const [warningKeys, setWarningKeys] = createSignal<{
+      select: () => void
+      suppress: () => void
+      dismiss: () => void
     } | null>(null)
 
     function showListDialog(
@@ -964,6 +1068,112 @@ export default Plugin.define({
       context.ui.dialog.set({ size, centered: true })
     }
 
+    // The masked-switch warning (OpenCode bug #57771). An explicit styled
+    // dialog rather than a toast: it is an upstream-bug workaround with an
+    // action (open the host's own model picker, which DOES update the prompt
+    // selection) and a durable opt-out. Custom JSX because the host's
+    // alert/confirm only take plain strings, so the quoted phrases could not
+    // be italicized or the bug link made clickable.
+    function showWarningDialog(priority: Priority): void {
+      // A newer dialog replaces whatever is armed (the same ownership rule as
+      // showListDialog): close the old one BEFORE bumping the generation.
+      armedClose?.()
+      const generation = ++dialogGeneration
+      let alive = true
+
+      const theme = context.theme.surface("dialog")
+      const base = theme.text.base
+      const muted = theme.text.muted
+      const link = theme.hue.accent[200]
+
+      const close = () => {
+        if (!alive) return
+        alive = false
+        // A newer dialog was armed since this one: its close owns the shared
+        // state now (see showListDialog).
+        if (generation !== dialogGeneration) return
+        armedClose = null
+        armedReveal = null
+        setWarningKeys(null)
+        context.ui.dialog.clear()
+      }
+      const select = () => {
+        if (!alive) return
+        close()
+        // The modal layer must be gone before the host's own picker opens:
+        // dispatching while the warning's layer is still active targets the
+        // dialog that is being torn down. Next tick, after the teardown.
+        if (selectTimer !== undefined) clearTimeout(selectTimer)
+        selectTimer = setTimeout(() => {
+          selectTimer = undefined
+          if (!disposed) context.keymap.dispatch("model.list")
+        }, 0)
+      }
+      const suppress = () => {
+        if (!alive) return
+        void updatePreferences((draft) => {
+          draft.warnMaskedSwitch = false
+        })
+        close()
+      }
+
+      armedClose = close
+      // No scrollbox: nothing to re-reveal on a resize.
+      armedReveal = null
+      setWarningKeys({ select, suppress, dismiss: close })
+      context.ui.dialog.show(
+        () => (
+          <box paddingTop={0} paddingBottom={1} gap={1}>
+            <box paddingLeft={4} paddingRight={4} flexDirection="row" justifyContent="space-between">
+              <text attributes={TextAttributes.BOLD} fg={base}>
+                {"Model Compare: switch not applied"}
+              </text>
+              <text fg={muted} onMouseUp={close}>
+                esc
+              </text>
+            </box>
+            <box paddingLeft={4} paddingRight={4} flexDirection="column">
+              <text fg={base}>
+                {"To switch to '"}
+                <i>{`Model Compare: ${priority}`}</i>
+                {"', select it from the '"}
+                <i>Select model</i>
+                {"' picker (ctrl+x m)."}
+              </text>
+              <text fg={base}>{"See OpenCode bug #57771: "}</text>
+              <text fg={link}>
+                <a href={MASKED_SWITCH_BUG_URL}>
+                  <u>{MASKED_SWITCH_BUG_URL}</u>
+                </a>
+              </text>
+            </box>
+            <box
+              paddingLeft={4}
+              paddingRight={4}
+              flexDirection="row"
+              flexWrap="wrap"
+              columnGap={2}
+              rowGap={0}
+            >
+              <text fg={muted} onMouseUp={select}>
+                enter select model
+              </text>
+              <text fg={muted} onMouseUp={suppress}>
+                d don't show again
+              </text>
+              <text fg={muted} onMouseUp={close}>
+                esc dismiss
+              </text>
+            </box>
+          </box>
+        ),
+        close,
+      )
+      // The palette's presentation, like every dialog this half opens (the
+      // host persists the last size across plugin dialogs).
+      context.ui.dialog.set({ size: "medium", centered: true })
+    }
+
     // The picks dialog: the three priorities, one cursor, palette styling.
     // A snapshot at open time; unavailable priorities are dimmed — the
     // cursor still reaches them, and choosing one is refused with a toast
@@ -971,6 +1181,8 @@ export default Plugin.define({
     // the session to it — or, with no session open, creates one bound to
     // it (the opening screen's path; opening the dialog never does).
     function showPicksDialog(): void {
+      ++switchCheckSeq
+      setPendingWarning(null)
       const views = aliases()
       const rows: ListRow[] = PRIORITIES.map((priority) => {
         const view = views.find((item) => item.priority === priority)
@@ -1003,6 +1215,8 @@ export default Plugin.define({
       // dialog's padding and made the picker too tall.)
       steeringNote: string | null
     }): void {
+      ++switchCheckSeq
+      setPendingWarning(null)
       if (data.entries.length === 0) {
         notify("no ranking data available yet", "error")
         return
@@ -1257,7 +1471,7 @@ export default Plugin.define({
     const offUseBestEvent = context.data.listen(({ details }) => {
       const event = details as {
         type?: unknown
-        data?: { sessionID?: unknown; message?: unknown; ok?: unknown }
+        data?: { sessionID?: unknown; message?: unknown; ok?: unknown; priority?: unknown }
       }
       if (event.type !== USE_BEST_EVENT) return
       const data = event.data
@@ -1266,6 +1480,17 @@ export default Plugin.define({
       // F-20: the message crosses the data bridge, so the listener flattens
       // and caps it before the toast; the transcript keeps the exact copy.
       notify(sanitizeCatalogText(data.message), data.ok === false ? "error" : "success")
+      // The slash command switched the session server-side; run the same
+      // masked-switch check the TUI-side switch paths run. Refusals carry no
+      // priority (nothing switched), and older emitters omit it — only a
+      // successful switch with a recognized target is judged.
+      if (data.ok === true) {
+        const seq = ++switchCheckSeq
+        setPendingWarning(null)
+        if (isPriority(data.priority)) {
+          void checkMaskedSwitch(data.sessionID, data.priority, seq).catch(() => {})
+        }
+      }
     })
 
     createRoot((dispose) => {
@@ -1497,6 +1722,21 @@ export default Plugin.define({
           setPendingReport(null)
           showReportDialog(pending)
         })
+        // The masked-switch warning's hand-off (see pendingWarning): the
+        // priority is parked by checkMaskedSwitch — which the /use-best RPC
+        // event reaches from an ownerless callback — and opened HERE, inside
+        // the tree, so its keyboard attaches. The suppression is re-read at
+        // open time; the switch may have settled after the preference was
+        // toggled in another TUI instance.
+        createEffect(() => {
+          const pending = pendingWarning()
+          if (pending === null) return
+          setPendingWarning(null)
+          if (disposed || listKeys() !== null) return
+          if (pending.sessionID !== currentSessionID()) return
+          if (isWarningSuppressed()) return
+          showWarningDialog(pending.priority)
+        })
         // The list dialogs' modal keymap layer (see showListDialog):
         // registered HERE, inside the tree, while a list dialog is open —
         // the render closure is context-less, so registration from there
@@ -1564,6 +1804,44 @@ export default Plugin.define({
             layerFailure("the list dialog keymap layer", error)
           }
         })
+        // The warning dialog's modal layer, registered the same in-tree way.
+        // `return` opens the host's model picker, `d` persists the opt-out,
+        // `escape` dismisses.
+        createEffect(() => {
+          const keys = warningKeys()
+          try {
+            if (keys === null) return
+            context.keymap.layer(() => ({
+              mode: "modal",
+              commands: [
+                {
+                  id: "model-compare.warning.select",
+                  title: "Select model",
+                  group: "Dialog",
+                  bind: "return",
+                  run: () => keys.select(),
+                },
+                {
+                  id: "model-compare.warning.suppress",
+                  title: "Don't show again",
+                  group: "Dialog",
+                  bind: "d",
+                  run: () => keys.suppress(),
+                },
+                {
+                  id: "model-compare.warning.dismiss",
+                  title: "Dismiss",
+                  group: "Dialog",
+                  bind: "escape",
+                  run: () => keys.dismiss(),
+                },
+              ],
+            }))
+          } catch (error) {
+            setWarningKeys(null)
+            layerFailure("the warning dialog keymap layer", error)
+          }
+        })
         // The event callbacks (data.listen) run ownerless; the layer
         // registration below carries its own failure toast.
         try {
@@ -1579,6 +1857,12 @@ export default Plugin.define({
     })
 
     return () => {
+      disposed = true
+      ++switchCheckSeq
+      if (selectTimer !== undefined) {
+        clearTimeout(selectTimer)
+        selectTimer = undefined
+      }
       // Disarm whatever dialog is still armed FIRST: its pending frame
       // reveal and modal keyboard must not outlive the plugin (the
       // module-scope armedClose/armedReveal survive setup's cleanup

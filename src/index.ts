@@ -909,7 +909,7 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         // wait behind the synthetic's admission (the same ordering as the
         // report command). Best-effort, like the transcript notice.
         try {
-          await rpcRegistration.events.emit("useBest", { sessionID, message, ok: true })
+          await rpcRegistration.events.emit("useBest", { sessionID, message, ok: true, priority: p })
         } catch {
           // Emission failures must not fail the command.
         }

@@ -2451,6 +2451,26 @@ describe("commands", () => {
       sessionID: "s2",
       message: "model-compare: switched to openrouter/model-compare/price (currently acme/alpha)",
       ok: true,
+      priority: "price",
+    })
+  })
+
+  test("/use-best with an empty prompt emits the default priority on useBest", async () => {
+    const { ctx, commands, rpcEmit } = makeCtx()
+    await seedDocCache(ctx.storage)
+    for (const p of PRIORITIES) {
+      await seedPin(ctx.storage, DOC, p, { v: 1, id: "acme/alpha", since: NOW })
+    }
+    await wire(ctx, deps(vi.fn(), fakeTimers()))
+
+    const useBest = commands.find((c) => c.name === "use-best")!
+    await useBest.execute({ sessionID: "s2", prompt: { text: "" } })
+
+    expect(rpcEmit).toHaveBeenCalledWith("useBest", {
+      sessionID: "s2",
+      message: "model-compare: switched to openrouter/model-compare/balanced (currently acme/alpha)",
+      ok: true,
+      priority: "balanced",
     })
   })
 
