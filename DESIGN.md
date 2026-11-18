@@ -29,7 +29,7 @@ Validated catalogs are persisted in plugin storage, keyed by source identity (sc
 
 ### Vendored upstream pin and network profile
 
-`vendor/model_compare.py` is byte-identical to the upstream tag recorded in `vendor/UPSTREAM.json` (currently `v0.7.0`, catalog `schema_version === 6`). `validateCatalog` accepts schema v6 exclusively and rejects any other version.
+`vendor/model_compare.py` is byte-identical to the upstream tag recorded in `vendor/UPSTREAM.json` (currently `v0.7.10`, catalog `schema_version === 6`). `validateCatalog` accepts schema v6 exclusively and rejects any other version.
 
 In schema v6:
 - `quality` holds the Artificial Analysis (AA) intelligence index at the model's best measured selectable reasoning effort, paired with `quality_effort` and a per-model `reasoning` block (`default_effort`, expanded `supported_efforts`, capability flags, and `depths` with AA `$/task`).

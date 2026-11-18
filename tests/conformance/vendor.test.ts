@@ -13,19 +13,24 @@ test("vendored script matches the pinned tag", () => {
   expect(sha).toBe(meta.sha256)
 })
 
-// Standard library only (design §11). `__future__` and `datetime` are the two
-// modules the script imports with `from … import`.
+// Standard library only (design §11). `__future__`, `datetime` and
+// `contextlib` are the modules the script imports with `from … import`.
+// `shlex`/`subprocess` back the CLI pager only (0.7.2+); `--catalog` never
+// pages, so the plugin never reaches that code path.
 const ALLOWLIST = new Set([
   "__future__",
   "argparse",
   // vendored 0.7.0 uses concurrent.futures for catalog assembly
   "concurrent.futures",
+  "contextlib",
   "datetime",
   "gzip",
   "json",
   "math",
   "os",
   "re",
+  "shlex",
+  "subprocess",
   "sys",
   "time",
   "urllib.error",
@@ -56,9 +61,9 @@ describe("importedModules", () => {
     expect(importedModules(src)).toEqual(["os", "sys", "json", "datetime", "__future__", "gzip"])
   })
 
-  test("`from subprocess import run` is extracted — and fails the allowlist", () => {
-    const found = importedModules("from subprocess import run\nimport os")
-    expect(found).toEqual(["subprocess", "os"])
+  test("`from socket import create_connection` is extracted — and fails the allowlist", () => {
+    const found = importedModules("from socket import create_connection\nimport os")
+    expect(found).toEqual(["socket", "os"])
     expect(found.every((m) => ALLOWLIST.has(m))).toBe(false)
   })
 
@@ -66,9 +71,9 @@ describe("importedModules", () => {
     expect(importedModules("def f():\n    import socket\n")).toEqual(["socket"])
   })
 
-  test("`import a, subprocess` fails on the second name", () => {
-    expect(importedModules("import os, subprocess").filter((m) => !ALLOWLIST.has(m))).toEqual([
-      "subprocess",
+  test("`import a, socket` fails on the second name", () => {
+    expect(importedModules("import os, socket").filter((m) => !ALLOWLIST.has(m))).toEqual([
+      "socket",
     ])
   })
 })
