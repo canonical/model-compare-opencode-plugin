@@ -23,10 +23,11 @@
 // dist/tui.js sits one level below the package root with src/ beside it, so
 // every relative import is rebased from src/-relative ("./opencode/usebest")
 // to dist-relative ("../src/opencode/usebest"). Bare imports (solid-js,
-// @opentui/*, @opencode/plugin/tui) resolve against the installed tree and
-// are left untouched — at load time the TUI host's runtime-module rewriting
-// maps those bare runtime specifiers to the host-provided modules, the same
-// as for locally loaded plugin sources.
+// @opentui/*, @opencode/plugin/tui) are left untouched — the published package
+// declares zero dependencies/peerDependencies because OpenCode's
+// @opencode/plugin/runtime and TUI @opentui/solid/runtime-plugin-support
+// (built on @opentui/core/runtime-plugin) satisfy those bare specifiers from
+// host memory at load time, the same as for locally loaded plugin sources.
 //
 // Usage: node scripts/build-tui.mjs   (from the repository root; also run by
 // `npm run build` and, through it, by prepublishOnly on every publish)
