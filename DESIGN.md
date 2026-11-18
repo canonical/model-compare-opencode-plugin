@@ -14,6 +14,8 @@ Architecture, runtime contracts, and maintainer workflows for `model-compare-ope
 - `vendor/` — pinned copy of upstream `model_compare.py` and `vendor/UPSTREAM.json` provenance record.
 - `tests/{unit,conformance,integration}/` — Vitest suites.
 
+**Zero published dependencies (host-provided runtime modules):** `@opencode/plugin`, `@opencode/theme`, `@opentui/core`, `@opentui/solid`, and `solid-js` live exclusively in `devDependencies` (for `build-tui`, `tsc`, and `vitest`); `package.json` omits `dependencies`, `peerDependencies`, and `overrides`. Inside OpenCode, `@opencode/plugin/runtime` provides `@opencode/plugin` and `@opencode/plugin/rpc` on both server and TUI from memory (actively rejecting foreign `node_modules/@opencode/plugin` and `effect` loads), while `@opentui/solid/runtime-plugin-support` (built on `@opentui/core/runtime-plugin`) provides `@opencode/plugin/tui`, `@opentui/core`, `@opentui/solid*`, and `solid-js` in the TUI and ignores on-disk copies — whereas publishing `dependencies` or `peerDependencies` causes `@npmcli/arborist` and Socket.dev to resolve hundreds of unused transitive packages.
+
 
 ## Data sources, caching, and the vendored pin
 
@@ -104,7 +106,7 @@ Because OpenRouter responses report only the provider's display name (for exampl
 
 ## TUI architecture and precompilation
 
-- **Why `dist/tui.js` is precompiled:** OpenCode's Solid JSX loader transforms `.tsx` plugin sources for local directory plugins, but skips files inside `node_modules` (falling back to a React transform that fails with `Cannot find package 'react'`). `scripts/build-tui.mjs` compiles `src/tui.tsx` into `dist/tui.js` using `@opentui/solid`'s Babel preset and rebases relative imports from `src/` to `dist/`. `dist/` is gitignored and built during `prepublishOnly` and CI.
+- **Why `dist/tui.js` is precompiled:** OpenCode's Solid JSX loader transforms `.tsx` plugin sources for local directory plugins, but skips files inside `node_modules` (falling back to a React transform that fails with `Cannot find package 'react'`). `scripts/build-tui.mjs` compiles `src/tui.tsx` into `dist/tui.js` using `@opentui/solid`'s Babel preset and rebases relative imports from `src/` to `dist/`, leaving bare `@opencode/plugin/tui`, `@opentui/*`, and `solid-js` specifiers for the host's runtime-module rewriter (see [Repository layout](#repository-layout)). `dist/` is gitignored and built during `prepublishOnly` and CI.
 - **Solid context & keymap registration:** keymap layers (`alt+m`, `alt+shift+m`, `alt+u`, `alt+e`, plus the modal list-dialog navigation layer) are registered from an `"app"` UI slot render function so they execute inside the mounted Solid provider tree rather than detached `setup` scope.
 - **Worktree-aware session routing:** a TUI tab can view a session whose working directory is a linked git worktree with its own plugin instance and model registry. Event listeners (`report`, `cannotSteer`, `useBest`) match on the unique `sessionID` rather than filtering by directory, and `alt+e` / report-dialog variant checks route RPC and registry lookups to the session's own directory.
 - **Responsive dialog geometry:** `showReportDialog` chooses OpenCode's `large` (88-column) dialog preset above 96 terminal columns and `medium` (60-column) narrower, clamping cell widths by terminal display width (`strWidth`, accounting for double-width CJK and emoji code points) and capping scrollbox height to `min(floor(h / 2) - 3, h - 12)`.
@@ -122,7 +124,7 @@ npm run dev                        # scratch project in /tmp/opencode/model-comp
 npm run dev -- --print-config      # inspect generated config (MC_DEV_DIR overrides path)
 ```
 
-`npm run dev` isolates configuration (hiding global OpenCode config so an installed npm copy cannot shadow `./src`), while sharing your OpenCode data directory (credentials, sessions, and stored pins).
+`npm run dev` isolates configuration (hiding global OpenCode config so an installed npm copy cannot shadow `./src`), while sharing your OpenCode data directory (credentials, sessions, and stored pins). Regenerating `package-lock.json` requires `npm >= 11` (`npx npm@11 install`) due to an npm 9/10 Arborist `edgesOut` crash on `@opencode/plugin@2.3.0`'s optional peers (`npm ci` works across npm 9–12).
 
 ### Test suites and packaging checks
 
@@ -133,7 +135,7 @@ npm run build && node scripts/pack-smoke.mjs          # build dist/tui.js and ve
 MC_INTEGRATION=1 npx vitest run tests/integration/    # live opencode serve suite (127.0.0.1:14721)
 ```
 
-`fixtures/catalog-v0.7.0.json` is the recorded schema-v6 contract fixture; `fixtures/catalog-no-quality.json` is generated from it via `scripts/make-no-quality-fixture.py`. `MC_INTEGRATION=1` requires `opencode` and `python3` (plus `sqlite3` and network access for the live persistence/hydration cases) and must run one session at a time because its harness sweeps `tests/integration/data/run-*` and manages port `14721`. `scripts/pack-smoke.mjs` checks tarball structure and imports offline — install the packed tarball into a scratch project to verify OpenCode loads it before cutting a release.
+`fixtures/catalog-v0.7.0.json` is the recorded schema-v6 contract fixture; `fixtures/catalog-no-quality.json` is generated from it via `scripts/make-no-quality-fixture.py`. `MC_INTEGRATION=1` requires `opencode` and `python3` (plus `sqlite3` and network access for the live persistence/hydration cases) and must run one session at a time because its harness sweeps `tests/integration/data/run-*` and manages port `14721`. `scripts/pack-smoke.mjs` checks tarball structure, relative imports, the zero-dependency `package.json` contract, and the domain-scoped `node:` / OpenCode host runtime-import allowlist offline — install the packed tarball into a scratch project to verify OpenCode loads it before cutting a release.
 
 ### Publishing to npm
 
