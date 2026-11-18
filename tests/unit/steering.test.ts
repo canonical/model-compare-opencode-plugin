@@ -382,56 +382,61 @@ describe("injectReasoning", () => {
 })
 
 describe("captureEndpoint", () => {
-  test("a served display name matching an order entry → endpoint recorded, no downgrade", () => {
+  test("a served display name matching an order entry → endpoint recorded, in-order", () => {
     expect(captureEndpoint("Novita", ["streamlake/fp8", "novita/fp8", "deepinfra/fp8"])).toEqual({
       endpoint: "Novita",
-      downgrade: false,
+      steering: "in-order",
     })
   })
 
-  test("a served provider matching no order entry → downgrade flagged", () => {
+  test("a served provider matching no order entry → not-in-order", () => {
     expect(captureEndpoint("CoreWeave", ["novita/fp8", "deepinfra/fp8"])).toEqual({
       endpoint: "CoreWeave",
-      downgrade: true,
+      steering: "not-in-order",
     })
   })
 
-  test("a tag-carrying served string matches its identical order entry → no flag", () => {
+  test("a tag-carrying served string matches its identical order entry → in-order", () => {
     expect(captureEndpoint("streamlake/fp8", ["streamlake/fp8", "novita/fp8"])).toEqual({
       endpoint: "streamlake/fp8",
-      downgrade: false,
+      steering: "in-order",
     })
   })
 
-  test("a tag-carrying served string from a different provider → downgrade", () => {
+  test("a tag-carrying served string from a different provider → not-in-order", () => {
     expect(captureEndpoint("streamlake/fp8", ["novita/fp8"])).toEqual({
       endpoint: "streamlake/fp8",
-      downgrade: true,
+      steering: "not-in-order",
     })
   })
 
   test("normalization is case- and punctuation-insensitive (fact 3's worked examples)", () => {
-    expect(captureEndpoint("Moonshot AI", ["moonshotai/kimi-k3.1-fp8"]).downgrade).toBe(false)
-    expect(captureEndpoint("Atlas Cloud", ["atlas-cloud/fp8"]).downgrade).toBe(false)
-    expect(captureEndpoint("DeepInfra", ["deepinfra/fp8/flex"]).downgrade).toBe(false)
-    expect(captureEndpoint("Z.AI", ["z-ai/fp8"]).downgrade).toBe(false)
+    expect(captureEndpoint("Moonshot AI", ["moonshotai/kimi-k3.1-fp8"]).steering).toBe("in-order")
+    expect(captureEndpoint("Atlas Cloud", ["atlas-cloud/fp8"]).steering).toBe("in-order")
+    expect(captureEndpoint("DeepInfra", ["deepinfra/fp8/flex"]).steering).toBe("in-order")
+    expect(captureEndpoint("Z.AI", ["z-ai/fp8"]).steering).toBe("in-order")
   })
 
-  test("an empty order → the endpoint is recorded, no downgrade", () => {
-    expect(captureEndpoint("Novita", [])).toEqual({ endpoint: "Novita", downgrade: false })
+  test("an empty order → the endpoint is recorded, steering unknown", () => {
+    expect(captureEndpoint("Novita", [])).toEqual({ endpoint: "Novita", steering: "unknown" })
   })
 
-  test("a null order (no steering data) → the endpoint is recorded, no downgrade", () => {
-    expect(captureEndpoint("Novita", null)).toEqual({ endpoint: "Novita", downgrade: false })
+  test("a null order (no steering data) → the endpoint is recorded, steering unknown", () => {
+    expect(captureEndpoint("Novita", null)).toEqual({ endpoint: "Novita", steering: "unknown" })
   })
 
-  test("an absent provider → no verdict (nothing recorded, no downgrade)", () => {
-    expect(captureEndpoint(null, ["novita/fp8"])).toEqual({ endpoint: null, downgrade: false })
-    expect(captureEndpoint(null, null)).toEqual({ endpoint: null, downgrade: false })
+  test("an absent provider → nothing recorded, steering unknown", () => {
+    expect(captureEndpoint(null, ["novita/fp8"])).toEqual({ endpoint: null, steering: "unknown" })
+    expect(captureEndpoint(null, null)).toEqual({ endpoint: null, steering: "unknown" })
   })
 
-  test("an unparseable provider string → no verdict", () => {
-    expect(captureEndpoint("", ["novita/fp8"])).toEqual({ endpoint: null, downgrade: false })
-    expect(captureEndpoint("   ", ["novita/fp8"])).toEqual({ endpoint: null, downgrade: false })
+  test("an unparseable, tag-only, or control-only provider string → nothing recorded, steering unknown", () => {
+    expect(captureEndpoint("", ["novita/fp8"])).toEqual({ endpoint: null, steering: "unknown" })
+    expect(captureEndpoint("   ", ["novita/fp8"])).toEqual({ endpoint: null, steering: "unknown" })
+    expect(captureEndpoint("/fp8", ["novita/fp8"])).toEqual({ endpoint: null, steering: "unknown" })
+    expect(captureEndpoint("\u0000\u0007", ["novita/fp8"])).toEqual({
+      endpoint: null,
+      steering: "unknown",
+    })
   })
 })

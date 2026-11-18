@@ -1,0 +1,8 @@
+{
+  "name": "model-compare-identity-probe",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  }
+}

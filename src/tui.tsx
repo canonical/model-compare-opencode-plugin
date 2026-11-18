@@ -51,7 +51,7 @@ import {
   createRoot,
   createSignal,
 } from "solid-js"
-import type { Priority } from "./core/types"
+import type { CapturePayload, Priority, SteeringVerdict } from "./core/types"
 
 import {
   ALIAS_PROVIDER,
@@ -70,7 +70,7 @@ import {
 import type { ReportEntry } from "./opencode/commands"
 import { gatewayEffort } from "./core/reasoning"
 import type { EndpointAttribute, EndpointInfo } from "./core/endpoint"
-import { lastResponseLine, sanitizeCatalogText } from "./opencode/commands"
+import { sanitizeCatalogText } from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 
 const TOAST_MS = 6_000
@@ -330,21 +330,31 @@ function toReportEntries(raw: unknown): ReportEntry[] {
 }
 
 // The report payload's capture (the alt+e toast's data), defensively
-// normalized at the trust boundary like the entries: anything but a
-// well-shaped object — or one without an endpoint — degrades to null (no
-// capture), never a placeholder line.
-function toCapture(raw: unknown): { endpoint: string; model: string; downgrade: boolean } | null {
+// normalized and flattened (F-20) at the trust boundary: provider and model
+// must both sanitize to non-empty strings (else null), a missing/whitespace/
+// control-only endpoint normalizes to null (rendered as `endpoint: unknown`),
+// and steering validates against the closed tri-state set.
+function toCapture(raw: unknown): CapturePayload | null {
   if (typeof raw !== "object" || raw === null) return null
-  const capture = raw as { endpoint?: unknown; model?: unknown; downgrade?: unknown }
-  if (typeof capture.endpoint !== "string" || capture.endpoint === "") return null
-  return {
-    endpoint: capture.endpoint,
-    // The Task-5 handoff: a capture may carry an empty model (a response
-    // whose provider had no model id) — carried as-is, and the footer omits
-    // the model part rather than rendering an empty slot.
-    model: typeof capture.model === "string" ? capture.model : "",
-    downgrade: capture.downgrade === true,
+  const capture = raw as {
+    provider?: unknown
+    endpoint?: unknown
+    model?: unknown
+    steering?: unknown
   }
+  if (typeof capture.provider !== "string" || typeof capture.model !== "string") return null
+  const provider = sanitizeCatalogText(capture.provider)
+  const model = sanitizeCatalogText(capture.model)
+  if (provider === "" || model === "") return null
+  const endpoint =
+    typeof capture.endpoint === "string" ? sanitizeCatalogText(capture.endpoint) || null : null
+  const steering: SteeringVerdict =
+    capture.steering === "in-order" ||
+    capture.steering === "not-in-order" ||
+    capture.steering === "unknown"
+      ? capture.steering
+      : "unknown"
+  return { provider, endpoint, model, steering }
 }
 
 // The footer's steering note, defensively normalized: anything but a
@@ -354,13 +364,16 @@ function toSteeringNote(raw: unknown): string | null {
 }
 
 // One served-endpoint attribute (quantization or effort), normalized at the
-// trust boundary: the value must be a non-empty string, the relation one of
-// the closed set, and the default a string or null. Anything else degrades to
-// null (the attribute is omitted, never a placeholder).
+// trust boundary: value and default are flattened through sanitizeCatalogText
+// BEFORE checking for "" so whitespace/control-only strings degrade to null
+// rather than rendering blank slots, and relation validates against the closed
+// set.
 function toEndpointAttribute(raw: unknown): EndpointAttribute | null {
   if (typeof raw !== "object" || raw === null) return null
   const attribute = raw as { value?: unknown; relation?: unknown; default?: unknown }
-  if (typeof attribute.value !== "string" || attribute.value === "") return null
+  if (typeof attribute.value !== "string") return null
+  const value = sanitizeCatalogText(attribute.value)
+  if (value === "") return null
   const relation =
     attribute.relation === "default" ||
     attribute.relation === "sub-default" ||
@@ -369,13 +382,12 @@ function toEndpointAttribute(raw: unknown): EndpointAttribute | null {
     attribute.relation === "unknown"
       ? attribute.relation
       : "unknown"
+  const baseline =
+    typeof attribute.default === "string" ? sanitizeCatalogText(attribute.default) || null : null
   return {
-    value: sanitizeCatalogText(attribute.value),
+    value,
     relation,
-    default:
-      typeof attribute.default === "string" && attribute.default !== ""
-        ? sanitizeCatalogText(attribute.default)
-        : null,
+    default: baseline,
   }
 }
 
@@ -1385,13 +1397,10 @@ export default Plugin.define({
       },
     }
 
-    // The served-endpoint toast (design §Steering visibility): alt+e toasts
-    // the CURRENT session's last response's served endpoint, looked up
-    // through the report RPC's footer fields (the capture record rides the
-    // established report payload path). The copy is exact — normal:
-    // "last response served by <endpoint>"; downgrade (the served provider
-    // matched none of the applied steering order): "! served by <endpoint> —
-    // not in steering order"; nothing toasts when nothing was captured for
+    // The last-reply toast: alt+e toasts the CURRENT session's most recent
+    // primary HTTP reply (model, API provider, served endpoint or `unknown`,
+    // optional quantization/effort, and tri-state steering: `in order`,
+    // `! NOT in order`, or `unknown`). Silent when nothing was captured for
     // the session (and with no session open there is nothing to look up).
     const endpointCommand: KeymapCommand = {
       id: "model-compare.endpoint",
@@ -1403,15 +1412,11 @@ export default Plugin.define({
         const sessionID = currentSessionID()
         if (sessionID === null) return
         // The capture lives in the SESSION's directory's plugin instance —
-        // the hook records the served endpoint where the session's requests
-        // run — and a tab's session can live in a worktree. Routing the
-        // lookup to this instance's `here` asks the wrong location's capture
-        // state (empty, or another session's stale record). An unknown
-        // session location falls back to `here`, this instance's honest
-        // default. (The opening-screen reportCommand pull above needs no
-        // routing: with no session, `here` IS the session-less default; the
-        // with-session reportCommand branch posts the session COMMAND, which
-        // the host routes by the session itself.)
+        // the hook records the reply where the session's requests run — and a
+        // tab's session can live in a worktree. Routing the lookup to this
+        // instance's `here` asks the wrong location's capture state (empty, or
+        // another session's stale record). An unknown session location falls
+        // back to `here`, this instance's honest default.
         const sessionDirectory = sessionDirectoryOf(sessionID) ?? here
         try {
           const report: unknown = await context.client.rpc(ModelCompare).report(
@@ -1424,18 +1429,27 @@ export default Plugin.define({
           const capture = toCapture(payload?.capture)
           if (capture === null) return
           const info = toEndpointInfo(payload?.endpointInfo)
-          // The toast is multi-line: the response line, the endpoint's
-          // attributes (when the catalog could resolve them), and the
-          // steering verdict. Every catalog-derived string is flattened by
-          // lastResponseLine / formatEndpointAttribute (F-20).
-          const lines = [lastResponseLine(capture)!]
+          // Decoupled from lastResponseLine (which stays transcript-only):
+          // toCapture and formatEndpointAttribute already flatten every
+          // untrusted string via sanitizeCatalogText (F-20).
+          const lines = [
+            `last response: ${capture.model}`,
+            `provider: ${capture.provider}`,
+            `endpoint: ${capture.endpoint ?? "unknown"}`,
+          ]
           if (info?.quantization !== null && info?.quantization !== undefined) {
             lines.push(`quantization: ${formatEndpointAttribute(info.quantization)}`)
           }
           if (info?.effort !== null && info?.effort !== undefined) {
             lines.push(`effort: ${formatEndpointAttribute(info.effort)}`)
           }
-          lines.push(capture.downgrade ? "steering: ! NOT in order" : "steering: in order")
+          lines.push(
+            capture.steering === "in-order"
+              ? "steering: in order"
+              : capture.steering === "not-in-order"
+                ? "steering: ! NOT in order"
+                : "steering: unknown",
+          )
           notify(lines.join("\n"))
         } catch (error) {
           notify(

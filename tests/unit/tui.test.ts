@@ -1372,21 +1372,19 @@ describe("the /use-best toast (the server command's event)", () => {
 })
 
 // ---- the alt+e toast (the served endpoint) ----------------------------------
-// The alt+e toast (design §Decisions): the served endpoint, from the CURRENT
-// session's capture. Normal copy `last response served by <endpoint>`;
-// downgrade copy `! served by <endpoint> — not in steering order`; nothing
-// when nothing was captured for the current session.
-describe("the alt+e toast (the served endpoint)", () => {
-  test("alt+e toasts the served endpoint from the current session's capture (normal)", async () => {
+// The alt+e toast: the session's last primary reply (provider, endpoint or
+// unknown, optional quantization/effort, and tri-state steering).
+describe("the alt+e toast (last reply)", () => {
+  test("alt+e toasts the served endpoint from the current session's capture (in-order)", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    // s1 lives in /wt (a worktree tab): the capture record lives in /wt's
-    // plugin instance — the hook records the served endpoint where the
-    // session's requests run — so the lookup must be ROUTED there. Asking
-    // this instance's own /repo (the bug this pins) reads the wrong
-    // location's capture state and toasts nothing.
     active.sessions.set("s1", "/wt")
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     await drain()
 
     await active.command("model-compare.endpoint").run()
@@ -1394,13 +1392,10 @@ describe("the alt+e toast (the served endpoint)", () => {
 
     expect(active.toasts).toEqual([
       {
-        message: "last response: acme/alpha @ Novita\nsteering: in order",
+        message: "last response: acme/alpha\nprovider: openrouter\nendpoint: Novita\nsteering: in order",
         variant: "success",
       },
     ])
-    // The lookup is addressed to the CURRENT session's id and routed to the
-    // session's OWN directory — the options half of the contract the old
-    // mock discarded.
     expect(active.reportCalls.at(-1)).toEqual({
       input: { sessionID: "s1" },
       options: { location: { directory: "/wt" } },
@@ -1410,7 +1405,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e toasts the endpoint's quantization and effort attributes", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "fp8", relation: "default", default: "fp8" },
       effort: { value: "max", relation: "above-default", default: "high" },
@@ -1423,7 +1423,7 @@ describe("the alt+e toast (the served endpoint)", () => {
     expect(active.toasts).toEqual([
       {
         message:
-          "last response: acme/alpha @ Novita\nquantization: fp8 (default)\neffort: max (above default high)\nsteering: in order",
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: Novita\nquantization: fp8 (default)\neffort: max (above default high)\nsteering: in order",
         variant: "success",
       },
     ])
@@ -1432,7 +1432,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e names a sub-default quantization and its model default", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "OpenInference", model: "acme/alpha", downgrade: true }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "OpenInference",
+      model: "acme/alpha",
+      steering: "not-in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "fp4", relation: "sub-default", default: "fp8" },
       effort: { value: "high", relation: "default", default: "high" },
@@ -1445,30 +1450,36 @@ describe("the alt+e toast (the served endpoint)", () => {
     expect(active.toasts).toEqual([
       {
         message:
-          "last response: acme/alpha @ OpenInference\nquantization: fp4 (sub-default; model default fp8)\neffort: high (default)\nsteering: ! NOT in order",
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: OpenInference\nquantization: fp4 (sub-default; model default fp8)\neffort: high (default)\nsteering: ! NOT in order",
         variant: "success",
       },
     ])
   })
 
-  test("alt+e ignores a malformed endpointInfo payload", async () => {
+  test("alt+e ignores malformed or control-only endpointInfo attributes", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
-      quantization: { value: 42, relation: "default", default: "fp8" },
-      effort: { value: "max", relation: "bogus", default: "high" },
+      quantization: { value: "\u0000\n ", relation: "default", default: "fp8" },
+      effort: { value: "max", relation: "sub-default", default: "\u0007 " },
     }
     await drain()
 
     await active.command("model-compare.endpoint").run()
     await drain()
 
-    // The malformed quantization is dropped; the unknown relation degrades to
-    // the bare value (no false default/sub-default claim).
+    // Control-only quantization value is dropped; control-only default degrades
+    // to null so `(sub-default)` renders without a blank `model default ` slot.
     expect(active.toasts).toEqual([
       {
-        message: "last response: acme/alpha @ Novita\neffort: max\nsteering: in order",
+        message:
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: Novita\neffort: max (sub-default)\nsteering: in order",
         variant: "success",
       },
     ])
@@ -1477,7 +1488,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e renders a mixed quantization", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Mixed", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Mixed",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "fp4/fp8", relation: "mixed", default: "fp8" },
       effort: null,
@@ -1489,7 +1505,8 @@ describe("the alt+e toast (the served endpoint)", () => {
 
     expect(active.toasts).toEqual([
       {
-        message: "last response: acme/alpha @ Mixed\nquantization: fp4/fp8 (mixed)\nsteering: in order",
+        message:
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: Mixed\nquantization: fp4/fp8 (mixed)\nsteering: in order",
         variant: "success",
       },
     ])
@@ -1498,7 +1515,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e renders above-default with no published default", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "HighPrecision", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "HighPrecision",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "bf16", relation: "above-default", default: null },
       effort: null,
@@ -1511,7 +1533,7 @@ describe("the alt+e toast (the served endpoint)", () => {
     expect(active.toasts).toEqual([
       {
         message:
-          "last response: acme/alpha @ HighPrecision\nquantization: bf16 (above default)\nsteering: in order",
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: HighPrecision\nquantization: bf16 (above default)\nsteering: in order",
         variant: "success",
       },
     ])
@@ -1520,7 +1542,12 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e renders sub-default with no published default", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "OpenInference", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "OpenInference",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "fp4", relation: "sub-default", default: null },
       effort: null,
@@ -1533,16 +1560,21 @@ describe("the alt+e toast (the served endpoint)", () => {
     expect(active.toasts).toEqual([
       {
         message:
-          "last response: acme/alpha @ OpenInference\nquantization: fp4 (sub-default)\nsteering: in order",
+          "last response: acme/alpha\nprovider: openrouter\nendpoint: OpenInference\nquantization: fp4 (sub-default)\nsteering: in order",
         variant: "success",
       },
     ])
   })
 
-  test("alt+e flattens control characters in an endpointInfo value", async () => {
+  test("alt+e flattens control characters in provider, model, endpoint, and attribute values", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter\n### INJECT",
+      endpoint: "Novita\u0007\nEdge",
+      model: "acme/alpha\r\nbeta",
+      steering: "in-order",
+    }
     active.reportPayload.endpointInfo = {
       quantization: { value: "fp8\nfp4", relation: "default", default: "fp8" },
       effort: null,
@@ -1552,20 +1584,28 @@ describe("the alt+e toast (the served endpoint)", () => {
     await active.command("model-compare.endpoint").run()
     await drain()
 
-    // The newline is flattened to a space at the trust boundary, so the toast
-    // stays one line per attribute.
     expect(active.toasts).toEqual([
       {
-        message: "last response: acme/alpha @ Novita\nquantization: fp8 fp4 (default)\nsteering: in order",
+        message:
+          "last response: acme/alpha beta\nprovider: openrouter ### INJECT\nendpoint: Novita Edge\nquantization: fp8 fp4 (default)\nsteering: in order",
         variant: "success",
       },
     ])
   })
 
-  test("alt+e toasts the downgrade copy when the capture is a downgrade", async () => {
+  test("alt+e renders endpoint: unknown, steering: unknown, and known effort for non-OpenRouter replies", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: true }
+    active.reportPayload.capture = {
+      provider: "anthropic",
+      endpoint: null,
+      model: "claude-sonnet-4-5",
+      steering: "unknown",
+    }
+    active.reportPayload.endpointInfo = {
+      quantization: null,
+      effort: { value: "high", relation: "unknown", default: null },
+    }
     await drain()
 
     await active.command("model-compare.endpoint").run()
@@ -1573,20 +1613,49 @@ describe("the alt+e toast (the served endpoint)", () => {
 
     expect(active.toasts).toEqual([
       {
-        message: "last response: acme/alpha @ Novita\nsteering: ! NOT in order",
+        message:
+          "last response: claude-sonnet-4-5\nprovider: anthropic\nendpoint: unknown\neffort: high\nsteering: unknown",
         variant: "success",
       },
     ])
   })
 
-  test("alt+e with no capture for the session toasts nothing", async () => {
+  test("alt+e normalizes whitespace/control-only endpoint to unknown and bogus steering to unknown", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = null
+    active.reportPayload.capture = {
+      provider: "openai",
+      endpoint: "\u0000 \n ",
+      model: "gpt-5",
+      steering: "not-a-valid-verdict",
+    }
     await drain()
 
     await active.command("model-compare.endpoint").run()
     await drain()
+
+    expect(active.toasts).toEqual([
+      {
+        message: "last response: gpt-5\nprovider: openai\nendpoint: unknown\nsteering: unknown",
+        variant: "success",
+      },
+    ])
+  })
+
+  test("alt+e rejects captures with missing or control-only provider or model", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    for (const bad of [
+      null,
+      { provider: "", endpoint: "Novita", model: "acme/alpha", steering: "in-order" },
+      { provider: "\u0000\n", endpoint: "Novita", model: "acme/alpha", steering: "in-order" },
+      { provider: "openrouter", endpoint: "Novita", model: "\u0007 ", steering: "in-order" },
+      { endpoint: "Novita", model: "acme/alpha", steering: "in-order" },
+    ]) {
+      active.reportPayload.capture = bad
+      await active.command("model-compare.endpoint").run()
+      await drain()
+    }
 
     expect(active.toasts).toEqual([])
   })
@@ -1606,29 +1675,43 @@ describe("the alt+e toast (the served endpoint)", () => {
   test("alt+e looks up the CURRENT session's capture, not a stale one", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     await drain()
 
     await active.command("model-compare.endpoint").run()
     await drain()
     expect(active.toasts).toEqual([
-      { message: "last response: acme/alpha @ Novita\nsteering: in order", variant: "success" },
+      {
+        message: "last response: acme/alpha\nprovider: openrouter\nendpoint: Novita\nsteering: in order",
+        variant: "success",
+      },
     ])
 
-    // A different session must surface ITS payload — a stale s1 record would
-    // re-toast Novita here. The payloads differ so the toast content itself
-    // proves the fresh lookup, not just the call addressing below.
     active.state.route = { type: "session", sessionID: "s2" }
-    active.reportPayload.capture = { endpoint: "DeepInfra", model: "acme/beta", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "DeepInfra",
+      model: "acme/beta",
+      steering: "not-in-order",
+    }
     await active.command("model-compare.endpoint").run()
     await drain()
     expect(active.toasts).toEqual([
-      { message: "last response: acme/alpha @ Novita\nsteering: in order", variant: "success" },
-      { message: "last response: acme/beta @ DeepInfra\nsteering: in order", variant: "success" },
+      {
+        message: "last response: acme/alpha\nprovider: openrouter\nendpoint: Novita\nsteering: in order",
+        variant: "success",
+      },
+      {
+        message:
+          "last response: acme/beta\nprovider: openrouter\nendpoint: DeepInfra\nsteering: ! NOT in order",
+        variant: "success",
+      },
     ])
-    // The lookup routes to the session's own directory: s2's location is
-    // unknown to the fake data layer, so it falls back to the plugin's own
-    // /repo (the honest default for an unresolvable session location).
     expect(active.report).toHaveBeenLastCalledWith(
       { sessionID: "s2" },
       { location: { directory: "/repo" } },
@@ -1824,7 +1907,12 @@ describe("the report dialog footer", () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.steeringNote = "routing steered to fp8, fp4, fp16 endpoints (aliases only)"
 
     await active.command("model-compare.report").run()
@@ -1840,7 +1928,12 @@ describe("the report dialog footer", () => {
     active = await activate()
     active.reportPayload.age = "1h"
     active.reportPayload.entries = ENTRIES
-    active.reportPayload.capture = { endpoint: "Novita", model: "acme/alpha", downgrade: false }
+    active.reportPayload.capture = {
+      provider: "openrouter",
+      endpoint: "Novita",
+      model: "acme/alpha",
+      steering: "in-order",
+    }
     active.reportPayload.steeringNote = null
 
     await active.command("model-compare.report").run()
@@ -1865,7 +1958,12 @@ describe("the report dialog footer", () => {
           sessionID: "s1",
           age: "2h",
           entries: ENTRIES,
-          capture: { endpoint: "DeepInfra", model: "acme/beta", downgrade: true },
+          capture: {
+            provider: "openrouter",
+            endpoint: "DeepInfra",
+            model: "acme/beta",
+            steering: "not-in-order",
+          },
           steeringNote: "routing steered to fp8 endpoints (aliases only)",
         },
       },

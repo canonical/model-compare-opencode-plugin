@@ -5,7 +5,7 @@
 // comparing the requested reasoning effort to the model's default effort.
 import { describe, expect, test } from "vitest"
 import { endpointInfoFor } from "../../src/core/endpoint"
-import { requestedEffortOf } from "../../src/core/steering"
+import { normalizeEffort, requestedEffortOf } from "../../src/core/steering"
 import type { ModelEntry } from "../../src/core/types"
 
 function model(overrides: Partial<ModelEntry> = {}): ModelEntry {
@@ -216,8 +216,37 @@ describe("endpointInfoFor (the served endpoint's attributes)", () => {
     expect(endpointInfoFor(model(), "Novita", "max").effort).toBeNull()
   })
 
-  test("an unknown model has no attributes", () => {
-    expect(endpointInfoFor(undefined, "Novita", "max")).toEqual({
+  test("a null endpoint skips quantization while preserving the model's effort comparison", () => {
+    const reasoning = {
+      default_effort: "high",
+      supported_efforts: ["max", "high", "low"],
+      default_enabled: true,
+      mandatory: false,
+      supports_max_tokens: null,
+      depths: [],
+    }
+    expect(
+      endpointInfoFor(
+        model({ endpoints: ENDPOINTS, defaultPrecision: "fp8", reasoning }),
+        null,
+        "max",
+      ),
+    ).toEqual({
+      quantization: null,
+      effort: { value: "max", relation: "above-default", default: "high" },
+    })
+  })
+
+  test("an unknown model omits quantization and surfaces a known requestedEffort with unknown relation", () => {
+    expect(endpointInfoFor(undefined, null, "max")).toEqual({
+      quantization: null,
+      effort: { value: "max", relation: "unknown", default: null },
+    })
+    expect(endpointInfoFor(undefined, "Novita", "high")).toEqual({
+      quantization: null,
+      effort: { value: "high", relation: "unknown", default: null },
+    })
+    expect(endpointInfoFor(undefined, "Novita", null)).toEqual({
       quantization: null,
       effort: null,
     })
@@ -233,6 +262,92 @@ describe("requestedEffortOf (the capture's effort)", () => {
     expect(requestedEffortOf({ reasoning_effort: "low" }, "max", "high")).toBe("low")
   })
 
+  test("OpenAI Responses per-turn configuration_update beats frozen top-level reasoning.effort and stops at the most recent marker", () => {
+    expect(
+      requestedEffortOf(
+        {
+          reasoning: { effort: "high" },
+          input: [
+            { type: "message", role: "user", content: "turn 1" },
+            { type: "configuration_update", reasoning: { effort: "max" } },
+            { type: "message", role: "user", content: "turn 2" },
+            { type: "configuration_update", reasoning: { effort: "low" } },
+            { type: "message", role: "user", content: "turn 3" },
+          ],
+        },
+        "xhigh",
+        "medium",
+      ),
+    ).toBe("low")
+
+    // Stopping at the most recent marker: a newest "default" marker falls
+    // through to top-level rather than reviving Turn 2's superseded "max".
+    expect(
+      requestedEffortOf(
+        {
+          reasoning: { effort: "high" },
+          input: [
+            { type: "configuration_update", reasoning: { effort: "max" } },
+            { type: "message", role: "user", content: "turn 2" },
+            { type: "configuration_update", reasoning: { effort: "default" } },
+            { type: "message", role: "user", content: "turn 3" },
+          ],
+        },
+        "xhigh",
+        null,
+      ),
+    ).toBe("high")
+  })
+
+  test("Anthropic per-turn system output_config marker beats frozen top-level output_config.effort", () => {
+    expect(
+      requestedEffortOf(
+        {
+          output_config: { effort: "medium" },
+          messages: [
+            { role: "user", content: "turn 1" },
+            { role: "system", output_config: { effort: "high" }, content: [] },
+            { role: "user", content: "turn 2" },
+            { role: "system", output_config: { effort: "max" }, content: [] },
+            { role: "user", content: "turn 3" },
+          ],
+        },
+        "low",
+        null,
+      ),
+    ).toBe("max")
+
+    // Top-level Anthropic output_config.effort beats #variant when no marker is present.
+    expect(requestedEffortOf({ output_config: { effort: "high" } }, "low", null)).toBe("high")
+  })
+
+  test("Gemini thinkingLevel (camelCase, snake_case, and Google Interactions) normalizes case and ignores THINKING_LEVEL_UNSPECIFIED", () => {
+    expect(
+      requestedEffortOf(
+        { generationConfig: { thinkingConfig: { thinkingLevel: "HIGH" } } },
+        "low",
+        null,
+      ),
+    ).toBe("high")
+    expect(
+      requestedEffortOf(
+        { generation_config: { thinking_config: { thinking_level: "MEDIUM" } } },
+        "low",
+        null,
+      ),
+    ).toBe("medium")
+    expect(
+      requestedEffortOf({ generation_config: { thinking_level: "LOW" } }, "max", null),
+    ).toBe("low")
+    expect(
+      requestedEffortOf(
+        { generationConfig: { thinkingConfig: { thinkingLevel: "THINKING_LEVEL_UNSPECIFIED" } } },
+        "high",
+        null,
+      ),
+    ).toBe("high")
+  })
+
   test("the injected effort is used when the body has none", () => {
     expect(requestedEffortOf({}, undefined, "high")).toBe("high")
   })
@@ -241,8 +356,13 @@ describe("requestedEffortOf (the capture's effort)", () => {
     expect(requestedEffortOf({}, "max", null)).toBe("max")
   })
 
-  test("the 'default' variant is not an effort", () => {
+  test("the 'default' variant, non-strings, and control-only strings normalize to null", () => {
     expect(requestedEffortOf({}, "default", null)).toBeNull()
+    expect(requestedEffortOf({}, "DEFAULT", null)).toBeNull()
+    expect(requestedEffortOf({ reasoning: { effort: "\u0000\n\u0007" } }, "\u0007 ", null)).toBeNull()
+    expect(normalizeEffort(42)).toBeNull()
+    expect(normalizeEffort({ effort: "high" })).toBeNull()
+    expect(normalizeEffort("\u0000\u001b")).toBeNull()
   })
 
   test("nothing known reads as null", () => {

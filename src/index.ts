@@ -18,7 +18,7 @@ import { Plugin } from "@opencode/plugin"
 import { parseConfig } from "./config"
 import { pinKey, type Pin } from "./core/pins"
 import { effectiveWeights, rankModels } from "./core/rank"
-import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced } from "./core/types"
+import type { CapturePayload, Catalog, LastReply, ModelEntry, Priority, Sourced } from "./core/types"
 import {
   captureEndpoint,
   injectReasoning,
@@ -28,7 +28,13 @@ import {
   steeringFor,
 } from "./core/steering"
 import { endpointInfoFor } from "./core/endpoint"
-import { formatReport, humanizeAge, reportEntries, steeringNote } from "./opencode/commands"
+import {
+  formatReport,
+  humanizeAge,
+  reportEntries,
+  sanitizeCatalogText,
+  steeringNote,
+} from "./opencode/commands"
 import { ModelCompare } from "./rpc"
 import { planAlias, type AliasTarget } from "./opencode/aliases"
 import { guardDecision, parseAliasRef, type ModelRef } from "./opencode/guard"
@@ -80,63 +86,131 @@ function bodyModelOf(body: unknown): string | undefined {
 // the bound is untouched. Sized so a first SSE data chunk (a comment line
 // plus one data event in the spike's observations) always fits.
 const PEEK_MAX_BYTES = 4096
+const EFFORT_BODY_MAX_BYTES = 256 * 1024
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-// A response field that must be a string, else null (a numeric/absent
-// `provider` or `model` is nothing to capture).
-function stringField(obj: Record<string, unknown>, key: string): string | null {
-  const value = obj[key]
-  return typeof value === "string" ? value : null
+// Bounded read-only JSON body parser for effort extraction (and Turn-1 Q2
+// cannotSteer checks): skips bodyless, compressed, or declared-oversized
+// requests without cloning, bounds chunked stream reads to `maxBytes`, and
+// cancels the cloned reader in `finally` whenever stopped early so
+// ReadableStream.tee() never buffers multi-megabyte multimodal bodies in RAM.
+async function readBoundedJsonBody(request: unknown, maxBytes: number): Promise<unknown> {
+  if (typeof request !== "object" || request === null) return undefined
+  try {
+    const req = request as Request
+    if (req.body === null) return undefined
+    if (req.headers?.has("content-encoding") === true) return undefined
+    const rawLen = req.headers?.get("content-length") ?? null
+    if (rawLen !== null) {
+      const parsedLen = Number(rawLen)
+      if (Number.isFinite(parsedLen) && parsedLen > maxBytes) return undefined
+    }
+    const clone = req.clone()
+    if (clone.body === null) return undefined
+    const reader = clone.body.getReader()
+    const decoder = new TextDecoder()
+    let total = 0
+    let text = ""
+    let reachedEnd = false
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          reachedEnd = true
+          break
+        }
+        const bytes = chunk.value
+        total += bytes.byteLength
+        if (total > maxBytes) return undefined
+        text += decoder.decode(bytes, { stream: true })
+      }
+      text += decoder.decode()
+    } finally {
+      if (!reachedEnd) {
+        // Never `await` cancel() on a cloned Request stream: Request.clone()
+        // tees the underlying ReadableStream, and WHATWG tee's cancelPromise
+        // only settles once BOTH branches cancel — awaiting it inside
+        // http.request deadlocks before downstream fetch can ever read
+        // request.body. Fire-and-forget synchronously flips `canceled2 = true`
+        // so the teed branch buffers nothing while fetch reads request.body.
+        void reader.cancel().catch(() => {})
+      }
+    }
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
 }
 
-// The served `provider`/`model` pair carried by a response's first bytes, or
-// null while the prefix is not yet conclusive (the peek keeps going). Two
-// shapes the spike observed:
-//   - SSE (streaming): data lines — the first one carrying a NON-null
-//     `provider` decides, and `data: [DONE]` concludes without a capture. A
-//     parseable line that carries no provider must NOT conclude anything:
-//     the provider may arrive in a later data line within the byte bound.
-//     Leading comment or blank lines (`: OPENROUTER PROCESSING`, spike fact
-//     5/warmup-B) carry neither, so the peek simply continues to the next
-//     chunk rather than concluding anything from them.
-//   - plain JSON (non-streaming): the whole prefix parses to an object. A
-//     prefix whose JSON is still truncated (e.g. the `provider` key beyond
-//     the peek window) stays inconclusive — the body passes through
-//     uncaptured rather than being buffered.
+// A response field that must be a non-empty, non-control-only string, else null
+// (so empty/whitespace/control-only strings never mask `??` fallbacks).
+function stringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key]
+  if (typeof value !== "string") return null
+  return sanitizeCatalogText(value) !== "" ? value : null
+}
+
+// Extracts the concrete served model across @opencode/ai@2.2.0's response wire
+// shapes: OpenRouter / OpenAI Chat (`model`), OpenAI Responses SSE
+// (`response.model`), Anthropic Messages SSE (`message.model`), and Google
+// Gemini (`modelVersion`).
+function extractModelField(parsed: Record<string, unknown>): string | null {
+  return (
+    stringField(parsed, "model") ??
+    (isPlainObject(parsed.response) ? stringField(parsed.response, "model") : null) ??
+    (isPlainObject(parsed.message) ? stringField(parsed.message, "model") : null) ??
+    stringField(parsed, "modelVersion")
+  )
+}
+
+// Extracts served `provider` and `model` from a response's first bytes, or null
+// while the prefix is not yet conclusive:
+//   - SSE (`sawData === true`): tracks `lastSeenModel` across every parseable
+//     `data:` JSON object; concludes immediately when any `data:` object
+//     carries a non-null `provider`, or with `{ provider: null, model:
+//     lastSeenModel }` on `data: [DONE]` or when `final === true` (4 KB cap
+//     reached or stream ended).
+//   - Plain JSON (`sawData === false`): returns `{ provider, model }` once the
+//     prefix parses to a complete JSON object.
 function extractServedFields(
   prefix: string,
+  final: boolean,
 ): { provider: string | null; model: string | null } | null {
   let sawData = false
+  let lastSeenModel: string | null = null
   for (const line of prefix.split("\n")) {
     const trimmed = line.trim()
     if (!trimmed.startsWith("data:")) continue
     sawData = true
     const payload = trimmed.slice("data:".length).trim()
-    if (payload === "[DONE]") return { provider: null, model: null }
+    if (payload === "[DONE]") return { provider: null, model: lastSeenModel }
     try {
       const parsed = JSON.parse(payload) as unknown
       if (isPlainObject(parsed)) {
-        // Only a NON-null provider concludes the peek: a parseable line
-        // without one must not end the search — the provider may arrive in a
-        // later data line within the byte bound. `data: [DONE]` (above) is
-        // the one line that concludes without a capture.
+        const model = extractModelField(parsed)
+        if (model !== null) lastSeenModel = model
         const provider = stringField(parsed, "provider")
         if (provider !== null) {
-          return { provider, model: stringField(parsed, "model") }
+          return { provider, model: lastSeenModel }
         }
       }
     } catch {
       // A line split across a chunk boundary — keep peeking.
     }
   }
-  if (sawData) return null
+  if (sawData) {
+    return final ? { provider: null, model: lastSeenModel } : null
+  }
   try {
     const parsed = JSON.parse(prefix) as unknown
     if (isPlainObject(parsed)) {
-      return { provider: stringField(parsed, "provider"), model: stringField(parsed, "model") }
+      return {
+        provider: stringField(parsed, "provider"),
+        model: extractModelField(parsed),
+      }
     }
   } catch {
     // Not (yet) JSON — keep peeking.
@@ -270,33 +344,22 @@ export type AliasPlan = {
 // its concrete model was missing from the editor; the applied view then says
 // disabled, whatever the plan wanted.
 //
-// `appliedSteering[sessionID]` records the steering order the request hook
-// ACTUALLY injected into that session's most recent request: the order array
-// when it injected (catalog-projected blocks always carry a non-empty order),
-// null when it did not (non-alias ref, no steering data, a pre-existing body
-// `provider`, or any failure — fail open). The response hook consumes it as
-// captureEndpoint's `order`, so the `!` downgrade flag fires only when a
-// non-empty order was really applied. Last request per session wins.
+// `lastReplies[sessionID]` records the capture for that session's most recent
+// successful (2xx) primary HTTP response across all providers: written
+// synchronously as a placeholder when headers arrive and upgraded from the 4 KB
+// pass-through peek only while `replySeq[sessionID]` still matches `seq` (so a
+// slow older stream cannot clobber a newer reply).
 //
-// `lastEndpoints[sessionID]` records the served-endpoint capture for that
-// session's most recent primary response: the served `provider` string
-// verbatim, the response's concrete `model` id, the downgrade verdict, and
-// the wall-clock moment of the capture. Last-writer-wins WITHIN a session
-// (hook invocations interleave concurrently — every write is per-event, from
-// the event's own sessionID); stale entries for ended sessions are
-// acceptable (no session-removal hook exists to prune them).
+// `applied` correlates each final `Request` object with the steering `order`
+// actually injected into it (`null` whenever provider routing was not injected)
+// and the resolved `requestedEffort`, eliminating concurrent per-session races.
 //
 // `cannotSteerToasted[sessionID]` records that the Q2 fallback's cannot-steer
 // event was already successfully emitted for that session: when a steerable
 // alias request (alias ref + a current pick) finds NO steering data — no
 // catalog source, `sourced === null` — the injection hook emits the event
 // exactly ONCE PER SESSION (never once per request), leaving the request body
-// untouched. A body that already carries a `provider` key binds the
-// exclusion: the emit is skipped (user-configured routing makes the "default
-// routing applies" copy false) without consuming the flag, so a later
-// provider-free request still toasts. The flag is set only AFTER a successful
-// emit (a failed one leaves it unset so a later request retries) and is never
-// re-armed: a session that has seen the toast keeps it for its lifetime.
+// untouched.
 export type WireState = {
   sourced: Sourced | null
   pins: Partial<Record<Priority, Pin>>
@@ -304,15 +367,9 @@ export type WireState = {
   enabled: Partial<Record<Priority, boolean>>
   plan: AliasPlan
   registryDisabled: Partial<Record<Priority, boolean>>
-  appliedSteering: Record<string, string[] | null>
-  // The reasoning effort the session's most recent request asked for (the
-  // injected catalog effort, an explicit #variant, or the body's own reasoning
-  // field); null when the request left the model's default in place. The
-  // response hook copies it into the capture record for the alt+e toast.
-  // Best-effort, last-request-per-session like appliedSteering: concurrent
-  // same-session requests can read the wrong effort (display-only).
-  appliedEffort: Record<string, string | null>
-  lastEndpoints: Record<string, EndpointCapture>
+  lastReplies: Record<string, LastReply>
+  replySeq: Record<string, number>
+  applied: WeakMap<Request, { order: string[] | null; effort: string | null }>
   cannotSteerToasted: Record<string, boolean>
 }
 
@@ -394,14 +451,13 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     enabled: {},
     plan: { picks: {}, enabled: {} },
     registryDisabled: {},
-    // The three per-session records are keyed by ids that reach them from
-    // OUTSIDE (hook events, RPC input): null-prototype objects so a key like
+    // The per-session maps are keyed by ids that reach them from OUTSIDE (hook
+    // events, RPC input): null-prototype objects so a key like
     // "constructor"/"toString"/"__proto__" can never resolve through — or
-    // mutate — the prototype chain (a plain-object lookup would return
-    // Object.prototype junk and poison the report footer).
-    appliedSteering: Object.create(null) as Record<string, string[] | null>,
-    appliedEffort: Object.create(null) as Record<string, string | null>,
-    lastEndpoints: Object.create(null) as Record<string, EndpointCapture>,
+    // mutate — the prototype chain.
+    lastReplies: Object.create(null) as Record<string, LastReply>,
+    replySeq: Object.create(null) as Record<string, number>,
+    applied: new WeakMap<Request, { order: string[] | null; effort: string | null }>(),
     cannotSteerToasted: Object.create(null) as Record<string, boolean>,
   }
   // Test seam: hand the live state object out BEFORE any registration can
@@ -495,40 +551,44 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
     if (decision.error !== undefined) throw new Error(decision.error)
   })
 
-  // The steering injection (design §Steering injection; spike fact 2):
-  // alias-scoped requests whose pick's catalog entry carries a steering block
-  // get the block's provider sub-object injected into the JSON body and the
-  // Request re-created. No kind filter — alias-bound refs arrive for primary
-  // AND compaction (spike scoping), and a directly-picked ref is never an
-  // alias ref, so it falls through untouched (the anti-goal). Every path
-  // that does not inject leaves the original request untouched (fail open,
-  // spec anti-goal) and nulls the session's appliedSteering record.
+  function recordApplied(
+    req: unknown,
+    entry: { order: string[] | null; effort: string | null },
+  ): void {
+    if (typeof req === "object" && req !== null) {
+      state.applied.set(req as Request, entry)
+    }
+  }
+
+  // Request steering, reasoning injection, and applied-effort recording:
+  // alias-scoped requests whose pick's catalog entry carries steering/reasoning
+  // get the corresponding fields injected and `event.request` re-created;
+  // non-alias request bodies are never modified (primary bodies are read up to
+  // 256 KiB solely to record the requested effort). Every path records
+  // `{ order, effort }` on the final Request object in `state.applied`.
   await ctx.session.hook("http.request", async (event) => {
     try {
-      // Cheap gate before any body read (the guard's parseAliasRef rule;
-      // steeringFor re-checks variant-blind): concrete refs — title kinds,
-      // direct picks, fallback-bound sessions — skip the body entirely.
       const p = parseAliasRef(event.model)
       if (p === null) {
-        state.appliedSteering[event.sessionID] = null
-        state.appliedEffort[event.sessionID] = null
+        const body =
+          event.kind === "primary"
+            ? await readBoundedJsonBody(event.request, EFFORT_BODY_MAX_BYTES)
+            : undefined
+        recordApplied(event.request, {
+          order: null,
+          effort: requestedEffortOf(body, event.model?.variant, null),
+        })
         return
       }
-      // The Q2 fallback (Task 6): a steerable alias request (alias ref + a
-      // current pick) with NO steering data — no catalog source,
-      // `sourced === null` — proceeds untouched, but the TUI is told so it
-      // can toast the fallback: exactly ONCE PER SESSION (the
-      // cannotSteerToasted flag), never once per request. A disabled alias
-      // (no pick) stays silent — that is the guard's domain, not a toast.
-      // The body is never reassigned — the request proceeds untouched.
+      // The Q2 fallback: a steerable alias request with NO catalog source
+      // (`sourced === null`) proceeds untouched and emits `cannotSteer` at most
+      // once per session (unless `body.provider` is already set). Both the Q2
+      // check and steady-state primary fallback turns share the bounded 256 KiB
+      // reader without double-cloning.
       if (state.sourced === null) {
-        state.appliedSteering[event.sessionID] = null
-        state.appliedEffort[event.sessionID] = requestedEffortOf(undefined, event.model.variant, null)
+        let parsedBody: unknown = undefined
+        let bodyReadAttempted = false
         const pick = state.picks[p]
-        // The whole toast block needs the RPC registration (the emit's event
-        // bridge): while it is still undefined the block is skipped ENTIRELY —
-        // no body read, no flag write, no emit — so nothing is consumed while
-        // there is nowhere to emit to (a later request retries).
         const registration = rpcRegistration
         if (
           registration !== undefined &&
@@ -536,27 +596,11 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           pick.id !== null &&
           state.cannotSteerToasted[event.sessionID] !== true
         ) {
-          // The one-off body read (fix round 1): gated behind the once-flag
-          // so steady-state requests are never parsed. A body that already
-          // carries a `provider` key binds the exclusion — user-configured
-          // routing makes the "default routing applies" toast false copy —
-          // so the emit is skipped WITHOUT consuming the flag: a later
-          // provider-free request for the session still toasts. The read is
-          // a cheap clone-parse; the original Request is never reassigned.
-          let bodyHasProvider = false
-          try {
-            const body: unknown = JSON.parse(await (event.request as Request).clone().text())
-            bodyHasProvider =
-              typeof body === "object" && body !== null && Object.hasOwn(body, "provider")
-          } catch {
-            // Unreadable or missing body: no provider key is knowable —
-            // fall back to the plain emit (fail open).
-          }
+          bodyReadAttempted = true
+          parsedBody = await readBoundedJsonBody(event.request, EFFORT_BODY_MAX_BYTES)
+          const bodyHasProvider =
+            isPlainObject(parsedBody) && Object.hasOwn(parsedBody, "provider")
           if (!bodyHasProvider) {
-            // Fire-and-forget: the emit must never block the request path.
-            // The once-flag is set only AFTER a successful emit; a failed
-            // emit leaves it unset so a later request for the session
-            // retries — never a permanently lost toast.
             void registration.events
               .emit("cannotSteer", { sessionID: event.sessionID })
               .then(() => {
@@ -567,6 +611,13 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
               })
           }
         }
+        if (event.kind === "primary" && !bodyReadAttempted) {
+          parsedBody = await readBoundedJsonBody(event.request, EFFORT_BODY_MAX_BYTES)
+        }
+        recordApplied(event.request, {
+          order: null,
+          effort: requestedEffortOf(parsedBody, event.model.variant, null),
+        })
         return
       }
       const request = event.request as Request
@@ -574,9 +625,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       try {
         body = JSON.parse(await request.clone().text())
       } catch {
-        // No JSON body (or unreadable): untouched, fail open.
-        state.appliedSteering[event.sessionID] = null
-        state.appliedEffort[event.sessionID] = requestedEffortOf(undefined, event.model.variant, null)
+        recordApplied(event.request, {
+          order: null,
+          effort: requestedEffortOf(undefined, event.model.variant, null),
+        })
         return
       }
       const byId = new Map(
@@ -584,11 +636,6 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       )
       const bodyModel = bodyModelOf(body)
       const steering = steeringFor(event.model, bodyModel, state.picks, byId)
-      // Two independent injections share one re-created Request: the
-      // provider-routing block and the catalog's scored reasoning effort.
-      // Each helper preserves a value the body already sets, so an explicit
-      // #variant (either signalled by the event's variant or by the body's
-      // own reasoning field) wins without withholding the other block.
       let modified: unknown = body
       let providerApplied = false
       if (steering !== null) {
@@ -598,29 +645,30 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
           providerApplied = true
         }
       }
-      const effort = reasoningEffortFor(
+      const catalogEffort = reasoningEffortFor(
         event.model,
         event.model.variant,
         bodyModel,
         state.picks,
         byId,
       )
-      if (effort !== null) modified = injectReasoning(modified, effort)
-      // The effort the request actually asks for, for the capture's display:
-      // the body's own field wins (injectReasoning never clobbers it), then
-      // the injected catalog effort, then an explicit #variant.
-      state.appliedEffort[event.sessionID] = requestedEffortOf(body, event.model.variant, effort)
+      let reasoningApplied = false
+      if (catalogEffort !== null) {
+        const next = injectReasoning(modified, catalogEffort)
+        if (next !== modified) {
+          modified = next
+          reasoningApplied = true
+        }
+      }
+      const requestedEffort = requestedEffortOf(
+        body,
+        event.model.variant,
+        reasoningApplied ? catalogEffort : null,
+      )
       if (modified === body) {
-        // Neither block had anything to add: no steering data, no scored
-        // effort, or the body already carries the corresponding field.
-        state.appliedSteering[event.sessionID] = null
+        recordApplied(event.request, { order: null, effort: requestedEffort })
         return
       }
-      // Spike fact 2's verified recipe: re-create the Request around the
-      // modified body, dropping the stale length/encoding headers (the
-      // runtime re-derives content-length for the new body). The original's
-      // `signal` is forwarded so abort/interrupt handling stays wired to the
-      // request the chain handed us.
       const headers = new Headers(request.headers)
       headers.delete("content-length")
       headers.delete("content-encoding")
@@ -630,111 +678,87 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         body: JSON.stringify(modified),
         signal: request.signal,
       })
-      // Record the order actually applied — the response hook reads it as
-      // captureEndpoint's order (the `!` flag fires only on a non-empty one).
-      // A reasoning-only injection (or a body that already carried routing)
-      // applies no routing, so the record is null.
-      state.appliedSteering[event.sessionID] = providerApplied ? steering!.order : null
+      recordApplied(event.request, {
+        order: providerApplied ? steering!.order : null,
+        effort: requestedEffort,
+      })
     } catch {
-      // Fail open: any error leaves the original request proceeding
-      // untouched, and records that nothing was injected.
-      state.appliedSteering[event.sessionID] = null
-      state.appliedEffort[event.sessionID] = null
+      // Fail open: any error leaves the original request proceeding untouched.
+      recordApplied(event.request, {
+        order: null,
+        effort: requestedEffortOf(undefined, event.model?.variant, null),
+      })
     }
   })
 
-  // The response capture (design §Steering visibility): a primary response's
-  // first few bytes are peeked THROUGH a pass-through transform (never
-  // buffered or consumed — the peeked chunks are forwarded untouched, so the
-  // rest of the body flows byte-for-byte) to read the served `provider` and
-  // `model`, and the session's lastEndpoints record is written per-event from
-  // the event's OWN sessionID (hook invocations interleave concurrently —
-  // never write from a shared "current session"). Only primary responses of
-  // alias-bound sessions update the capture — a non-alias model ref returns
-  // before any wrap (zero modification, the anti-goal); any body the peek
-  // cannot parse passes through unmodified, uncaptured; every error is
-  // swallowed — the capture is best-effort and must never break the response
-  // itself.
+  // Last-reply capture: every successful (2xx) primary HTTP response across all
+  // providers writes a synchronous placeholder in `state.lastReplies` and wraps
+  // `response.body` in a pass-through 4 KB peek (forwarding every chunk
+  // byte-for-byte) to upgrade `servedModel`, `endpoint`, and `steering` when
+  // `seq` still matches the session's newest reply.
   await ctx.session.hook("http.response", async (event) => {
     try {
       if (event.kind !== "primary") return
-      // Alias-scoped (the spec's binding constraint): capture fires only when
-      // the session's model is one of the three alias refs. A non-alias
-      // session — a direct pick, another agent, any provider — gets ZERO
-      // modification: no wrap, no peek, no capture. The request-side half of
-      // the binding (the request's model equals that alias's current pick) is
-      // inherited via appliedSteering, which only the injection hook's
-      // injecting paths set to a non-empty order; a disabled alias's session
-      // carries its concrete fallback ref here and captures nothing.
-      if (parseAliasRef(event.model) === null) return
       const response = event.response
-      if (response === undefined) return
+      if (response === undefined || response.ok !== true) return
+
+      const seq = (state.replySeq[event.sessionID] ?? 0) + 1
+      state.replySeq[event.sessionID] = seq
+      const applied =
+        typeof event.request === "object" && event.request !== null
+          ? state.applied.get(event.request as Request)
+          : undefined
+      state.lastReplies[event.sessionID] = {
+        sessionID: event.sessionID,
+        providerID: event.model.providerID,
+        requestedModel: event.model.id,
+        at: now(),
+        seq,
+        servedModel: null,
+        endpoint: null,
+        steering: "unknown",
+        requestedEffort:
+          applied !== undefined
+            ? applied.effort
+            : requestedEffortOf(undefined, event.model.variant, null),
+      }
+
       const body = response.body
       if (body === null) return
-
-      // Read ONCE, per-event, from the event's own sessionID. The record
-      // holds the session's most recent REQUEST's order — best-effort ONLY:
-      // with concurrent same-session requests (compaction/title alongside
-      // primary) the verdict can be wrong in EITHER direction. A newer
-      // non-injecting request nulls the record and this response's downgrade
-      // then reads `false` even if its own request did inject (false
-      // negative); a newer injecting request leaves ITS order here, and a
-      // response produced under the older order may be flagged `!` against
-      // the wrong order (false positive). Display-only impact — the alt+e
-      // toast and the report footer; nothing about the sent request depends
-      // on this read.
-      const order = state.appliedSteering[event.sessionID] ?? null
-      const requestedEffort = state.appliedEffort[event.sessionID] ?? null
 
       const decoder = new TextDecoder()
       let captured = ""
       let peekedBytes = 0
       let done = false
-      const record = (provider: string | null, model: string | null) => {
+      const upgrade = (provider: string | null, model: string | null) => {
         done = true
-        // Nothing to show (no provider at all, or a name with no provider
-        // part): treat as no capture — captureEndpoint's endpoint === null
-        // means exactly that.
-        if (provider === null) return
-        const verdict = captureEndpoint(provider, order)
-        if (verdict.endpoint === null) return
-        state.lastEndpoints[event.sessionID] = {
-          sessionID: event.sessionID,
+        const current = state.lastReplies[event.sessionID]
+        if (current === undefined || current.seq !== seq) return
+        const verdict = captureEndpoint(provider, applied?.order ?? null)
+        state.lastReplies[event.sessionID] = {
+          ...current,
+          servedModel: model ?? current.servedModel,
           endpoint: verdict.endpoint,
-          // The spike established OpenRouter responses always carry `model`;
-          // an outlier without one still records the endpoint (the capture's
-          // point), with an empty id standing in for the missing field.
-          model: model ?? "",
-          downgrade: verdict.downgrade,
-          requestedEffort,
-          at: now(),
+          steering: verdict.steering,
         }
       }
-      const inspect = () => {
-        const peek = extractServedFields(captured)
-        if (peek !== null) record(peek.provider, peek.model)
+      const inspect = (final: boolean) => {
+        const peek = extractServedFields(captured, final)
+        if (peek !== null) upgrade(peek.provider, peek.model)
       }
       const transform = new TransformStream<Uint8Array, Uint8Array>({
         transform: (chunk, controller) => {
           try {
             if (!done) {
-              // The peek is byte-bounded: only the first PEEK_MAX_BYTES
-              // bytes of the stream are ever decoded for inspection — a
-              // chunk that crosses the bound contributes only its head, and
-              // the rest is never decoded (it still passes through
-              // untouched, below).
               const take = Math.min(chunk.byteLength, PEEK_MAX_BYTES - peekedBytes)
               if (take > 0) captured += decoder.decode(chunk.subarray(0, take), { stream: true })
               peekedBytes += take
-              // Extraction runs on every peeked chunk: a first chunk that is
-              // only a comment line must not conclude anything — the data
-              // line may arrive in a later chunk (spike fact 5).
-              inspect()
-              if (peekedBytes >= PEEK_MAX_BYTES) done = true
+              const atBound = peekedBytes >= PEEK_MAX_BYTES
+              if (atBound) captured += decoder.decode()
+              inspect(atBound)
+              if (atBound) done = true
             }
           } catch {
-            // Inspection never breaks the stream: give up on the peek, keep
-            // forwarding.
             done = true
           }
           controller.enqueue(chunk)
@@ -742,74 +766,57 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
         flush: () => {
           try {
             if (!done) {
-              // The stream ended before the bound: flush any held-back
-              // multi-byte tail and make one final extraction attempt.
               captured += decoder.decode()
-              inspect()
+              inspect(true)
             }
           } catch {
             done = true
           }
         },
       })
-      // Re-create the Response around the pass-through stream (mirror of the
-      // request hook's re-creation): the original body is owned by the chain
-      // and never consumed by the plugin. Deliberate deviation from the spike
-      // recipe: the spike DELETED content-length/content-encoding on BOTH the
-      // request and the response re-creation, while here the body passes
-      // through unchanged, so the response's exact headers are kept verbatim
-      // for byte-identical passthrough. Known cost of the re-creation: the
-      // new Response cannot carry `url`, `type` or `redirected` (they reset
-      // to ""/"default"/false) — no consumer of those fields is known in this
-      // plugin; flagged for any downstream hook that reads them.
       event.response = new Response(body.pipeThrough(transform), {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
       })
     } catch {
-      // Fail open: any error leaves the response untouched and uncaptured.
+      // Fail open: any error leaves the response untouched.
     }
   })
 
-  // The RPC (V2 plugins RPC): the report method serves the SAME text the
-  // /model-compare command synthesizes (one builder — the two can never
-  // drift), and the registration carries the report EVENT the command emits
-  // so the TUI half can open the report as an instant selectable dialog.
-  // Registered BEFORE the commands: the command's execute emits through it.
-  // One registration per rpcID: the host resolves duplicates last-one-wins,
-  // so a second register() would silently rebind the events bridge.
-  //
-  // The report footer (design §Steering visibility): the payload carries the
-  // session's last-endpoint capture and the steering note. One derivation
-  // (reportFooter, below) serves the RPC method, the event emit and
-  // formatReport, so the dialog's footer and the transcript text agree.
+  const findCatalogModel = (doc: Catalog, rawId: string): ModelEntry | undefined =>
+    doc.models.find((entry) => entry.id === rawId) ??
+    doc.models.find((entry) => entry.id === rawId.replace(/#.*$/, ""))
+
   const reportFooter = (sessionID: string | null) => {
-    // The capture is keyed by sessionID (Task 5's per-session map): a null
-    // session (the opening screen) has nothing to look up. The record's
-    // display fields are projected — the toast needs `downgrade` too, so all
-    // three travel.
-    const record = sessionID === null ? undefined : state.lastEndpoints[sessionID]
-    const capture =
+    const record = sessionID === null ? undefined : state.lastReplies[sessionID]
+    const capture: CapturePayload | null =
       record === undefined
         ? null
-        : { endpoint: record.endpoint, model: record.model, downgrade: record.downgrade }
-    // The served endpoint's attributes (the alt+e toast): match the response's
-    // provider display name to the catalog's per-endpoint entries and compare
-    // the endpoint's quantization and the requested effort to the model's
-    // defaults. Without a catalog there is nothing to match against; the
-    // capture still travels (the toast then shows the provider and verdict).
+        : {
+            provider: record.providerID,
+            endpoint: record.endpoint,
+            model: record.servedModel ?? record.requestedModel,
+            steering: record.steering,
+          }
     let endpointInfo: ReturnType<typeof endpointInfoFor> | null = null
-    if (record !== undefined && state.sourced !== null) {
-      const doc = state.sourced.doc
-      const model =
-        doc.models.find((entry) => entry.id === record.model) ??
-        doc.models.find((entry) => entry.id === record.model.replace(/#.*$/, ""))
+    if (record !== undefined) {
+      let model: ModelEntry | undefined
+      if (record.providerID === "openrouter" && state.sourced !== null) {
+        const doc = state.sourced.doc
+        if (record.servedModel !== null) {
+          model = findCatalogModel(doc, record.servedModel)
+        }
+        if (
+          model === undefined &&
+          parseAliasRef({ providerID: record.providerID, id: record.requestedModel }) === null
+        ) {
+          model = findCatalogModel(doc, record.requestedModel)
+        }
+      }
       const info = endpointInfoFor(model, record.endpoint, record.requestedEffort)
       if (info.quantization !== null || info.effort !== null) endpointInfo = info
     }
-    // The steering note needs the catalog: without a source there is no data
-    // to derive it from, and the note does not render.
     const steeringNoteFor =
       state.sourced === null ? null : steeringNote(state.sourced.doc, state.picks, state.enabled)
     return { capture, steeringNote: steeringNoteFor, endpointInfo }
@@ -820,9 +827,10 @@ export async function wire(ctx: PluginCtx, deps: WireDeps = {}): Promise<() => v
       const input = rawInput as { sessionID?: string | null } | undefined
       const sessionID = input?.sessionID ?? null
       const ranks = reportRanks()
-      // ONE derivation per call: the same footer fields feed formatReport's
-      // context and the returned payload, so the transcript text and the
-      // dialog footer can never disagree.
+      // ONE derivation per call: `reportFooter` computes `steeringNote` (shared
+      // with `showReportDialog`), `capture` (feeds transcript-only
+      // `lastResponseLine` in `formatReport` / `report` RPC `text` plus `alt+e`),
+      // and `endpointInfo` (powers the `alt+e` toast).
       const footer = reportFooter(sessionID)
       if (state.sourced === null || ranks === null) {
         return {

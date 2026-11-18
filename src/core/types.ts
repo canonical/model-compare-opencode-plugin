@@ -103,23 +103,35 @@ export const DEFAULT_WEIGHTS: Record<Priority, Weights> = {
 // own clock, not `generated_at`, is the data age (design §5, §9).
 export type Sourced = { doc: Catalog; acquiredAt: number }
 
-// The served-endpoint capture record (design §Steering visibility): what the
-// http.response hook wrote for one session's most recent primary response.
-// `endpoint` is the served `provider` string verbatim (a display name like
-// "Novita" — spike fact 3: never the tagged-slug form); `model` is the
-// response's concrete model id, captured alongside it (the spike confirmed
-// OpenRouter responses carry both). `downgrade` is captureEndpoint's verdict
-// — true ONLY when a non-empty steering order was actually applied to the
-// request and the served provider matches none of it.
-export type EndpointCapture = {
+// Tri-state steering verdict for a session's last primary reply: "in-order"
+// and "not-in-order" require BOTH a non-empty steering `order` actually applied
+// to the request AND a parseable served `provider` in the response; everything
+// else (non-alias requests, missing catalog/steering, pre-existing `provider`,
+// or an unreported/unreadable response `provider`) is "unknown".
+export type SteeringVerdict = "in-order" | "not-in-order" | "unknown"
+
+// Per-session capture record for the session's most recent successful (2xx)
+// primary HTTP reply across all providers. Written synchronously as a
+// placeholder on response headers and upgraded via the 4 KB pass-through peek
+// when `seq` still matches the session's latest counter.
+export type LastReply = {
   sessionID: string
-  endpoint: string
-  model: string
-  downgrade: boolean
-  // The reasoning effort the request asked for: the injected catalog effort,
-  // an explicit #variant, or the body's own reasoning field. Null when the
-  // request left the model's default in place (or the effort is unknowable).
-  // Display-only, like the rest of the capture.
-  requestedEffort: string | null
+  providerID: string
+  requestedModel: string
   at: number
+  seq: number
+
+  servedModel: string | null
+  endpoint: string | null
+  steering: SteeringVerdict
+  requestedEffort: string | null
+}
+
+// Shared wire projection for the report RPC payload, ReportContext.capture,
+// lastResponseLine (src/opencode/commands.ts), and toCapture (src/tui.tsx).
+export type CapturePayload = {
+  provider: string
+  endpoint: string | null
+  model: string
+  steering: SteeringVerdict
 }

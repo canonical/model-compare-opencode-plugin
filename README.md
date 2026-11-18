@@ -82,7 +82,7 @@ Note that an agent's frontmatter `model` applies to subagent launches everywhere
 | `alt+m` | Open the current-picks dialog for `balanced`, `price`, and `quality` |
 | `alt+shift+m` | Open the top-5 report dialog (same as `/model-compare`) |
 | `alt+u` | Switch the session to your `defaultPriority` pick (same as `/use-best`) |
-| `alt+e` | Show a toast with the endpoint, quantization, effort, and steering status of the last alias reply |
+| `alt+e` | Show a toast with the provider, endpoint, quantization, effort, and steering status of the session's last reply |
 
 Both dialogs and `alt+u` also work on OpenCode's opening screen before a session exists: selecting a priority or model creates and opens a new session bound to that choice. The TUI footer shows `MC: balanced → <pick>` as a compact status indicator, and toasts announce pick changes when a refresh flips an alias.
 
@@ -114,7 +114,7 @@ Steering stays out of your way when you don't want it:
 - **Explicit `provider` wins:** if a request body already sets `provider`, the plugin leaves it alone.
 - **Graceful fallback:** if no catalog data is available (for example, while offline on `options.fallback`), requests proceed with OpenRouter's default routing, and the TUI shows a one-time notice.
 
-Press `alt+e` after an alias reply to see which provider served it, how its quantization and reasoning effort compare to the model's defaults, and whether the provider was in the steered `order` list (`steering: in order` vs. `steering: ! NOT in order`).
+While **steering** applies only to the three aliases, **last-reply capture** (`alt+e` and `/model-compare`'s transcript summary) tracks every successful primary HTTP reply in the session across all providers. Press `alt+e` after any reply to see the model, API `provider` (`openrouter`, `anthropic`, `openai`, …), served `endpoint` (from the response body when reported, or `endpoint: unknown` when unreported or beyond the bounded 4 KB response peek), optional `quantization` and reasoning `effort` (and how they compare to the model's OpenRouter catalog defaults when applicable), and the tri-state steering status (`steering: in order`, `steering: ! NOT in order`, or `steering: unknown` when no steering order applied or no served endpoint was reported).
 
 
 ### Reasoning depths

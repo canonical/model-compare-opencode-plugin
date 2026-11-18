@@ -1103,6 +1103,7 @@ describe("steering injection hook", () => {
       kind?: string
       sessionID?: string
       body?: unknown
+      headers?: Record<string, string>
       request?: unknown
     } = {},
   ) {
@@ -1115,10 +1116,8 @@ describe("steering injection hook", () => {
         opts.request ??
         new Request(REQUEST_URL, {
           method: "POST",
-          headers: {
+          headers: opts.headers ?? {
             "content-type": "application/json",
-            "content-length": "123",
-            "content-encoding": "gzip",
           },
           body: JSON.stringify(
             opts.body ?? {
@@ -1137,7 +1136,13 @@ describe("steering injection hook", () => {
 
   test("an alias-scoped request is re-created with the steering provider injected into its body", async () => {
     const { hookCallbacks } = await wired()
-    const event = steeredEvent()
+    const event = steeredEvent({
+      headers: {
+        "content-type": "application/json",
+        "content-length": "123",
+        "content-encoding": "gzip",
+      },
+    })
     const original = event.request as Request
 
     await hookCallbacks[1](event)
@@ -1393,19 +1398,9 @@ describe("steering injection hook", () => {
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
   })
 
-  // The invariant the response hook's order read leans on: EVERY
-  // no-injection path nulls the session's appliedSteering record — here the
-  // `state.sourced === null` early-out, both when its Q2 toast fires and when
-  // the pre-existing-provider exclusion suppresses the emit — so if `sourced`
-  // ever transitioned non-null → null, a session's stale order could never
-  // surface as a false `!` downgrade verdict. The assertions pin EXACT null
-  // (`toBeNull`): an absent key would read `undefined`, so deleting a null
-  // write fails the test instead of passing it vacuously.
-  test("appliedSteering is nulled after the no-catalog early-out and the Q2 cannot-steer path", async () => {
+  test("applied WeakMap records null order after the no-catalog early-out and captures bounded body effort on both Q2 and steady-state turns", async () => {
     const harness = makeCtx()
     let state!: WireState
-    // Cold start with a runnable fallback: sourced stays null while the
-    // aliases are enabled on the fallback — a steerable pick exists.
     harness.raw.options = { fallback: "openrouter/zeta/fallback" }
     harness.raw.model.list.mockReturnValue({
       location: {},
@@ -1420,33 +1415,77 @@ describe("steering injection hook", () => {
     await drain()
     expect(harness.hookCallbacks).toHaveLength(3)
 
-    // The Q2 cannot-steer path (the toast fires): the record is EXACTLY
-    // null — a deleted write (absent key → undefined) must fail here.
-    await harness.hookCallbacks[1](steeredEvent({ sessionID: "s1" }))
-    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
-    expect(state.appliedSteering.s1).toBeNull()
-
-    // The same no-catalog early-out with the emit suppressed (the body
-    // pre-sets `provider`): no new toast, and the record is nulled too.
-    await harness.hookCallbacks[1](
-      steeredEvent({
-        sessionID: "s2",
-        body: { model: "acme/alpha", messages: [{ role: "user", content: "hi" }], provider: { order: ["acme"] } },
+    // Turn 1 (Q2 cannot-steer fires): single bounded read captures body effort
+    // without cloning twice.
+    const rawTurn1 = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "zeta/fallback",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { effort: "low" },
       }),
-    )
+    })
+    const cloneSpy = vi.spyOn(rawTurn1, "clone")
+    const turn1 = steeredEvent({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "model-compare/price", variant: "high" },
+      request: rawTurn1,
+    })
+    await harness.hookCallbacks[1](turn1)
     expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
-    expect(state.appliedSteering.s2).toBeNull()
+    expect(cloneSpy).toHaveBeenCalledTimes(1)
+    expect(state.applied.get(turn1.request as Request)).toEqual({
+      order: null,
+      effort: "low",
+    })
+
+    // Turn 2 (steady-state after cannotSteerToasted is set): still captures body effort.
+    const turn2 = steeredEvent({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "model-compare/price", variant: "high" },
+      body: {
+        model: "zeta/fallback",
+        messages: [{ role: "user", content: "turn 2" }],
+        output_config: { effort: "max" },
+      },
+    })
+    await harness.hookCallbacks[1](turn2)
+    expect(harness.rpcEmit).toHaveBeenCalledTimes(1)
+    expect(state.applied.get(turn2.request as Request)).toEqual({
+      order: null,
+      effort: "max",
+    })
+
+    // Turn 1 on s2 with oversized body (>256 KiB): Q2 read is bounded, does NOT
+    // clone a second time, and falls back cleanly to #variant.
+    const bigPad = "x".repeat(260 * 1024)
+    const rawOversized = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "zeta/fallback",
+        pad: bigPad,
+        reasoning: { effort: "low" },
+      }),
+    })
+    const oversizedCloneSpy = vi.spyOn(rawOversized, "clone")
+    const oversizedTurn = steeredEvent({
+      sessionID: "s2",
+      model: { providerID: "openrouter", id: "model-compare/price", variant: "high" },
+      request: rawOversized,
+    })
+    await harness.hookCallbacks[1](oversizedTurn)
+    expect(oversizedCloneSpy).toHaveBeenCalledTimes(1)
+    expect(state.applied.get(oversizedTurn.request as Request)).toEqual({
+      order: null,
+      effort: "high",
+    })
+    // Downstream fetch can still read the full 260 KiB original request body untouched.
+    expect((await bodyOf(oversizedTurn.request as Request)).pad).toBe(bigPad)
   })
 
-  // The transition vector (Task 4 Step 1's pinned promise): the write and
-  // null paths INTERACT within one session — an injecting request sets the
-  // record to the actually-applied order, and the NEXT request for the same
-  // session whose body pre-sets `provider` (the no-clobber exclusion) must
-  // null it again. Exact assertions only: a stale order surviving the second
-  // request, or an absent key standing in for the null write, both fail —
-  // a later response could otherwise match the stale order and surface a
-  // false `!` downgrade verdict.
-  test("an injecting request followed by a pre-set-provider request leaves the record exactly null", async () => {
+  test("an injecting request followed by a pre-set-provider request records independent WeakMap entries (and reasoning-only re-creation records order: null)", async () => {
     let state!: WireState
     const { hookCallbacks } = await wired({
       onState: (s) => {
@@ -1454,24 +1493,230 @@ describe("steering injection hook", () => {
       },
     })
 
-    // First request: the injection path — the record is the REAL order
-    // (non-empty, matching the fixture's steering block).
-    await hookCallbacks[1](steeredEvent({ sessionID: "s1" }))
-    expect(state.appliedSteering.s1).toEqual(STEERING.order)
+    // First request: full injection — WeakMap on the FINAL re-created Request holds the order + effort.
+    const first = steeredEvent({ sessionID: "s1" })
+    const firstOriginal = first.request as Request
+    await hookCallbacks[1](first)
+    expect(first.request).not.toBe(firstOriginal)
+    expect(state.applied.get(first.request as Request)).toEqual({
+      order: STEERING.order,
+      effort: "high",
+    })
 
-    // Second request, SAME session, body pre-sets `provider`: the record is
-    // EXACTLY null — never the first request's stale order.
-    await hookCallbacks[1](
-      steeredEvent({
-        sessionID: "s1",
-        body: {
-          model: "acme/alpha",
-          messages: [{ role: "user", content: "hi" }],
-          provider: { order: ["acme"] },
-        },
+    // Second request, SAME session, body pre-sets `provider`: reasoning still
+    // injects and re-creates event.request, but `order` is null (never STEERING.order),
+    // while `first.request` keeps its own order for concurrent correlation.
+    const second = steeredEvent({
+      sessionID: "s1",
+      body: {
+        model: "acme/alpha",
+        messages: [{ role: "user", content: "hi" }],
+        provider: { order: ["acme"] },
+      },
+    })
+    await hookCallbacks[1](second)
+    expect(state.applied.get(second.request as Request)).toEqual({
+      order: null,
+      effort: "high",
+    })
+    expect(state.applied.get(first.request as Request)).toEqual({
+      order: STEERING.order,
+      effort: "high",
+    })
+  })
+
+  test("a pre-existing body.reasoning without a discrete effort (e.g. max_tokens) leaves injectReasoning a no-op and records effort: null", async () => {
+    let state!: WireState
+    const { hookCallbacks } = await wired({
+      onState: (s) => {
+        state = s
+      },
+    })
+
+    const event = steeredEvent({
+      body: {
+        model: "acme/alpha",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning: { max_tokens: 4096 },
+      },
+    })
+    await hookCallbacks[1](event)
+    const rebuilt = event.request as Request
+    const body = await bodyOf(rebuilt)
+    expect(body.reasoning).toEqual({ max_tokens: 4096 })
+    expect(state.applied.get(rebuilt)).toEqual({
+      order: STEERING.order,
+      effort: null,
+    })
+  })
+
+  test("non-alias primary requests bound body reads to 256 KiB, handle split multi-byte UTF-8 chunks, and fail open on compressed/oversized/null/primitive requests", async () => {
+    let state!: WireState
+    const { hookCallbacks } = await wired({
+      onState: (s) => {
+        state = s
+      },
+    })
+
+    // Split 4-byte emoji 🌍 (F0 9F 8C 8D) across chunk boundaries before reasoning.effort.
+    const fullBytes = new TextEncoder().encode(
+      JSON.stringify({
+        model: "claude-sonnet-4-5",
+        messages: [{ role: "user", content: "hello 🌍" }],
+        output_config: { effort: "max" },
       }),
     )
-    expect(state.appliedSteering.s1).toBeNull()
+    const emojiStart = fullBytes.indexOf(0xf0)
+    expect(emojiStart).toBeGreaterThan(0)
+    const splitStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(fullBytes.subarray(0, emojiStart + 2))
+        controller.enqueue(fullBytes.subarray(emojiStart + 2))
+        controller.close()
+      },
+    })
+    const splitReq = new Request("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: splitStream,
+      duplex: "half",
+    } as RequestInit)
+    const splitEvent = steeredEvent({
+      model: { providerID: "anthropic", id: "claude-sonnet-4-5", variant: "low" },
+      request: splitReq,
+    })
+    await hookCallbacks[1](splitEvent)
+    expect(splitEvent.request).toBe(splitReq)
+    expect(state.applied.get(splitReq)).toEqual({ order: null, effort: "max" })
+    // Original request body remains completely readable downstream.
+    expect((await bodyOf(splitReq)).messages).toEqual([{ role: "user", content: "hello 🌍" }])
+
+    // Compressed (content-encoding) skips cloning and falls back to #variant.
+    const compressedReq = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-encoding": "gzip" },
+      body: new Uint8Array([0x1f, 0x8b, 0x08, 0x00]),
+    })
+    const compressedClone = vi.spyOn(compressedReq, "clone")
+    await hookCallbacks[1](
+      steeredEvent({
+        model: { providerID: "openai", id: "gpt-5", variant: "medium" },
+        request: compressedReq,
+      }),
+    )
+    expect(compressedClone).not.toHaveBeenCalled()
+    expect(state.applied.get(compressedReq)).toEqual({ order: null, effort: "medium" })
+
+    // content-length > 256 KiB skips cloning and falls back to #variant.
+    const declaredHugeReq = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(300 * 1024) },
+      body: JSON.stringify({ reasoning: { effort: "low" } }),
+    })
+    const declaredHugeClone = vi.spyOn(declaredHugeReq, "clone")
+    await hookCallbacks[1](
+      steeredEvent({
+        model: { providerID: "openai", id: "gpt-5", variant: "high" },
+        request: declaredHugeReq,
+      }),
+    )
+    expect(declaredHugeClone).not.toHaveBeenCalled()
+    expect(state.applied.get(declaredHugeReq)).toEqual({ order: null, effort: "high" })
+
+    // Headerless chunked stream > 256 KiB cancels the cloned reader and falls back to #variant.
+    let cancelCalled = false
+    const chunk = new Uint8Array(100 * 1024).fill(0x61)
+    let pulls = 0
+    const chunkedStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++
+        if (pulls <= 4) controller.enqueue(chunk)
+        else controller.close()
+      },
+      cancel() {
+        cancelCalled = true
+      },
+    })
+    // Spy on clone() so we observe reader cancellation directly on the cloned branch.
+    const baseChunkedReq = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+    vi.spyOn(baseChunkedReq, "clone").mockReturnValue({
+      body: chunkedStream,
+    } as unknown as Request)
+    await hookCallbacks[1](
+      steeredEvent({
+        model: { providerID: "openai", id: "gpt-5", variant: "xhigh" },
+        request: baseChunkedReq,
+      }),
+    )
+    expect(cancelCalled).toBe(true)
+    expect(state.applied.get(baseChunkedReq)).toEqual({ order: null, effort: "xhigh" })
+
+    // Unmocked multi-chunk ReadableStream-backed Request (4 × 100 KiB = 400 KiB)
+    // exercises real Request.clone() / ReadableStream.tee() without deadlocking on
+    // cancelPromise and keeps the original 400 KiB stream readable downstream.
+    let realPulls = 0
+    const realMultiChunkStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        realPulls++
+        if (realPulls <= 4) controller.enqueue(chunk)
+        else controller.close()
+      },
+    })
+    const realChunkedReq = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: realMultiChunkStream,
+      duplex: "half",
+    } as RequestInit)
+    await hookCallbacks[1](
+      steeredEvent({
+        model: { providerID: "openai", id: "gpt-5", variant: "xhigh" },
+        request: realChunkedReq,
+      }),
+    )
+    expect(state.applied.get(realChunkedReq)).toEqual({ order: null, effort: "xhigh" })
+    expect((await realChunkedReq.arrayBuffer()).byteLength).toBe(400 * 1024)
+
+    // Bodyless request falls back to #variant without cloning.
+    const bodylessReq = new Request(REQUEST_URL)
+    const bodylessClone = vi.spyOn(bodylessReq, "clone")
+    await hookCallbacks[1](
+      steeredEvent({
+        model: { providerID: "openai", id: "gpt-5", variant: "low" },
+        request: bodylessReq,
+      }),
+    )
+    expect(bodylessClone).not.toHaveBeenCalled()
+    expect(state.applied.get(bodylessReq)).toEqual({ order: null, effort: "low" })
+
+    // Non-alias auxiliary request (kind: "title") does not clone body.
+    const titleReq = new Request(REQUEST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reasoning: { effort: "max" } }),
+    })
+    const titleClone = vi.spyOn(titleReq, "clone")
+    await hookCallbacks[1](
+      steeredEvent({
+        kind: "title",
+        model: { providerID: "openai", id: "gpt-5-mini", variant: "minimal" },
+        request: titleReq,
+      }),
+    )
+    expect(titleClone).not.toHaveBeenCalled()
+    expect(state.applied.get(titleReq)).toEqual({ order: null, effort: "minimal" })
+
+    // Primitive / null event.request on an error path never throws TypeError out of catch.
+    await expect(
+      hookCallbacks[1](steeredEvent({ request: null as unknown })),
+    ).resolves.toBeUndefined()
+    await expect(
+      hookCallbacks[1](steeredEvent({ request: "not-an-object" as unknown })),
+    ).resolves.toBeUndefined()
   })
 
   test("a non-alias request with no steering data emits nothing (the gate stays alias-scoped)", async () => {
@@ -1583,25 +1828,27 @@ describe("response capture hook", () => {
     sessionID?: string
     kind?: string
     model?: ModelRef
+    request?: unknown
   }): HookEvent {
     return {
       sessionID: opts.sessionID ?? "s1",
       agent: "build",
       model: opts.model ?? { providerID: "openrouter", id: "model-compare/price" },
       kind: opts.kind ?? "primary",
-      request: new Request(REQUEST_URL),
+      request: opts.request ?? new Request(REQUEST_URL),
       response: opts.response,
     }
   }
 
-  // Fires the steering injection hook for s1 (alias-scoped request whose body
-  // model matches the pick) so the response hook reads a non-empty applied
-  // order from the appliedSteering record.
+  // Fires the steering injection hook for s1 and returns the final (re-created)
+  // Request object so responseEvent can pass the correlated Request into
+  // http.response, matching the live OpenCode SDK contract.
   async function injectForS1(
     hookCallbacks: Array<(event: HookEvent) => Promise<void>>,
-  ): Promise<void> {
-    await hookCallbacks[1]({
-      sessionID: "s1",
+    sessionID = "s1",
+  ): Promise<Request> {
+    const reqEvent: HookEvent = {
+      sessionID,
       agent: "build",
       model: { providerID: "openrouter", id: "model-compare/price" },
       kind: "primary",
@@ -1614,53 +1861,90 @@ describe("response capture hook", () => {
           stream: true,
         }),
       }),
-    })
+    }
+    await hookCallbacks[1](reqEvent)
+    return reqEvent.request as Request
   }
 
-  test("an SSE response captures provider and model, tolerates a leading comment chunk, and forwards the body byte-for-byte", async () => {
+  test("an SSE response writes a placeholder and upgrades provider and model while forwarding bytes byte-for-byte", async () => {
     const { hookCallbacks, state } = await wired()
-    const event = responseEvent({ response: streamResponse([COMMENT, DATA]) })
+    const event = responseEvent({
+      response: streamResponse([COMMENT, DATA]),
+      model: { providerID: "openrouter", id: "model-compare/price", variant: "medium" },
+    })
     const original = event.response as Response
 
     await hookCallbacks[2](event)
 
-    // The response is re-created around a pass-through stream — the original
-    // object is replaced, and the full body (comment + data + multi-byte
-    // content) survives the wrap untouched.
+    // Before the stream is consumed, the synchronous placeholder is already present
+    // (with seq: 1, never NaN, and variant fallback when the Request wasn't in WeakMap).
+    expect(state().replySeq.s1).toBe(1)
+    expect(state().lastReplies.s1).toEqual({
+      sessionID: "s1",
+      providerID: "openrouter",
+      requestedModel: "model-compare/price",
+      at: NOW,
+      seq: 1,
+      servedModel: null,
+      endpoint: null,
+      steering: "unknown",
+      requestedEffort: "medium",
+    })
+
     const wrapped = event.response as Response
     expect(wrapped).not.toBe(original)
     await expect(wrapped.text()).resolves.toBe(SSE_BODY)
 
-    // Nothing was injected for s1 → the order is null → recorded, no verdict.
-    expect(state().lastEndpoints).toEqual({
+    // Uncorrelated request → order is absent → steering stays "unknown".
+    expect(state().lastReplies).toEqual({
       s1: {
         sessionID: "s1",
-        endpoint: "streamlake/fp8",
-        model: "moonshotai/kimi-k3.1-fp8",
-        downgrade: false,
-        requestedEffort: null,
+        providerID: "openrouter",
+        requestedModel: "model-compare/price",
         at: NOW,
+        seq: 1,
+        servedModel: "moonshotai/kimi-k3.1-fp8",
+        endpoint: "streamlake/fp8",
+        steering: "unknown",
+        requestedEffort: "medium",
       },
     })
   })
 
-  test("the order the request hook actually applied drives the downgrade verdict", async () => {
+  test("the order on the request's own WeakMap entry drives the steering verdict (including concurrent same-session requests)", async () => {
     const { hookCallbacks, state } = await wired()
-    await injectForS1(hookCallbacks)
-    const event = responseEvent({ response: streamResponse([DATA]) })
+    const steeredReq = await injectForS1(hookCallbacks)
 
+    // A concurrent non-alias request in the SAME session runs BEFORE the
+    // steered response arrives; WeakMap correlation keeps steeredReq's order intact.
+    const concurrentEvent: HookEvent = {
+      sessionID: "s1",
+      agent: "title",
+      model: { providerID: "openrouter", id: "xiaomi/mimo-v2.6-flash" },
+      kind: "title",
+      request: new Request(REQUEST_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "xiaomi/mimo-v2.6-flash", messages: [] }),
+      }),
+    }
+    await hookCallbacks[1](concurrentEvent)
+
+    const event = responseEvent({ request: steeredReq, response: streamResponse([DATA]) })
     await hookCallbacks[2](event)
     await (event.response as Response).text()
 
-    // streamlake/fp8 matches none of the applied order ["novita/fp8",
-    // "deepinfra/fp8"] → the `!` downgrade flag fires.
-    expect(state().lastEndpoints.s1).toEqual({
+    // streamlake/fp8 matches none of ["novita/fp8", "deepinfra/fp8"] → "not-in-order".
+    expect(state().lastReplies.s1).toEqual({
       sessionID: "s1",
-      endpoint: "streamlake/fp8",
-      model: "moonshotai/kimi-k3.1-fp8",
-      downgrade: true,
-      requestedEffort: "high",
+      providerID: "openrouter",
+      requestedModel: "model-compare/price",
       at: NOW,
+      seq: 1,
+      servedModel: "moonshotai/kimi-k3.1-fp8",
+      endpoint: "streamlake/fp8",
+      steering: "not-in-order",
+      requestedEffort: "high",
     })
   })
 
@@ -1676,155 +1960,372 @@ describe("response capture hook", () => {
     await hookCallbacks[2](e2)
     await (e2.response as Response).text()
 
-    expect(Object.keys(state().lastEndpoints).sort()).toEqual(["s1", "s2"])
-    expect(state().lastEndpoints.s1.endpoint).toBe("streamlake/fp8")
-    expect(state().lastEndpoints.s2.endpoint).toBe("Moonshot AI")
-    expect(state().lastEndpoints.s2.sessionID).toBe("s2")
+    expect(Object.keys(state().lastReplies).sort()).toEqual(["s1", "s2"])
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
+    expect(state().lastReplies.s2.endpoint).toBe("Moonshot AI")
+    expect(state().lastReplies.s2.sessionID).toBe("s2")
   })
 
-  test("a second capture for the same session overwrites the first (last-writer-wins)", async () => {
+  test("a slow older stream cannot overwrite a newer reply in the same session (seq guard)", async () => {
     const { hookCallbacks, state } = await wired()
-    const e1 = responseEvent({ response: streamResponse([DATA]) })
-    await hookCallbacks[2](e1)
-    await (e1.response as Response).text()
 
+    let pushSlow!: (chunk: string) => void
+    let closeSlow!: () => void
+    const encoder = new TextEncoder()
+    const slowStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        pushSlow = (chunk: string) => controller.enqueue(encoder.encode(chunk))
+        closeSlow = () => controller.close()
+      },
+    })
+    const e1 = responseEvent({
+      response: new Response(slowStream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    })
+    await hookCallbacks[2](e1)
+    expect(state().lastReplies.s1.seq).toBe(1)
+
+    // Newer reply arrives and completes first (seq = 2).
     const DEEPINFRA =
       'data: {"id":"gen-3","provider":"DeepInfra","model":"acme/alpha","choices":[]}\n\n'
     const e2 = responseEvent({ response: streamResponse([DEEPINFRA]) })
     await hookCallbacks[2](e2)
     await (e2.response as Response).text()
+    expect(state().lastReplies.s1.seq).toBe(2)
+    expect(state().lastReplies.s1.endpoint).toBe("DeepInfra")
 
-    expect(Object.keys(state().lastEndpoints)).toEqual(["s1"])
-    expect(state().lastEndpoints.s1.endpoint).toBe("DeepInfra")
-    expect(state().lastEndpoints.s1.model).toBe("acme/alpha")
+    // Older stream now emits its chunk and closes: seq 1 !== 2, so DeepInfra stands.
+    const slowRead = (e1.response as Response).text()
+    pushSlow(DATA)
+    closeSlow()
+    await slowRead
+    expect(state().lastReplies.s1.seq).toBe(2)
+    expect(state().lastReplies.s1.endpoint).toBe("DeepInfra")
+    expect(state().lastReplies.s1.servedModel).toBe("acme/alpha")
   })
 
-  test("a response whose body never parses updates nothing (and passes through byte-for-byte)", async () => {
+  test("a response whose body never parses overwrites any prior record with placeholder nulls (and passes through byte-for-byte)", async () => {
     const { hookCallbacks, state } = await wired()
+    // Seed an older reply first so we prove the unreadable reply overwrites it rather than leaving stale data.
+    const seed = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](seed)
+    await (seed.response as Response).text()
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
+
     const GARBAGE = "\u0000\u0001not json at all\n\x7f\x00"
-    const event = responseEvent({ response: streamResponse([GARBAGE]) })
+    const event = responseEvent({
+      response: streamResponse([GARBAGE]),
+      model: { providerID: "openrouter", id: "acme/direct" },
+    })
 
     await hookCallbacks[2](event)
     await expect((event.response as Response).text()).resolves.toBe(GARBAGE)
-    expect(state().lastEndpoints).toEqual({})
+    expect(state().lastReplies.s1).toEqual({
+      sessionID: "s1",
+      providerID: "openrouter",
+      requestedModel: "acme/direct",
+      at: NOW,
+      seq: 2,
+      servedModel: null,
+      endpoint: null,
+      steering: "unknown",
+      requestedEffort: null,
+    })
     expect(errorSpy).not.toHaveBeenCalled()
   })
 
-  test("a JSON body whose provider lies beyond the peek window is not captured and passes through untouched", async () => {
+  test("a JSON body whose provider lies beyond the 4 KB peek window keeps the placeholder (endpoint: null) and passes through untouched", async () => {
     const { hookCallbacks, state } = await wired()
     const pad = "x".repeat(PEEK_MAX_BYTES + 100)
     const BODY = `{"id":"x","pad":"${pad}","provider":"Novita","model":"moonshotai/kimi-k3.1-fp8"}`
     const event = responseEvent({ response: streamResponse([BODY]) })
 
     await hookCallbacks[2](event)
-    // Clean byte-for-byte pass-through: the full body survives the wrap.
     await expect((event.response as Response).text()).resolves.toBe(BODY)
-    expect(state().lastEndpoints).toEqual({})
+    expect(state().lastReplies.s1.endpoint).toBeNull()
+    expect(state().lastReplies.s1.servedModel).toBeNull()
+    expect(state().lastReplies.s1.steering).toBe("unknown")
     expect(errorSpy).not.toHaveBeenCalled()
   })
 
-  test("a non-primary response is not even wrapped", async () => {
+  test("a non-primary response or non-2xx primary error response is not wrapped and leaves the previous record intact", async () => {
     const { hookCallbacks, state } = await wired()
-    const event = responseEvent({ response: streamResponse([DATA]), kind: "compaction" })
-    const original = event.response
+    const compaction = responseEvent({ response: streamResponse([DATA]), kind: "compaction" })
+    const originalCompaction = compaction.response
+    await hookCallbacks[2](compaction)
+    expect(compaction.response).toBe(originalCompaction)
+    expect(state().lastReplies).toEqual({})
 
-    await hookCallbacks[2](event)
+    // Record a real 200 reply first.
+    const okEvent = responseEvent({ response: streamResponse([DATA]) })
+    await hookCallbacks[2](okEvent)
+    await (okEvent.response as Response).text()
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
 
-    expect(event.response).toBe(original)
-    expect(state().lastEndpoints).toEqual({})
-  })
-
-  test("a non-alias primary response is not wrapped and records nothing (the gate stays alias-scoped)", async () => {
-    const { hookCallbacks, state } = await wired()
-    const event = responseEvent({
-      response: streamResponse([DATA]),
-      model: { providerID: "openrouter", id: "z-ai/glm-5.3-flash" },
+    // A 429 error response must NOT overwrite the real reply.
+    const errResp = new Response('{"error":"rate_limited"}', { status: 429 })
+    const errEvent = responseEvent({
+      response: errResp,
+      model: { providerID: "anthropic", id: "claude-sonnet-4-5" },
     })
-    const original = event.response
-
-    await hookCallbacks[2](event)
-
-    // No wrap side-effects observable: the original Response object survives
-    // and its body passes through byte-for-byte — and nothing is recorded.
-    expect(event.response).toBe(original)
-    await expect((event.response as Response).text()).resolves.toBe(DATA)
-    expect(state().lastEndpoints).toEqual({})
+    await hookCallbacks[2](errEvent)
+    expect(errEvent.response).toBe(errResp)
+    expect(state().lastReplies.s1.providerID).toBe("openrouter")
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
   })
 
-  test("a response the hook cannot touch is swallowed: no capture, response left untouched", async () => {
+  test("non-alias primary responses across OpenAI Chat (>4 KB), OpenAI Responses, Anthropic (split-chunk >4 KB), Gemini, and plain JSON upgrade servedModel and overwrite prior alias replies", async () => {
+    const { hookCallbacks, rpcHandlers, state } = await wired()
+
+    // Start with a steered OpenRouter alias reply on Novita (in-order).
+    const steeredReq = await injectForS1(hookCallbacks)
+    const NOVITA =
+      'data: {"id":"gen-1","provider":"Novita","model":"acme/alpha","choices":[]}\n\n'
+    const aliasResp = responseEvent({ request: steeredReq, response: streamResponse([NOVITA]) })
+    await hookCallbacks[2](aliasResp)
+    await (aliasResp.response as Response).text()
+    expect(state().lastReplies.s1.steering).toBe("in-order")
+    expect(state().lastReplies.s1.endpoint).toBe("Novita")
+
+    // 1. Switch session to Anthropic direct pick with split-chunk message_start + >4 KB content deltas (no [DONE]).
+    const anthropicReqEvent: HookEvent = {
+      sessionID: "s1",
+      agent: "build",
+      model: { providerID: "anthropic", id: "claude-sonnet", variant: "low" },
+      kind: "primary",
+      request: new Request("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet",
+          output_config: { effort: "high" },
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    }
+    await hookCallbacks[1](anthropicReqEvent)
+    const split1 = 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1",'
+    const split2 = '"model":"claude-sonnet-4-5-20250929"}}\n\n'
+    const bigDeltas = `data: {"type":"content_block_delta","delta":{"text":"${"a".repeat(PEEK_MAX_BYTES)}"}}\n\n`
+    const anthropicResp = responseEvent({
+      request: anthropicReqEvent.request,
+      model: { providerID: "anthropic", id: "claude-sonnet", variant: "low" },
+      response: streamResponse([split1, split2, bigDeltas]),
+    })
+    await hookCallbacks[2](anthropicResp)
+    await expect((anthropicResp.response as Response).text()).resolves.toBe(
+      split1 + split2 + bigDeltas,
+    )
+    expect(state().lastReplies.s1).toEqual({
+      sessionID: "s1",
+      providerID: "anthropic",
+      requestedModel: "claude-sonnet",
+      at: NOW,
+      seq: 2,
+      servedModel: "claude-sonnet-4-5-20250929",
+      endpoint: null,
+      steering: "unknown",
+      requestedEffort: "high",
+    })
+    // Report RPC clears quantization and surfaces Anthropic effort as unknown relation.
+    const anthropicReport = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      capture: unknown
+      endpointInfo: unknown
+    }
+    expect(anthropicReport.capture).toEqual({
+      provider: "anthropic",
+      endpoint: null,
+      model: "claude-sonnet-4-5-20250929",
+      steering: "unknown",
+    })
+    expect(anthropicReport.endpointInfo).toEqual({
+      quantization: null,
+      effort: { value: "high", relation: "unknown", default: null },
+    })
+
+    // 2. OpenAI Chat SSE >4 KB (no [DONE] within peek window, no provider).
+    const oaiHead = 'data: {"id":"chatcmpl-1","model":"gpt-5-2026-08","choices":[{"delta":{"content":"hi"}}]}\n\n'
+    const oaiTail = `data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"${"b".repeat(PEEK_MAX_BYTES)}"}}]}\n\ndata: [DONE]\n\n`
+    const oaiChat = responseEvent({
+      model: { providerID: "openai", id: "gpt-5" },
+      response: streamResponse([oaiHead, oaiTail]),
+    })
+    await hookCallbacks[2](oaiChat)
+    await (oaiChat.response as Response).text()
+    expect(state().lastReplies.s1.servedModel).toBe("gpt-5-2026-08")
+    expect(state().lastReplies.s1.endpoint).toBeNull()
+
+    // 3. OpenAI Responses SSE (`response.model`).
+    const oaiResponses = responseEvent({
+      model: { providerID: "openai", id: "gpt-5" },
+      response: streamResponse([
+        'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.1-codex"}}\n\n',
+      ]),
+    })
+    await hookCallbacks[2](oaiResponses)
+    await (oaiResponses.response as Response).text()
+    expect(state().lastReplies.s1.servedModel).toBe("gpt-5.1-codex")
+
+    // 4. Google Gemini SSE (`modelVersion`).
+    const gemini = responseEvent({
+      model: { providerID: "google", id: "gemini-2.5-pro" },
+      response: streamResponse([
+        'data: {"candidates":[{"content":{"parts":[{"text":"pong"}]}}],"modelVersion":"gemini-2.5-pro-002"}\n\n',
+      ]),
+    })
+    await hookCallbacks[2](gemini)
+    await (gemini.response as Response).text()
+    expect(state().lastReplies.s1.servedModel).toBe("gemini-2.5-pro-002")
+
+    // 5. Plain JSON without `provider` still upgrades `servedModel` (control-only strings ignored).
+    const plainJson = responseEvent({
+      model: { providerID: "openai", id: "gpt-5" },
+      response: new Response(JSON.stringify({ id: "resp_2", provider: "\u0000 ", model: "gpt-5-json" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    })
+    await hookCallbacks[2](plainJson)
+    await (plainJson.response as Response).text()
+    expect(state().lastReplies.s1.servedModel).toBe("gpt-5-json")
+    expect(state().lastReplies.s1.endpoint).toBeNull()
+  })
+
+  test("a 2xx response whose body getter throws or is null records the placeholder and leaves event.response untouched", async () => {
     const { hookCallbacks, state } = await wired()
     const broken = {
+      ok: true,
       get body(): ReadableStream<Uint8Array> | null {
         throw new Error("boom")
       },
     } as unknown as Response
-    const event = responseEvent({ response: broken })
+    const event = responseEvent({
+      response: broken,
+      model: { providerID: "openai", id: "gpt-5", variant: "low" },
+    })
 
     await expect(hookCallbacks[2](event)).resolves.toBeUndefined()
     expect(event.response).toBe(broken)
-    expect(state().lastEndpoints).toEqual({})
-  })
+    expect(state().lastReplies.s1.requestedModel).toBe("gpt-5")
+    expect(state().lastReplies.s1.endpoint).toBeNull()
+    expect(state().lastReplies.s1.requestedEffort).toBe("low")
 
-  test("a bodyless response is left untouched", async () => {
-    const { hookCallbacks, state } = await wired()
-    const empty = new Response(null)
-    const event = responseEvent({ response: empty })
-
-    await hookCallbacks[2](event)
-    expect(event.response).toBe(empty)
-    expect(state().lastEndpoints).toEqual({})
-  })
-
-  // F6: a parseable data line WITHOUT a provider must not conclude the peek —
-  // the provider may arrive in a later data line within the byte bound.
-  test("a leading data line without provider keeps peeking; a later one captures", async () => {
-    const { hookCallbacks, state } = await wired()
-    const NO_PROVIDER = 'data: {"id":"gen-0","choices":[{"delta":{}}]}\n\n'
-    const event = responseEvent({ response: streamResponse([NO_PROVIDER, DATA]) })
-
-    await hookCallbacks[2](event)
-    await expect((event.response as Response).text()).resolves.toBe(NO_PROVIDER + DATA)
-    expect(state().lastEndpoints.s1).toEqual({
-      sessionID: "s1",
-      endpoint: "streamlake/fp8",
-      model: "moonshotai/kimi-k3.1-fp8",
-      downgrade: false,
-      requestedEffort: null,
-      at: NOW,
+    const empty = new Response(null, { status: 200 })
+    const event2 = responseEvent({
+      response: empty,
+      model: { providerID: "anthropic", id: "claude-opus-4-1" },
     })
+    await hookCallbacks[2](event2)
+    expect(event2.response).toBe(empty)
+    expect(state().lastReplies.s1.providerID).toBe("anthropic")
+    expect(state().lastReplies.s1.requestedModel).toBe("claude-opus-4-1")
+  })
+
+  test("a leading data line with model and no provider preserves chunk 1's model when chunk 2 supplies only provider", async () => {
+    const { hookCallbacks, state } = await wired()
+    const CHUNK1 = 'data: {"id":"gen-0","model":"moonshotai/kimi-k3.1-fp8","choices":[{"delta":{}}]}\n\n'
+    const CHUNK2 = 'data: {"id":"gen-0","provider":"streamlake/fp8","choices":[{"delta":{}}]}\n\n'
+    const event = responseEvent({ response: streamResponse([CHUNK1, CHUNK2]) })
+
+    await hookCallbacks[2](event)
+    await expect((event.response as Response).text()).resolves.toBe(CHUNK1 + CHUNK2)
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
+    expect(state().lastReplies.s1.servedModel).toBe("moonshotai/kimi-k3.1-fp8")
   })
 
   // ---- the capture's report-footer hand-off (F4/NEW-2) ----------------------
-  // The capture record must reach the report RPC's footer fields through the
-  // REAL reportFooter lookup — the seam the suite previously left unexercised
-  // (the TUI tests mock the RPC; the wiring tests only ever called
-  // `report({})`).
 
-  test("the capture flows into the report RPC's footer fields for its own session", async () => {
+  test("the capture flows into the report RPC's footer fields and text for its own session", async () => {
     const { hookCallbacks, rpcHandlers, state } = await wired()
     const event = responseEvent({ response: streamResponse([DATA]) })
     await hookCallbacks[2](event)
     await (event.response as Response).text()
-    expect(state().lastEndpoints.s1.endpoint).toBe("streamlake/fp8")
+    expect(state().lastReplies.s1.endpoint).toBe("streamlake/fp8")
 
     const report = (await rpcHandlers.report({ sessionID: "s1" })) as {
-      capture: { endpoint: string; model: string; downgrade: boolean } | null
+      text: string
+      capture: unknown
       steeringNote: string | null
     }
     expect(report.capture).toEqual({
+      provider: "openrouter",
       endpoint: "streamlake/fp8",
       model: "moonshotai/kimi-k3.1-fp8",
-      downgrade: false,
+      steering: "unknown",
     })
     expect(report.steeringNote).toBe("routing steered to fp8 endpoints (aliases only)")
+    expect(report.text).toContain(
+      "last response: moonshotai/kimi-k3.1-fp8 @ streamlake/fp8 (provider: openrouter)",
+    )
+  })
+
+  test("reportFooter gates catalog lookup on providerID === 'openrouter', falls back to direct requestedModel, and surfaces effort when sourced === null", async () => {
+    const { hookCallbacks, rpcHandlers } = await wired()
+
+    // 1. Non-OpenRouter provider ("together") with servedModel === "acme/alpha" and endpoint === "Novita"
+    // must NOT match OpenRouter's catalog entry for acme/alpha.
+    const foreignEvent = responseEvent({
+      model: { providerID: "together", id: "acme/alpha", variant: "max" },
+      response: streamResponse([
+        'data: {"id":"1","provider":"Novita","model":"acme/alpha","choices":[]}\n\n',
+      ]),
+    })
+    await hookCallbacks[2](foreignEvent)
+    await (foreignEvent.response as Response).text()
+    const foreignReport = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      endpointInfo: unknown
+    }
+    expect(foreignReport.endpointInfo).toEqual({
+      quantization: null,
+      effort: { value: "max", relation: "unknown", default: null },
+    })
+
+    // 2. Direct OpenRouter pick (`providerID: "openrouter"`, non-alias `acme/alpha`) with
+    // `servedModel: null` and `endpoint: null` resolves `acme/alpha` via requestedModel fallback!
+    const directEmpty = responseEvent({
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "max" },
+      response: new Response(null, { status: 200 }),
+    })
+    await hookCallbacks[2](directEmpty)
+    const directReport = (await rpcHandlers.report({ sessionID: "s1" })) as {
+      endpointInfo: unknown
+    }
+    expect(directReport.endpointInfo).toEqual({
+      quantization: null,
+      effort: { value: "max", relation: "above-default", default: "high" },
+    })
+
+    // 3. Offline (`state.sourced === null`): effort still surfaces in reportFooter!
+    const coldHarness = makeCtx()
+    await wire(coldHarness.ctx, deps(vi.fn(), fakeTimers()))
+    await drain()
+    await coldHarness.hookCallbacks[2](
+      responseEvent({
+        model: { providerID: "anthropic", id: "claude-sonnet-4-5", variant: "high" },
+        response: new Response(null, { status: 200 }),
+      }),
+    )
+    const coldReport = (await coldHarness.rpcHandlers.report({ sessionID: "s1" })) as {
+      capture: unknown
+      endpointInfo: unknown
+    }
+    expect(coldReport.capture).toEqual({
+      provider: "anthropic",
+      endpoint: null,
+      model: "claude-sonnet-4-5",
+      steering: "unknown",
+    })
+    expect(coldReport.endpointInfo).toEqual({
+      quantization: null,
+      effort: { value: "high", relation: "unknown", default: null },
+    })
   })
 
   test("the report RPC derives the served endpoint's quantization and effort", async () => {
     const { hookCallbacks, rpcHandlers } = await wired()
-    await injectForS1(hookCallbacks)
+    const steeredReq = await injectForS1(hookCallbacks)
     const DEEPINFRA =
       'data: {"id":"gen-3","provider":"DeepInfra","model":"acme/alpha","choices":[]}\n\n'
-    const event = responseEvent({ response: streamResponse([DEEPINFRA]) })
+    const event = responseEvent({ request: steeredReq, response: streamResponse([DEEPINFRA]) })
     await hookCallbacks[2](event)
     await (event.response as Response).text()
 
@@ -1839,10 +2340,10 @@ describe("response capture hook", () => {
 
   test("the report RPC marks a sub-default endpoint quantization", async () => {
     const { hookCallbacks, rpcHandlers } = await wired()
-    await injectForS1(hookCallbacks)
+    const steeredReq = await injectForS1(hookCallbacks)
     const OPENINFERENCE =
       'data: {"id":"gen-4","provider":"OpenInference","model":"acme/alpha","choices":[]}\n\n'
-    const event = responseEvent({ response: streamResponse([OPENINFERENCE]) })
+    const event = responseEvent({ request: steeredReq, response: streamResponse([OPENINFERENCE]) })
     await hookCallbacks[2](event)
     await (event.response as Response).text()
 
@@ -1855,11 +2356,7 @@ describe("response capture hook", () => {
     })
   })
 
-  // F3/NEW-1: sessionID values colliding with Object.prototype keys must read
-  // as "no capture" — never inherited junk that poisons the footer (a lookup
-  // of `Object.prototype` used to reach `sanitizeCatalogText(undefined)` and
-  // reject the whole report call).
-  test("the report RPC with prototype-key sessionIDs returns capture null and never throws", async () => {
+  test("the report RPC with prototype-key sessionIDs returns capture null and never throws, and prototype sessionIDs can write safely", async () => {
     const { hookCallbacks, rpcHandlers } = await wired()
     const event = responseEvent({ response: streamResponse([DATA]) })
     await hookCallbacks[2](event)
@@ -1869,7 +2366,15 @@ describe("response capture hook", () => {
       const report = (await rpcHandlers.report({ sessionID })) as { capture: unknown }
       expect(report.capture, sessionID).toBeNull()
     }
-    // The real session still resolves its capture (the lookup itself works).
+    // Writing a reply under "__proto__" increments seq from 0 -> 1 cleanly (null-prototype replySeq).
+    const protoEvent = responseEvent({ sessionID: "__proto__", response: streamResponse([DATA]) })
+    await hookCallbacks[2](protoEvent)
+    await (protoEvent.response as Response).text()
+    const protoReport = (await rpcHandlers.report({ sessionID: "__proto__" })) as {
+      capture: { endpoint: string | null } | null
+    }
+    expect(protoReport.capture?.endpoint).toBe("streamlake/fp8")
+
     const real = (await rpcHandlers.report({ sessionID: "s1" })) as { capture: unknown }
     expect(real.capture).not.toBeNull()
   })

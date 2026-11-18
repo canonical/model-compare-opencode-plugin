@@ -9,7 +9,7 @@
 
 import { effectiveWeights, overallScore } from "../core/rank"
 import { formatDepthAlternative, isSelectableDepth } from "../core/reasoning"
-import type { Catalog, EndpointCapture, ModelEntry, Priority, Sourced, Weights } from "../core/types"
+import type { CapturePayload, Catalog, ModelEntry, Priority, Sourced, Weights } from "../core/types"
 import type { AliasTarget } from "./aliases"
 
 const PRIORITIES: Priority[] = ["balanced", "price", "quality"]
@@ -74,7 +74,7 @@ export type ReportContext = {
   picks?: Partial<Record<Priority, AliasTarget>>
   overrides?: Partial<Record<Priority, Partial<Weights>>>
   enabled?: Partial<Record<Priority, boolean>>
-  capture?: { endpoint: string; model: string; downgrade: boolean } | null
+  capture?: CapturePayload | null
 }
 
 // The report footer's steering note (design §Steering visibility): the union
@@ -108,20 +108,21 @@ export function steeringNote(
   return union.length === 0 ? null : `routing steered to ${union.join(", ")} endpoints (aliases only)`
 }
 
-// The report footer's last-response line (design §Steering visibility, the
-// user's option C): `last response: <model> @ <endpoint>` — the captured
-// response's concrete model id and the served endpoint verbatim. An empty
-// model (a response whose provider carried no model id) omits the model part
-// rather than rendering an empty `@` slot. No capture → null: the line is
-// omitted entirely, never a placeholder.
-export function lastResponseLine(
-  capture: Pick<EndpointCapture, "endpoint" | "model" | "downgrade"> | null | undefined,
-): string | null {
+// The transcript report footer's last-response line (transcript-only: feeds
+// formatReport and the report RPC's `text`, never showReportDialog):
+// `last response: <model> @ <endpoint|unknown> (provider: <provider>)`.
+// Every untrusted string is flattened via sanitizeCatalogText (F-20); a
+// capture whose model or provider sanitizes to "" (or no capture at all) omits
+// the line completely rather than rendering a blank slot.
+export function lastResponseLine(capture: CapturePayload | null | undefined): string | null {
   if (capture === null || capture === undefined) return null
-  const endpoint = sanitizeCatalogText(capture.endpoint)
-  return capture.model === ""
-    ? `last response: ${endpoint}`
-    : `last response: ${sanitizeCatalogText(capture.model)} @ ${endpoint}`
+  if (typeof capture.model !== "string" || typeof capture.provider !== "string") return null
+  const model = sanitizeCatalogText(capture.model)
+  const provider = sanitizeCatalogText(capture.provider)
+  if (model === "" || provider === "") return null
+  const endpoint =
+    (typeof capture.endpoint === "string" ? sanitizeCatalogText(capture.endpoint) : "") || "unknown"
+  return `last response: ${model} @ ${endpoint} (provider: ${provider})`
 }
 
 
@@ -242,10 +243,10 @@ export function formatReport(
       }
     }
   }
-  // The footer (design §Steering visibility): the steering note ABOVE the
-  // last-response line, both omitted when their data is absent. The
-  // transcript's text report and the TUI dialog's footer agree — one
-  // derivation, two surfaces.
+  // The footer: the steering note ABOVE the last-response line, both omitted
+  // when their data is absent. `steeringNote` is shared with `showReportDialog`,
+  // whereas `lastResponseLine` is transcript-only (`formatReport` and the
+  // `report` RPC's `text`; `capture` + `endpointInfo` power the `alt+e` toast).
   const note = steeringNote(sourced.doc, context.picks, context.enabled)
   if (note !== null) lines.push(note)
   const lastResponse = lastResponseLine(context.capture)

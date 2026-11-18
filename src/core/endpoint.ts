@@ -113,12 +113,20 @@ function effortFor(model: ModelEntry, requested: string | null): EndpointAttribu
 
 export function endpointInfoFor(
   model: ModelEntry | undefined,
-  endpoint: string,
+  endpoint: string | null,
   requestedEffort: string | null,
 ): EndpointInfo {
-  if (model === undefined) return { quantization: null, effort: null }
+  if (model === undefined) {
+    return {
+      quantization: null,
+      effort:
+        requestedEffort !== null && requestedEffort !== ""
+          ? { value: requestedEffort, relation: "unknown", default: null }
+          : null,
+    }
+  }
   return {
-    quantization: quantizationFor(model, endpoint),
+    quantization: endpoint === null ? null : quantizationFor(model, endpoint),
     effort: effortFor(model, requestedEffort),
   }
 }

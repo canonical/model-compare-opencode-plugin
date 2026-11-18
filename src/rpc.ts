@@ -8,18 +8,20 @@
 // surfaces at the session's next turn.
 import { Rpc } from "@opencode/plugin/rpc"
 
-// The capture record the report payload carries (the footer's last-response
-// line and the alt+e toast's data): the served endpoint verbatim, the
-// response's concrete model id (empty when the response had none), and the
-// downgrade verdict. Null when nothing was captured for the session.
+// The capture record the report payload carries (the transcript footer's
+// last-response line and the alt+e toast's data): the API provider id, the
+// served endpoint verbatim (null when unreported), the concrete or requested
+// model id, and the tri-state steering verdict. Null when nothing was captured
+// for the session.
 const captureSchema = {
   type: ["object", "null"],
   properties: {
-    endpoint: { type: "string" },
+    provider: { type: "string" },
+    endpoint: { type: ["string", "null"] },
     model: { type: "string" },
-    downgrade: { type: "boolean" },
+    steering: { type: "string" },
   },
-  required: ["endpoint", "model", "downgrade"],
+  required: ["provider", "endpoint", "model", "steering"],
   additionalProperties: false,
 } as const
 

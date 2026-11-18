@@ -12,8 +12,8 @@
 // and the steeringFor cases here); a semantic change to one must be mirrored
 // in the other.
 
-import { gatewayEffort } from "./reasoning"
-import type { ModelEntry, Priority } from "./types"
+import { GATEWAY_EFFORTS, gatewayEffort } from "./reasoning"
+import type { ModelEntry, Priority, SteeringVerdict } from "./types"
 
 // A model reference as the hook event carries it (`event.model`), mirroring
 // the guard's ModelRef (src/opencode/guard.ts) structurally — the wiring
@@ -139,32 +139,82 @@ export function injectReasoning(body: unknown, effort: string): unknown {
   return { ...body, reasoning: { effort } }
 }
 
-// The effort the request actually asked for, recorded alongside the endpoint
-// capture for the alt+e toast: the body's own reasoning field first (the
-// plugin never clobbers it), then the catalog effort the plugin injected,
-// then an explicit #variant. "default" is OpenCode's no-selection sentinel,
-// not an effort. Null means the request left the model's default in place (or
-// the effort is unknowable).
+const MAX_EFFORT_LENGTH = 120
+
+// Normalizes an untrusted effort/variant token: rejects non-strings, strips
+// control characters and line separators, collapses whitespace, ignores empty
+// values and unset sentinels ("default", "thinking_level_unspecified"), and
+// canonicalizes known gateway efforts to lowercase (so Google REST uppercase
+// "HIGH"/"LOW" compares cleanly against catalog defaults).
+export function normalizeEffort(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const flat = raw
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (flat === "") return null
+  const cleaned = flat.length > MAX_EFFORT_LENGTH ? `${flat.slice(0, MAX_EFFORT_LENGTH - 1)}…` : flat
+  const lower = cleaned.toLowerCase()
+  if (lower === "default" || lower === "thinking_level_unspecified") return null
+  if ((GATEWAY_EFFORTS as readonly string[]).includes(lower)) return lower
+  return cleaned
+}
+
+// Resolves the reasoning effort the request actually asked for across
+// OpenAI/OpenRouter, Anthropic, and Google Gemini request shapes:
+//   1. Per-turn cache-preserving markers (`body.input` configuration_update;
+//      `body.messages` system output_config), stopping at the most recent
+//      marker in each array without reviving superseded markers;
+//   2. Top-level body effort fields (`reasoning.effort`, `reasoning_effort`,
+//      `output_config.effort`, Gemini `thinkingLevel` / `thinking_level`);
+//   3. The catalog effort actually injected by `injectReasoning` on alias turns;
+//   4. The explicit `#variant` fallback.
 export function requestedEffortOf(
   body: unknown,
-  variant: string | undefined,
+  variant: unknown,
   injected: string | null,
 ): string | null {
   if (isPlainObject(body)) {
-    const reasoning = body.reasoning
-    if (
-      isPlainObject(reasoning) &&
-      typeof reasoning.effort === "string" &&
-      reasoning.effort !== ""
-    ) {
-      return reasoning.effort
+    if (Array.isArray(body.input)) {
+      for (let i = body.input.length - 1; i >= 0; i--) {
+        const item = body.input[i]
+        if (isPlainObject(item) && item.type === "configuration_update") {
+          const effort = isPlainObject(item.reasoning) ? normalizeEffort(item.reasoning.effort) : null
+          if (effort !== null) return effort
+          break
+        }
+      }
     }
-    if (typeof body.reasoning_effort === "string" && body.reasoning_effort !== "") {
-      return body.reasoning_effort
+    if (Array.isArray(body.messages)) {
+      for (let i = body.messages.length - 1; i >= 0; i--) {
+        const item = body.messages[i]
+        if (isPlainObject(item) && item.role === "system" && isPlainObject(item.output_config)) {
+          const effort = normalizeEffort(item.output_config.effort)
+          if (effort !== null) return effort
+          break
+        }
+      }
+    }
+    const candidates: unknown[] = [
+      isPlainObject(body.reasoning) ? body.reasoning.effort : undefined,
+      body.reasoning_effort,
+      isPlainObject(body.output_config) ? body.output_config.effort : undefined,
+      isPlainObject(body.generationConfig) && isPlainObject(body.generationConfig.thinkingConfig)
+        ? body.generationConfig.thinkingConfig.thinkingLevel
+        : undefined,
+      isPlainObject(body.generation_config) && isPlainObject(body.generation_config.thinking_config)
+        ? body.generation_config.thinking_config.thinking_level
+        : undefined,
+      isPlainObject(body.generation_config) ? body.generation_config.thinking_level : undefined,
+    ]
+    for (const candidate of candidates) {
+      const effort = normalizeEffort(candidate)
+      if (effort !== null) return effort
     }
   }
-  if (injected !== null) return injected
-  return variant !== undefined && variant !== "default" ? variant : null
+  const fromInjected = normalizeEffort(injected)
+  if (fromInjected !== null) return fromInjected
+  return normalizeEffort(variant)
 }
 
 // normalize_provider (vendor/model_compare.py): casefold the name and strip
@@ -186,24 +236,20 @@ export function providerPart(ref: string): string {
   return slash === -1 ? ref : ref.slice(0, slash)
 }
 
-// The served-endpoint verdict for one response: compare the response's
-// `provider` string against the steering `order` that was actually applied to
-// the request. `endpoint` is the served string verbatim (the alt+e toast's
-// text) — null only when there is nothing to record (no provider at all, or a
-// name with no provider part). `downgrade` is true ONLY when a parseable
-// provider matches no entry of a NON-EMPTY order; an absent or empty order
-// (no steering data — offline, or a model without a steering block) records
-// the endpoint with no verdict, because `!` may only assert a fallback
-// "despite the steering" when a non-empty order was actually applied.
+// Tri-state served-endpoint verdict for one response: compare the response's
+// `provider` string against the steering `order` actually applied to the
+// request. An absent/unparseable provider returns `{ endpoint: null, steering:
+// "unknown" }`; an absent/empty order returns `{ endpoint: provider, steering:
+// "unknown" }`; otherwise returns "in-order" or "not-in-order".
 export function captureEndpoint(
   provider: string | null,
   order: string[] | null,
-): { endpoint: string | null; downgrade: boolean } {
-  if (provider === null) return { endpoint: null, downgrade: false }
+): { endpoint: string | null; steering: SteeringVerdict } {
+  if (provider === null) return { endpoint: null, steering: "unknown" }
   const served = normalizeProvider(providerPart(provider))
-  if (served === "") return { endpoint: null, downgrade: false }
+  if (served === "") return { endpoint: null, steering: "unknown" }
   const entries = order ?? []
-  if (entries.length === 0) return { endpoint: provider, downgrade: false }
+  if (entries.length === 0) return { endpoint: provider, steering: "unknown" }
   const matched = entries.some((entry) => normalizeProvider(providerPart(entry)) === served)
-  return { endpoint: provider, downgrade: !matched }
+  return { endpoint: provider, steering: matched ? "in-order" : "not-in-order" }
 }
