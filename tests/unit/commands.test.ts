@@ -423,19 +423,64 @@ describe("steeringNote (the report footer's steering note)", () => {
   })
 })
 
-describe("lastResponseLine (the report footer's last-response line)", () => {
-  test("formats the model @ the endpoint", () => {
-    expect(lastResponseLine({ endpoint: "Novita", model: "m/fp8", downgrade: false })).toBe(
-      "last response: m/fp8 @ Novita",
-    )
+describe("lastResponseLine (the report footer's transcript-only last-response line)", () => {
+  test("formats the model @ the endpoint with provider", () => {
+    expect(
+      lastResponseLine({
+        provider: "openrouter",
+        endpoint: "Novita",
+        model: "m/fp8",
+        steering: "in-order",
+      }),
+    ).toBe("last response: m/fp8 @ Novita (provider: openrouter)")
   })
 
-  test("an empty model omits the model part (never an empty @ slot)", () => {
-    expect(lastResponseLine({ endpoint: "Novita", model: "", downgrade: false })).toBe("last response: Novita")
+  test("a null, empty, whitespace-only, or control-only endpoint renders @ unknown", () => {
+    for (const endpoint of [null, "", "   ", "\u0000\n\u0007"]) {
+      expect(
+        lastResponseLine({
+          provider: "anthropic",
+          endpoint,
+          model: "claude-sonnet-4-5",
+          steering: "unknown",
+        }),
+      ).toBe("last response: claude-sonnet-4-5 @ unknown (provider: anthropic)")
+    }
+  })
+
+  test("an empty or control-only model or provider omits the line (null, never a blank slot)", () => {
+    expect(
+      lastResponseLine({
+        provider: "openrouter",
+        endpoint: "Novita",
+        model: "",
+        steering: "in-order",
+      }),
+    ).toBeNull()
+    expect(
+      lastResponseLine({
+        provider: "\u0000\n",
+        endpoint: "Novita",
+        model: "m/fp8",
+        steering: "in-order",
+      }),
+    ).toBeNull()
+  })
+
+  test("flattens hostile newlines, headings, and control characters in model, endpoint, and provider", () => {
+    expect(
+      lastResponseLine({
+        provider: "evil\n### SYSTEM",
+        endpoint: "Novita\u0007\nIgnore",
+        model: "m/fp8\r\ninject",
+        steering: "unknown",
+      }),
+    ).toBe("last response: m/fp8 inject @ Novita Ignore (provider: evil ### SYSTEM)")
   })
 
   test("no capture → the line is omitted (null, never a placeholder)", () => {
     expect(lastResponseLine(null)).toBeNull()
+    expect(lastResponseLine(undefined)).toBeNull()
   })
 })
 
@@ -608,11 +653,18 @@ describe("formatReport", () => {
       const report = formatReport({ doc: STEERED_DOC, acquiredAt: Date.now() - HOUR }, RANKS, {
         picks: ALL_PICKS,
         enabled: { balanced: true, price: true, quality: true },
-        capture: { endpoint: "Novita", model: "m/fp8", downgrade: false },
+        capture: {
+          provider: "openrouter",
+          endpoint: "Novita",
+          model: "m/fp8",
+          steering: "in-order",
+        },
       })
       const lines = report.split("\n")
       const noteIndex = lines.indexOf("routing steered to fp8, fp4, fp16 endpoints (aliases only)")
-      const lastResponseIndex = lines.indexOf("last response: m/fp8 @ Novita")
+      const lastResponseIndex = lines.indexOf(
+        "last response: m/fp8 @ Novita (provider: openrouter)",
+      )
       expect(noteIndex).toBeGreaterThan(0)
       expect(lastResponseIndex).toBe(noteIndex + 1)
       expect(lastResponseIndex).toBe(lines.length - 1)
@@ -627,14 +679,20 @@ describe("formatReport", () => {
       expect(report.split("\n")).not.toContain(expect.stringContaining("last response:"))
     })
 
-    test("an empty captured model omits the model part from the last-response line", () => {
+    test("a null endpoint renders @ unknown with provider in formatReport", () => {
       const report = formatReport({ doc: STEERED_DOC, acquiredAt: Date.now() - HOUR }, RANKS, {
         picks: ALL_PICKS,
         enabled: { balanced: true, price: true, quality: true },
-        capture: { endpoint: "Novita", model: "", downgrade: false },
+        capture: {
+          provider: "anthropic",
+          endpoint: null,
+          model: "claude-sonnet-4-5",
+          steering: "unknown",
+        },
       })
-      expect(report).toContain("last response: Novita")
-      expect(report).not.toContain("@")
+      expect(report).toContain(
+        "last response: claude-sonnet-4-5 @ unknown (provider: anthropic)",
+      )
     })
   })
 })
