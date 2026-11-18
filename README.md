@@ -117,11 +117,23 @@ Steering stays out of your way when you don't want it:
 While **steering** applies only to the three aliases, **last-reply capture** (`alt+e` and `/model-compare`'s transcript summary) tracks every successful primary HTTP reply in the session across all providers. Press `alt+e` after any reply to see the model, API `provider` (`openrouter`, `anthropic`, `openai`, …), served `endpoint` (from the response body when reported, or `endpoint: unknown` when unreported or beyond the bounded 4 KB response peek), optional `quantization` and reasoning `effort` (and how they compare to the model's OpenRouter catalog defaults when applicable), and the tri-state steering status (`steering: in order`, `steering: ! NOT in order`, or `steering: unknown` when no steering order applied or no served endpoint was reported).
 
 
-### Reasoning depths
+## Reasoning efforts and variants
 
-Artificial Analysis (used for model-quality scores) benchmarks reasoning models across multiple thinking budgets (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). `model-compare` scores each model at its best measured depth that OpenRouter supports (`quality_effort`), and the plugin pins `reasoning: { effort }` on alias requests to match — unless you already selected an explicit `#variant` (such as `openrouter/model-compare/balanced#high`) or set `reasoning` in the request body.
+Artificial Analysis benchmarks reasoning models across several thinking depths (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). `model-compare` scores each model at the best measured depth OpenRouter supports and records it as `quality_effort`. On an alias request, the plugin adds `reasoning: { effort }` when that value names a discrete OpenRouter effort, so the call runs at the depth behind its score. For an unscored model, an uncataloged fallback, or a session with no catalog data yet, no effort is injected and the model's own default applies.
 
-In OpenCode's UI, selectable depths are called **variants** (`provider/model#variant`). The `alt+shift+m` report dialog lists each model's scored depth in its `variant` column, and pressing `return` binds both the model and that variant when supported.
+OpenCode calls its selectable depths **variants** (`provider/model#variant`): named presets that OpenCode applies to the request. On OpenRouter, an effort variant sets `reasoning.effort` too, but a variant can also change headers or other body fields. `default` means "no variant selected", not a reasoning level.
+
+On an alias request, an explicit `#variant` or a request body that already sets `reasoning` takes precedence over the plugin's choice:
+
+| Session model | OpenCode variant | Who sets the effort |
+|---|---|---|
+| `openrouter/model-compare/balanced` | `default` | The plugin, from `quality_effort` |
+| `openrouter/model-compare/balanced#high` | `high` | OpenCode, from the variant |
+| `openrouter/<model>` (bare or `#variant`) | `default` or `<variant>` | OpenCode or the model default; the plugin leaves concrete models alone |
+
+A bare alias can show `default` while the request runs at `high`. The plugin's effort applies to the request, not the variant label; `alt+e` shows what the last request actually asked for.
+
+Aliases inherit variants from their current pick. If a refresh switches that pick to a model without your chosen `#variant`, the variant can become unavailable: the TUI drops it on the next prompt, while headless and API turns fail with a `Variant unavailable` error. Keep alias bindings in `opencode.jsonc` and agent frontmatter bare, and use `#variant` on an alias only as a temporary session override. In the `alt+shift+m` report dialog, the `variant` column lists the scored depth when OpenRouter supports selecting that effort (`-` otherwise); pressing `return` switches to that concrete model (adding `#<variant>` when OpenCode offers it, or noting when that variant is unavailable).
 
 
 ## Troubleshooting
