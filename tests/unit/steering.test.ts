@@ -331,6 +331,47 @@ describe("reasoningEffortFor", () => {
     ).toBeNull()
   })
 
+  test("suppresses effort 'none' when reasoning.mandatory is true, while allowing non-mandatory 'none'", () => {
+    const baseReasoning: Reasoning = {
+      default_effort: "high",
+      supported_efforts: ["max", "xhigh", "high", "medium", "low", "minimal", "none"],
+      default_enabled: true,
+      mandatory: true,
+      supports_max_tokens: null,
+      depths: [],
+    }
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: "none", reasoning: baseReasoning })),
+      ),
+    ).toBeNull()
+    expect(
+      reasoningEffortFor(
+        ALIAS_REF,
+        undefined,
+        PICK_ID,
+        picksFor(PICK_ID),
+        catalogOf(entry({ qualityEffort: "high", reasoning: baseReasoning })),
+      ),
+    ).toBe("high")
+
+    for (const mandatory of [false, null] as const) {
+      expect(
+        reasoningEffortFor(
+          ALIAS_REF,
+          undefined,
+          PICK_ID,
+          picksFor(PICK_ID),
+          catalogOf(entry({ qualityEffort: "none", reasoning: { ...baseReasoning, mandatory } })),
+        ),
+      ).toBe("none")
+    }
+  })
+
   test("non-alias, disabled, mismatched-body and missing-model requests never inject", () => {
     const catalog = catalogOf(entry({ qualityEffort: "high" }))
     expect(reasoningEffortFor(DIRECT_REF, undefined, PICK_ID, picksFor(PICK_ID), catalog)).toBeNull()

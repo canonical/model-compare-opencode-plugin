@@ -53,6 +53,7 @@ export function isSelectableDepth(model: ModelEntry, effort: string): boolean {
   if (effort === "reasoning") return false
   const reasoning = model.reasoning
   if (reasoning === undefined) return false
+  if (effort === "none" && reasoning.mandatory === true) return false
   if (reasoning.supported_efforts.includes(effort)) return true
   if (effort !== "none" || reasoning.supported_efforts.length > 0) return false
   if (isNonReasoningBlock(reasoning)) return false

@@ -28,12 +28,30 @@ export const EXPECTED_SCHEMA_VERSION = 6
 const COMPONENTS = ["quality", "price", "context", "age"]
 const PRIORITIES = ["balanced", "price", "quality"]
 
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 // -> { ok: true, models: n } | { ok: false, reason }
 export function checkCanary(catalog) {
-  if (catalog?.schema_version !== EXPECTED_SCHEMA_VERSION) {
+  if (!isPlainObject(catalog) || catalog.schema_version !== EXPECTED_SCHEMA_VERSION) {
     return {
       ok: false,
       reason: `schema_version is ${JSON.stringify(catalog?.schema_version ?? null)}, expected ${EXPECTED_SCHEMA_VERSION}`,
+    }
+  }
+  if (typeof catalog.generated_at !== "string" || catalog.generated_at === "") {
+    return { ok: false, reason: "generated_at is missing or not a non-empty string" }
+  }
+  if (catalog.parameters !== undefined && isPlainObject(catalog.parameters) && catalog.parameters.weights !== undefined) {
+    if (!isPlainObject(catalog.parameters.weights)) {
+      return { ok: false, reason: "parameters.weights must be an object" }
+    }
+    for (const p of PRIORITIES) {
+      const entry = catalog.parameters.weights[p]
+      if (entry !== undefined && !isPlainObject(entry)) {
+        return { ok: false, reason: `parameters.weights.${p} must be an object` }
+      }
     }
   }
   if (!Array.isArray(catalog.models) || catalog.models.length === 0) {
@@ -41,10 +59,28 @@ export function checkCanary(catalog) {
   }
   for (const [i, model] of catalog.models.entries()) {
     const where = `model ${i}${typeof model?.id === "string" && model.id ? ` (${model.id})` : ""}`
-    if (typeof model?.id !== "string" || model.id === "") {
+    if (!isPlainObject(model)) {
+      return { ok: false, reason: `${where}: model entry is not an object` }
+    }
+    if (typeof model.id !== "string" || model.id === "") {
       return { ok: false, reason: `${where}: id is not a non-empty string` }
     }
-    if (typeof model.scores !== "object" || model.scores === null) {
+    if (typeof model.name !== "string" || model.name === "") {
+      return { ok: false, reason: `${where}: name is not a non-empty string` }
+    }
+    if (!isPlainObject(model.pricing)) {
+      return { ok: false, reason: `${where}: pricing is missing or not an object` }
+    }
+    if (!Number.isFinite(model.pricing.blended_per_1m)) {
+      return { ok: false, reason: `${where}: pricing.blended_per_1m is not a finite number` }
+    }
+    if (!Number.isFinite(model.context)) {
+      return { ok: false, reason: `${where}: context is not a finite number` }
+    }
+    if (model.quality !== null && !Number.isFinite(model.quality)) {
+      return { ok: false, reason: `${where}: quality must be a finite number or null` }
+    }
+    if (!isPlainObject(model.scores)) {
       return { ok: false, reason: `${where}: scores is missing or not an object` }
     }
     for (const key of COMPONENTS) {
@@ -52,7 +88,7 @@ export function checkCanary(catalog) {
         return { ok: false, reason: `${where}: scores.${key} is not a finite number` }
       }
     }
-    if (typeof model.scores.overall !== "object" || model.scores.overall === null) {
+    if (!isPlainObject(model.scores.overall)) {
       return { ok: false, reason: `${where}: scores.overall is missing or not an object` }
     }
     for (const p of PRIORITIES) {
@@ -76,7 +112,7 @@ export function checkCanary(catalog) {
     if (model.quality !== null && model.quality_effort === null) {
       return { ok: false, reason: `${where}: quality is scored but quality_effort is null` }
     }
-    if (typeof model.reasoning !== "object" || model.reasoning === null || Array.isArray(model.reasoning)) {
+    if (!isPlainObject(model.reasoning)) {
       return { ok: false, reason: `${where}: reasoning is missing or not an object` }
     }
     if (
@@ -89,8 +125,19 @@ export function checkCanary(catalog) {
       return { ok: false, reason: `${where}: reasoning.depths is not an array` }
     }
     for (const [index, depth] of model.reasoning.depths.entries()) {
-      if (typeof depth !== "object" || depth === null || typeof depth.effort !== "string" || depth.effort === "") {
+      if (!isPlainObject(depth) || typeof depth.effort !== "string" || depth.effort === "") {
         return { ok: false, reason: `${where}: reasoning.depths[${index}] has no effort` }
+      }
+    }
+  }
+  if (catalog.rankings !== undefined) {
+    if (!isPlainObject(catalog.rankings)) {
+      return { ok: false, reason: "rankings must be an object" }
+    }
+    for (const p of PRIORITIES) {
+      const list = catalog.rankings[p]
+      if (list !== undefined && (!Array.isArray(list) || list.some((id) => typeof id !== "string"))) {
+        return { ok: false, reason: `rankings.${p} must be an array of strings` }
       }
     }
   }

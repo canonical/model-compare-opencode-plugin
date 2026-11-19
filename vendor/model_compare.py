@@ -53,12 +53,15 @@ import json
 import math
 import os
 import re
+import shlex
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -105,7 +108,7 @@ QUALITY_CATALOG_CACHE = "published-catalog"
 # A published catalog generated more than this many days ago is stale:
 # warn but use -- the records' as_of makes the staleness visible downstream.
 QUALITY_CATALOG_MAX_AGE_DAYS = 14
-VERSION = "0.7.0"
+VERSION = "0.7.10"
 USER_AGENT = f"model-compare/{VERSION} (https://github.com/canonical/model-compare)"
 
 # opencode expects provider-qualified model ids: openrouter/<provider/model>.
@@ -267,12 +270,18 @@ def is_first_party(provider_name: str, author: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
 class StripApiKeyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Drop the AA API key when a redirect leaves the original origin.
+    """Drop API credentials when a redirect leaves the original origin.
 
     urllib copies custom request headers onto the redirected request even
-    across hosts. The key is kept only when scheme, host and port all match,
-    so a cross-host redirect or an https->http downgrade never carries it.
+    across hosts. The AA API key ("X-api-key") and the session-cost bearer
+    token ("Authorization") are kept only when scheme, host and effective
+    port all match -- an explicit default port counts as its scheme's
+    default -- so a cross-host redirect or an https->http downgrade never
+    carries them.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -282,14 +291,22 @@ class StripApiKeyRedirectHandler(urllib.request.HTTPRedirectHandler):
                 urllib.parse.urlsplit(req.full_url),
                 urllib.parse.urlsplit(new.full_url),
             )
-            same_origin = (old.scheme, old.hostname, old.port) == (
+            # An explicit default port is the scheme's default, not a
+            # different origin: https://host:443 == https://host.
+            same_origin = (
+                old.scheme,
+                old.hostname,
+                old.port or _DEFAULT_PORTS.get(old.scheme),
+            ) == (
                 dest.scheme,
                 dest.hostname,
-                dest.port,
+                dest.port or _DEFAULT_PORTS.get(dest.scheme),
             )
             if not same_origin:
                 # Request stores header names capitalize()d: "X-api-key".
                 new.remove_header("X-api-key")
+                # fetch_session_cost authenticates with a bearer token.
+                new.remove_header("Authorization")
         return new
 
 
@@ -420,6 +437,9 @@ def parse_endpoints(payload) -> list[dict]:
             continue
         raw = entry.get("pricing")
         raw_pricing = raw if isinstance(raw, dict) else {}
+        max_completion = entry.get("max_completion_tokens")
+        if type(max_completion) is not int or max_completion <= 0:
+            max_completion = None
         endpoints.append(
             {
                 "provider_name": entry.get("provider_name"),
@@ -428,14 +448,29 @@ def parse_endpoints(payload) -> list[dict]:
                 "pricing": {
                     "prompt": parse_price(raw_pricing.get("prompt")),
                     "completion": parse_price(raw_pricing.get("completion")),
+                    "input_cache_read": parse_non_negative_price(
+                        raw_pricing.get("input_cache_read")
+                    ),
+                    "input_cache_write": parse_non_negative_price(
+                        raw_pricing.get("input_cache_write")
+                    ),
+                    "input_cache_write_1h": parse_non_negative_price(
+                        raw_pricing.get("input_cache_write_1h")
+                    ),
                     "overrides": raw_pricing.get("overrides"),
                 },
                 "context_length": entry.get("context_length"),
+                "max_completion_tokens": max_completion,
                 "status": entry.get("status"),
                 "service_tier": entry.get("service_tier"),
             }
         )
     return endpoints
+
+
+def endpoint_cache_name(model_id: str) -> str:
+    """The one cache key both the fetch and the stale-annotation read use."""
+    return f"endpoints-v2:{model_id.replace('/', '_')}"
 
 
 def fetch_model_endpoints(model_id: str, args) -> list[dict]:
@@ -446,7 +481,7 @@ def fetch_model_endpoints(model_id: str, args) -> list[dict]:
     which raises at once on 4xx and after the retries on 5xx/network
     errors -- the caller owns the fail-closed policy.
     """
-    cache_name = f"endpoints:{model_id.replace('/', '_')}"
+    cache_name = endpoint_cache_name(model_id)
     if not args.no_cache:
         cached = load_cache(cache_name, args.cache_ttl)
         if cached:
@@ -928,7 +963,7 @@ def _stale_filtered_annotations(model_id, catalog_context, args):
     ranked candidate's annotations. A model whose cache holds no endpoint
     list at all yields None (the entry carries the drop reason alone).
     """
-    cached = load_cache_expired(f"endpoints:{model_id.replace('/', '_')}")
+    cached = load_cache_expired(endpoint_cache_name(model_id))
     if not isinstance(cached, list):
         return None
     author = model_id.partition("/")[0]
@@ -1062,6 +1097,29 @@ def apply_endpoint_pricing(candidates, args, filtered):
         )
         cand["base_price_in"] = eff["base_price_in"] * 1_000_000.0
         cand["base_price_out"] = eff["base_price_out"] * 1_000_000.0
+        cand["cache_read_per_1m"] = (
+            _per_1m(eff["price_cache_read"])
+            if eff["price_cache_read"] is not None
+            else None
+        )
+        cand["cache_write_per_1m"] = (
+            _per_1m(eff["price_cache_write"])
+            if eff["price_cache_write"] is not None
+            else None
+        )
+        cand["base_cache_read_per_1m"] = (
+            _per_1m(eff["base_cache_read"])
+            if eff["base_cache_read"] is not None
+            else None
+        )
+        cand["base_cache_write_per_1m"] = (
+            _per_1m(eff["base_cache_write"])
+            if eff["base_cache_write"] is not None
+            else None
+        )
+        baseline_max_output = baseline.get("max_completion_tokens")
+        if type(baseline_max_output) is int and baseline_max_output > 0:
+            cand["max_output_tokens"] = baseline_max_output
         cand["tier_prompt_tokens"] = eff["tier_prompt_tokens"]
         cand["tiers"] = eff["tiers"]
         cand["schedule"] = eff["schedule"]
@@ -1105,7 +1163,19 @@ def strip_permaslug_date(permaslug: str) -> str:
     return match.group(1) if match else permaslug
 
 
-def fetch_session_cost(args) -> dict | None:
+def catalog_pairing_entries(models):
+    """Catalog listings projected to the slug/permaslug pairing
+    _pair_permaslug_payloads consumes: models-API entries key on id and
+    canonical_slug, which the pairing reads as slug/permaslug. Entries
+    without an id cannot pair and are dropped."""
+    return [
+        {"slug": model["id"], "permaslug": model.get("canonical_slug") or ""}
+        for model in models or []
+        if isinstance(model, dict) and model.get("id")
+    ]
+
+
+def fetch_session_cost(args, models=None) -> dict | None:
     """Per-task session-cost medians from OpenRouter's dataset, or None.
 
     A separate published dimension (design section 4.8): the median USD
@@ -1114,21 +1184,30 @@ def fetch_session_cost(args) -> dict | None:
     (?app_slug=<harness>&limit=500&offset=k) regardless of the model list;
     pagination stops on a page shorter than the limit or once the next
     offset would exceed the API's 5000 cap. Cells key on dated permaslugs
-    (z-ai/glm-5.3-flash-20260826), stripped to the bare catalog id with
-    strip_permaslug_date; when several strip to the same id, the latest
-    date wins each turn-range cell (same rule as build_aa_benchmarks).
+    (z-ai/glm-5.3-flash-20260826), resolved to exact catalog slugs with
+    the same three-pass pairing as build_aa_benchmarks (#22): a blind
+    strip with latest-date-wins merges snapshots across listings of one
+    model family, the exact conflation #17 removed for the benchmarks.
+    ``models`` is the raw catalog listing (id/canonical_slug entries);
+    catalog_pairing_entries translates it to the slug/permaslug map the
+    pairing consumes. When several dated permaslugs pair with one slug,
+    the payloads are turn-range maps, not whole records, so the merge
+    unions the maps and each range resolves to the latest date's cell
+    (first wins on an equal date); an ambiguous strip with no catalog
+    pairing to disambiguate drops rather than guesses.
 
     Returns None (graceful degradation, design section 4.9) when no key is
     configured (the --openrouter-api-key flag, else OPENROUTER_API_KEY),
-    when the fetch fails after fetch_json's retries, or when the response
-    shape is unexpected -- a malformed payload must never crash the run.
-    The merged result is cached under "session-cost" with the standard TTL.
+    when the fetch fails after fetch_json's retries, when the response
+    shape is unexpected, or when no cell survives the pairing -- a
+    malformed payload must never crash the run. The merged result is
+    cached under "session-cost-v3" with the standard TTL.
     """
     api_key = args.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return None
     if not args.no_cache:
-        cached = load_cache("session-cost", args.cache_ttl)
+        cached = load_cache("session-cost-v3", args.cache_ttl)
         if isinstance(cached, dict) and isinstance(cached.get("medians"), dict):
             return cached
     cells = []
@@ -1154,16 +1233,12 @@ def fetch_session_cost(args) -> dict | None:
         if len(data) < 500:
             break
         offset += 500
-    medians: dict[str, dict[str, float]] = {}
+    # Cells group one payload per permaslug before the pairing passes. A
+    # cell naming a new turn range is dropped (the catalog validator
+    # rejects unknown ranges, and session cost must never fail the
+    # publish), as is any non-finite median.
+    valid: dict[str, tuple[dict[str, float], str]] = {}
     seen_date: dict[tuple[str, str], str] = {}
-
-    def accept(bare, date, turn_range, median):
-        key = (bare, turn_range)
-        if key in seen_date and seen_date[key] >= date:
-            return
-        seen_date[key] = date
-        medians.setdefault(bare, {})[turn_range] = median
-
     for cell in cells:
         permaslug = cell.get("model_permaslug")
         turn_range = cell.get("turn_range")
@@ -1189,13 +1264,28 @@ def fetch_session_cost(args) -> dict | None:
             continue
         if not math.isfinite(median):
             continue
-        match = re.match(r"^(.*)-(\d{8})$", permaslug)
-        accept(
-            strip_permaslug_date(permaslug),
-            match.group(2) if match else "",
-            turn_range,
-            median,
-        )
+        bare = strip_permaslug_date(permaslug)
+        # strip_permaslug_date removed a trailing -YYYYMMDD exactly when
+        # the key was dated; the date is then the final 8 characters.
+        date = "" if bare == permaslug else permaslug[-8:]
+        # The dataset can republish a (permaslug, range) cell; the latest
+        # date wins, first on an equal date.
+        key = (permaslug, turn_range)
+        if key in seen_date and seen_date[key] >= date:
+            continue
+        seen_date[key] = date
+        if permaslug not in valid:
+            valid[permaslug] = ({}, date)
+        valid[permaslug][0][turn_range] = median
+    # Resolve keys to exact catalog slugs with the same three-pass pairing
+    # as build_aa_benchmarks (#22). The payloads are turn-range maps, so
+    # same-slug snapshots merge per range instead of replacing wholesale.
+    medians = {
+        slug: payload
+        for slug, (payload, _date) in _pair_permaslug_payloads(
+            valid, catalog_pairing_entries(models), merge=True
+        ).items()
+    }
     if not medians:
         warn("session-cost dataset returned no usable cells")
         return None
@@ -1230,7 +1320,7 @@ def fetch_session_cost(args) -> dict | None:
         "window_end_date": window_end_date,
         "medians": medians,
     }
-    save_cache("session-cost", result)
+    save_cache("session-cost-v3", result)
     return result
 
 
@@ -1242,6 +1332,11 @@ def fetch_session_cost(args) -> dict | None:
 # Published catalogs before v6 are retired: v6 is the only shape whose
 # `quality` means the best-selectable-depth index.
 CATALOG_QUALITY_SCHEMA_VERSION = CATALOG_SCHEMA_VERSION
+
+# One display-only unlabeled AA reference: the intelligence index and AA's
+# benchmark cost, both measured without a reasoning-effort label, plus the
+# source label and its as_of. The record deliberately has no `effort` key.
+CATALOG_UNLABELED_KEYS = ("index", "cost_per_task_usd", "source", "as_of")
 
 
 def _catalog_index(value) -> float | None:
@@ -1262,9 +1357,11 @@ def _parse_catalog_v6(doc) -> tuple[dict, dict]:
 
     by_id maps id -> {"index", "source", "as_of", "effort"} for the model's
     main quality (the index at its best selectable depth). The
-    depth map maps id -> {"default_effort", "depths": {effort: record}} for
-    the model's full measured depth list; resolve_quality re-selects from
-    it using the best-selectable-depth rules and the unkeyed run's support data.
+    depth map maps id -> {"default_effort", "depths": {effort: record},
+    "unlabeled": record-or-None} for the model's full measured depth list
+    and, when AA measured it without an effort label, the display-only
+    reference; resolve_quality re-selects from it using the
+    best-selectable-depth rules and the unkeyed run's support data.
 
     Gates (design: failure modes):
     - schema_version must be an int == 6. Earlier catalogs predate the
@@ -1387,9 +1484,45 @@ def _parse_catalog_v6(doc) -> tuple[dict, dict]:
                 "source": source,
                 "as_of": as_of if as_of else None,
             }
+        unlabeled = reasoning.get("aa_unlabeled")
+        if unlabeled is not None:
+            if not isinstance(unlabeled, dict):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            if any(key not in CATALOG_UNLABELED_KEYS for key in unlabeled):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            if any(key not in unlabeled for key in CATALOG_UNLABELED_KEYS):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            index = _catalog_index(unlabeled.get("index"))
+            if index is None:
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            cost = unlabeled.get("cost_per_task_usd")
+            if cost is not None:
+                cost = _finite_cost(cost)
+                if cost is None:
+                    warn("published catalog returned an unexpected response shape")
+                    return {}, {}
+            source = unlabeled.get("source")
+            if not (isinstance(source, str) and source):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            as_of = unlabeled.get("as_of")
+            if as_of is not None and not isinstance(as_of, str):
+                warn("published catalog returned an unexpected response shape")
+                return {}, {}
+            unlabeled = {
+                "index": index,
+                "cost_per_task_usd": cost,
+                "source": source,
+                "as_of": as_of if as_of else None,
+            }
         depths_by_id[model_id] = {
             "default_effort": default_effort if default_effort else None,
             "depths": depths,
+            "unlabeled": unlabeled,
         }
     return by_id, depths_by_id
 
@@ -1731,6 +1864,18 @@ def parse_price(value) -> float | None:
         return None
 
 
+def parse_non_negative_price(value) -> float | None:
+    """A finite, non-negative price; malformed, negative or NaN -> None.
+
+    Cache rates use this fail-soft gate: a bad cache rate is ignored, never
+    allowed to drop a model or poison a published artifact.
+    """
+    price = parse_price(value)
+    if price is None or not math.isfinite(price) or price < 0:
+        return None
+    return price
+
+
 # ---------------------------------------------------------------------------
 # OpenRouter tiered pricing (pricing.overrides)
 # ---------------------------------------------------------------------------
@@ -1821,11 +1966,12 @@ def _coverage(days_count: int, minutes: int) -> float:
 
 
 def _entry_prices(entry):
-    """Parse an override entry's prompt/completion prices (spec rule 5).
+    """Parse an override entry's prices (spec rule 5).
 
-    Returns {"prompt": float|None, "completion": float|None} where None means
-    the key is absent (inheritance), or None when a present price is
-    malformed, negative or non-finite (the entry is skipped whole).
+    Returns {"prompt", "completion", "input_cache_read",
+    "input_cache_write"} where None means the key is absent (inheritance).
+    A malformed prompt/completion skips the entry whole (returns None); a
+    malformed cache rate is ignored on its own, never skips the entry.
     """
     values = {}
     for key in ("prompt", "completion"):
@@ -1836,6 +1982,8 @@ def _entry_prices(entry):
         if value is None or not math.isfinite(value) or value < 0:
             return None
         values[key] = value
+    for key in ("input_cache_read", "input_cache_write"):
+        values[key] = parse_non_negative_price(entry.get(key))
     return values
 
 
@@ -1846,7 +1994,9 @@ def _schedule_windows(window_entries):
     utc_days deduplicated in week order, per-window coverage), or None when
     the windows do not tile the 7-day week exactly (gaps or overlaps), or a
     window is missing prompt/completion (rule 7: no top-level inheritance --
-    the top level is fetch-time dependent).
+    the top level is fetch-time dependent). A window's cache rates stay None
+    when it does not set them; effective_pricing resolves those against the
+    frozen peak base after the peak window is known.
     """
     windows = []
     covered = set()
@@ -1875,6 +2025,8 @@ def _schedule_windows(window_entries):
                 "coverage": _coverage(len(day_indices), len(span)),
                 "price_in": price_in,
                 "price_out": price_out,
+                "input_cache_read": entry["input_cache_read"],
+                "input_cache_write": entry["input_cache_write"],
             }
         )
     if matched != _WEEK_MINUTES or len(covered) != _WEEK_MINUTES:
@@ -1893,10 +2045,14 @@ def effective_pricing(pricing, prompt_tokens, input_share):
     source = pricing if isinstance(pricing, dict) else {}
     top_in = parse_price(source.get("prompt"))
     top_out = parse_price(source.get("completion"))
+    top_cache_read = parse_non_negative_price(source.get("input_cache_read"))
+    top_cache_write = parse_non_negative_price(source.get("input_cache_write"))
     base_in, base_out = top_in, top_out
+    base_cache_read, base_cache_write = top_cache_read, top_cache_write
+    current_cache_read, current_cache_write = base_cache_read, base_cache_write
     overrides = source.get("overrides")
 
-    tier_entries = []  # (threshold, price_in|None, price_out|None), API order
+    tier_entries = []  # (threshold, prices dict|None), API order
     window_entries = []  # validated time-window pre-windows, API order
     time_touched = False
     schedule_broken = False
@@ -1960,10 +2116,12 @@ def effective_pricing(pricing, prompt_tokens, input_share):
                         "days": days,
                         "price_in": prices["prompt"],
                         "price_out": prices["completion"],
+                        "input_cache_read": prices["input_cache_read"],
+                        "input_cache_write": prices["input_cache_write"],
                     }
                 )
             elif has_threshold:
-                tier_entries.append((threshold, prices["prompt"], prices["completion"]))
+                tier_entries.append((threshold, prices))
             # else: conditionless entry (price keys only) -- ignored (plan
             # Review Focus; none live, and honoring an unconditional price
             # swap would be dangerous)
@@ -1991,6 +2149,24 @@ def effective_pricing(pricing, prompt_tokens, input_share):
         peak_blended = peak["blended"]  # ties: first in API order
         # Deterministic base (rule 7): freeze at the peak window's prices.
         base_in, base_out = peak["price_in"], peak["price_out"]
+        base_cache_read = (
+            peak["input_cache_read"]
+            if peak["input_cache_read"] is not None
+            else top_cache_read
+        )
+        base_cache_write = (
+            peak["input_cache_write"]
+            if peak["input_cache_write"] is not None
+            else top_cache_write
+        )
+        # A window that sets no cache rate inherits the frozen base, not the
+        # fetch-time top-level value.
+        for window in schedule:
+            if window["input_cache_read"] is None:
+                window["input_cache_read"] = base_cache_read
+            if window["input_cache_write"] is None:
+                window["input_cache_write"] = base_cache_write
+        current_cache_read, current_cache_write = base_cache_read, base_cache_write
         if peak_blended == 0:
             max_discount = 0.0
         else:
@@ -2003,31 +2179,57 @@ def effective_pricing(pricing, prompt_tokens, input_share):
     applied = None
     current_in, current_out = base_in, base_out
     by_threshold = {}
-    for threshold, tier_in, tier_out in tier_entries:
+    for threshold, prices in tier_entries:
+        tier_in, tier_out = prices["prompt"], prices["completion"]
+        tier_cache_read = prices["input_cache_read"]
+        tier_cache_write = prices["input_cache_write"]
         if prompt_tokens > threshold:
             if tier_in is not None:
                 current_in = tier_in
             if tier_out is not None:
                 current_out = tier_out
+            if tier_cache_read is not None:
+                current_cache_read = tier_cache_read
+            if tier_cache_write is not None:
+                current_cache_write = tier_cache_write
             applied = threshold
-        slot = by_threshold.setdefault(threshold, {"price_in": None, "price_out": None})
+        slot = by_threshold.setdefault(
+            threshold,
+            {
+                "price_in": None,
+                "price_out": None,
+                "cache_read": None,
+                "cache_write": None,
+            },
+        )
         if tier_in is not None:
             slot["price_in"] = tier_in
         if tier_out is not None:
             slot["price_out"] = tier_out
+        if tier_cache_read is not None:
+            slot["cache_read"] = tier_cache_read
+        if tier_cache_write is not None:
+            slot["cache_write"] = tier_cache_write
     tiers = []
     running_in, running_out = base_in, base_out
+    running_cache_read, running_cache_write = base_cache_read, base_cache_write
     for threshold in sorted(by_threshold):
         slot = by_threshold[threshold]
         if slot["price_in"] is not None:
             running_in = slot["price_in"]
         if slot["price_out"] is not None:
             running_out = slot["price_out"]
+        if slot["cache_read"] is not None:
+            running_cache_read = slot["cache_read"]
+        if slot["cache_write"] is not None:
+            running_cache_write = slot["cache_write"]
         tiers.append(
             {
                 "min_prompt_tokens": threshold,
                 "price_in": running_in,
                 "price_out": running_out,
+                "input_cache_read": running_cache_read,
+                "input_cache_write": running_cache_write,
             }
         )
 
@@ -2041,6 +2243,10 @@ def effective_pricing(pricing, prompt_tokens, input_share):
         "top_price_out": top_out,
         "base_price_in": base_in,
         "base_price_out": base_out,
+        "price_cache_read": current_cache_read,
+        "price_cache_write": current_cache_write,
+        "base_cache_read": base_cache_read,
+        "base_cache_write": base_cache_write,
         "tier_prompt_tokens": applied,
         "tiers": tiers,
         "schedule": schedule,
@@ -2472,7 +2678,10 @@ def build_aa_lookup(entries):
         raw_index = entry.get("index")
         if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
             continue
-        index = float(raw_index)
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
         # Non-finite indexes would serialize as NaN and poison quality.
         if not math.isfinite(index):
             continue
@@ -2528,7 +2737,10 @@ def build_aa_depth_lookup(entries):
         raw_index = entry.get("index")
         if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
             continue
-        index = float(raw_index)
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
         if not math.isfinite(index):
             continue
         seen.add(dedupe_key)
@@ -2566,19 +2778,99 @@ def build_aa_depth_lookup(entries):
     return lookup
 
 
-def _depth_group(model, lookup):
-    """The candidate's matching base group (effort -> record), or None.
+def build_aa_unlabeled_lookup(entries):
+    """Index display-only AA rows that carry no reasoning-effort label.
 
+    AA sometimes ranks a model once, with no effort parenthetical and no
+    effort-suffixed slug ("GLM-5.3-Flash"). Such a row cannot fill QUAL:
+    the index is not tied to a selectable effort, so it may not be the
+    quality the user gets. It is still useful as a reference, so it is
+    indexed here, separately from build_aa_depth_lookup's effort-keyed
+    groups (which skip these rows entirely).
+
+    Each record is {"index", "cost_per_task_usd", "source": "aa", "as_of"}.
+    Rows with an effort label, an ambiguous label, a non-finite index or no
+    usable key are skipped. Duplicate base keys are stored as None
+    (ambiguous: never guessed), mirroring the depth lookup. Base keys come
+    from the name and slug with the effort label stripped, both
+    unqualified and creator-qualified ("<creator_norm>:<base_key>").
+    """
+    lookup = {}
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("id")
+        dedupe_key = (
+            entry_id
+            if isinstance(entry_id, str) and entry_id
+            else (entry.get("slug"), entry.get("name"))
+        )
+        if dedupe_key in seen:
+            continue
+        parsed = parse_aa_effort(entry.get("name") or "", entry.get("slug") or "")
+        if parsed["effort"] or parsed["ambiguous"]:
+            continue
+        raw_index = entry.get("index")
+        if not isinstance(raw_index, (int, float)) or isinstance(raw_index, bool):
+            continue
+        try:
+            index = float(raw_index)  # huge ints raise OverflowError
+        except OverflowError:
+            continue
+        if not math.isfinite(index):
+            continue
+        seen.add(dedupe_key)
+        record = {
+            "index": index,
+            "cost_per_task_usd": _finite_cost(entry.get("cost_per_task")),
+            "source": "aa",
+            "as_of": (
+                entry.get("as_of") if isinstance(entry.get("as_of"), str) else None
+            ),
+        }
+        base_keys = []
+        for base in (parsed["base_name"], parsed["base_slug"]):
+            normalized = norm_key(base)
+            if normalized and normalized not in base_keys:
+                base_keys.append(normalized)
+        creator = entry.get("creator")
+        if not isinstance(creator, str) or not creator:
+            raw_creator = entry.get("model_creator")
+            if isinstance(raw_creator, dict) and isinstance(
+                raw_creator.get("name"), str
+            ):
+                creator = raw_creator["name"]
+        creator_norm = normalize_provider(creator) if isinstance(creator, str) else ""
+        keys = list(base_keys)
+        if creator_norm:
+            keys.extend(f"{creator_norm}:{base_key}" for base_key in base_keys)
+        for base_key in keys:
+            if base_key in lookup:
+                lookup[base_key] = None
+            else:
+                lookup[base_key] = record
+    return lookup
+
+
+def _depth_group(model, lookup):
+    """The candidate's matching lookup value, or None.
+
+    Used for both effort-keyed base groups (effort -> record) and the
+    unlabeled reference map (base -> record): the tier walk is identical.
     Exact tiers only, in the legacy order: full id, base id, display name,
     display name sans parentheticals. At each tier the creator-qualified
     key (the OpenRouter author prefix normalized with normalize_provider)
-    is tried before the unqualified key. The first tier that resolves a
-    base group wins; a tier whose group lacks the requested effort yields
-    nothing rather than falling through to a lower tier. Ambiguous
-    (base, effort) records are stored as None by build_aa_depth_lookup and
-    match as absent; exact-key lookup means one tier cannot otherwise
-    resolve to multiple base groups. The fuzzy pass is never used here --
-    it is the #17 conflation bug.
+    is tried before the unqualified key. The first tier with a present key
+    wins and terminates the walk; a tier whose group lacks the requested
+    effort yields nothing rather than falling through to a lower tier. The
+    walk terminates on a present key even when the stored value is None:
+    ambiguous records (a None (base, effort) record from
+    build_aa_depth_lookup, a None base value from
+    build_aa_unlabeled_lookup) match as a resolved-but-empty tier, so the
+    caller sees no record and no lower tier is consulted. Exact-key lookup
+    means one tier cannot otherwise resolve to multiple base groups. The
+    fuzzy pass is never used here -- it is the #17 conflation bug.
     """
     if not isinstance(lookup, dict):
         return None
@@ -2593,12 +2885,11 @@ def _depth_group(model, lookup):
         if not normalized:
             continue
         if creator:
-            qualified = lookup.get(f"{creator}:{normalized}")
-            if qualified is not None:
-                return qualified
-        group = lookup.get(normalized)
-        if group is not None:
-            return group
+            qualified_key = f"{creator}:{normalized}"
+            if qualified_key in lookup:
+                return lookup[qualified_key]
+        if normalized in lookup:
+            return lookup[normalized]
     return None
 
 
@@ -2705,7 +2996,7 @@ def base_model_id(model_id: str) -> str:
 AA_BENCHMARK_FIELDS = ("intelligence_index", "coding_index", "agentic_index")
 
 
-def _pair_permaslug_payloads(valid, models):
+def _pair_permaslug_payloads(valid, models, merge=None):
     """Resolve permaslug-keyed payloads to exact catalog slugs.
 
     ``valid`` maps a permaslug (or an undated catalog id) to
@@ -2715,6 +3006,18 @@ def _pair_permaslug_payloads(valid, models):
     documented on build_aa_benchmarks: permaslug pairs first (latest date
     wins per slug), then undated keys self-map, then an unambiguous dated
     strip. Returns ``{slug: (payload, date)}``.
+
+    ``merge`` is for payloads that are turn-range maps (fetch_session_cost),
+    not whole records, and unions a slug's maps across all three passes:
+    pass 1's same-slug snapshots, an undated key naming an already-paired
+    slug (pass 2), and the single unambiguous dated strip onto an
+    already-paired id (pass 3) -- each range resolves to the latest date's
+    cell (first wins on an equal date), so one slug's data never silently
+    loses ranges because it arrived through different passes. An ambiguous
+    strip (several candidates) still drops rather than guesses.
+    Whole-record payloads must keep the default, which replaces the
+    payload wholesale -- a record is self-contained, so mixing snapshots
+    would splice fields from different snapshots.
     """
     permaslug_to_slug = {}
     for entry in models or []:
@@ -2729,27 +3032,62 @@ def _pair_permaslug_payloads(valid, models):
 
     paired = {}
     claimed = set()
+    seen_range = {}
+
+    # merge mode only: union one turn-range-map payload into slug's map.
+    # Each range resolves to the latest date's cell (first wins on an
+    # equal date); the paired date tracks the latest contributing date.
+    # The merged map is always a fresh copy: an earlier pass may have
+    # stored a caller-owned payload by reference, and writing into it
+    # would corrupt the caller's ``valid`` payloads.
+    def merge_ranges(slug, payload, date):
+        merged, prev_date = paired.get(slug, ({}, ""))
+        merged = dict(merged)
+        for turn_range, median in payload.items():
+            rkey = (slug, turn_range)
+            if rkey in seen_range and seen_range[rkey] >= date:
+                continue
+            seen_range[rkey] = date
+            merged[turn_range] = median
+        paired[slug] = (merged, date if date > prev_date else prev_date)
 
     # Pass 1: permaslug keys pair with their own slug; same-slug
     # snapshots resolve to the latest date (first wins on an equal date).
+    # In merge mode a payload is a turn-range map, not a whole record, so
+    # same-slug snapshots union their maps per range instead of replacing.
     seen_date = {}
     for key, (payload, date) in valid.items():
         slug = permaslug_to_slug.get(key)
-        if slug is None or (slug in seen_date and seen_date[slug] >= date):
+        if slug is None:
+            continue
+        if merge:
+            claimed.add(slug)
+            merge_ranges(slug, payload, date)
+            continue
+        if slug in seen_date and seen_date[slug] >= date:
             continue
         seen_date[slug] = date
         paired[slug] = (payload, date)
         claimed.add(slug)
 
     # Pass 2: undated keys self-map unless pass 1 claimed the id.
+    # In merge mode a claimed undated key that IS an already-paired slug
+    # unions its ranges into that slug's map instead of dropping -- one
+    # slug's data arriving through different passes must not lose ranges.
     for key, (payload, date) in valid.items():
-        if date or key in permaslug_to_slug or key in claimed:
+        if date or key in permaslug_to_slug:
+            continue
+        if key in claimed:
+            if merge and key in paired:
+                merge_ranges(key, payload, date)
             continue
         paired[key] = (payload, date)
         claimed.add(key)
 
     # Pass 3: unpaired dated keys strip, but only onto an unclaimed id
-    # and only when the strip is unambiguous.
+    # and only when the strip is unambiguous. In merge mode the single
+    # unambiguous candidate unions into an already-paired bare id instead
+    # of dropping; an ambiguous strip (several candidates) still drops.
     strip_candidates = {}
     for key, (payload, date) in valid.items():
         if not date or key in permaslug_to_slug:
@@ -2757,9 +3095,13 @@ def _pair_permaslug_payloads(valid, models):
         stripped = strip_permaslug_date(key)
         strip_candidates.setdefault(stripped, []).append((date, payload))
     for bare, candidates in strip_candidates.items():
-        if bare in claimed or len(candidates) > 1:
+        if len(candidates) > 1:
             continue
         date, payload = candidates[0]
+        if bare in claimed:
+            if merge and bare in paired:
+                merge_ranges(bare, payload, date)
+            continue
         paired[bare] = (payload, date)
         claimed.add(bare)
 
@@ -3008,10 +3350,7 @@ def build_reasoning_metadata(
             # permaslug is unpaired still resolves by its own id.
             valid[slug] = (entry, "")
 
-    catalog_pairs = [
-        {"slug": model["id"], "permaslug": model.get("canonical_slug") or ""}
-        for model in models
-    ]
+    catalog_pairs = catalog_pairing_entries(models)
     frontend_by_id = {
         candidate_id: entry
         for candidate_id, (entry, _date) in _pair_permaslug_payloads(
@@ -3140,6 +3479,7 @@ def resolve_quality(
     catalog_quality=None,
     *,
     depth_lookup=None,
+    unlabeled_lookup=None,
     catalog_depths=None,
     requested_effort="default",
 ):
@@ -3160,6 +3500,13 @@ def resolve_quality(
          no effort label, so a reasoning model never uses it as its main
          score; unknown reasoning is not non-reasoning.
       4. No record -- the candidate stays quality-blind.
+
+    A quality-blind candidate may still carry a display-only AA reference:
+    rows AA measures without an effort label cannot fill QUAL, so
+    ``unlabeled_lookup`` (keyed runs) or the catalog depth map's
+    ``unlabeled`` record (unkeyed runs) is attached as
+    ``cand["quality_unlabeled"]`` when no main record resolved. It never
+    enters quality_by_id and never changes the score.
 
     Default selection considers only finite records whose efforts are
     selectable when support metadata is non-empty; ties prefer the deeper
@@ -3184,6 +3531,9 @@ def resolve_quality(
     source_by_id = {}
     depth_mode = depth_lookup is not None or catalog_depths is not None
     for cand in candidates:
+        # A previous pass may have attached a display-only reference; a
+        # resolved record makes it stale, so never let it survive.
+        cand.pop("quality_unlabeled", None)
         record = None
         if depth_mode:
             default_effort = cand.get("default_effort")
@@ -3292,6 +3642,32 @@ def resolve_quality(
                         "as_of": bench.get("as_of"),
                     }
         if record is None:
+            # No effort-attributable record: surface an unlabeled AA
+            # measurement as a display-only reference. It never fills
+            # QUAL, and a resolved record makes it redundant.
+            reference = (
+                _depth_group(cand, unlabeled_lookup) if unlabeled_lookup else None
+            )
+            if reference is None and catalog_depths is not None:
+                catalog_entry = catalog_depths.get(cand["id"])
+                if isinstance(catalog_entry, dict):
+                    candidate_reference = catalog_entry.get("unlabeled")
+                    if isinstance(candidate_reference, dict):
+                        reference = candidate_reference
+            reference_index = (
+                reference.get("index") if isinstance(reference, dict) else None
+            )
+            if (
+                isinstance(reference_index, (int, float))
+                and not isinstance(reference_index, bool)
+                and math.isfinite(reference_index)
+            ):
+                cand["quality_unlabeled"] = {
+                    "index": float(reference_index),
+                    "cost_per_task_usd": reference.get("cost_per_task_usd"),
+                    "source": reference.get("source") or "aa",
+                    "as_of": reference.get("as_of"),
+                }
             continue
 
         # Drift: only meaningful when the winner is not OpenRouter itself.
@@ -3568,11 +3944,31 @@ def build_schedules(
                     "input_per_1m": _per_1m(peak["price_in"]),
                     "output_per_1m": _per_1m(peak["price_out"]),
                     "blended_per_1m": _per_1m(peak["blended"]),
+                    "input_cache_read_per_1m": (
+                        _per_1m(peak["input_cache_read"])
+                        if peak["input_cache_read"] is not None
+                        else None
+                    ),
+                    "input_cache_write_per_1m": (
+                        _per_1m(peak["input_cache_write"])
+                        if peak["input_cache_write"] is not None
+                        else None
+                    ),
                 },
                 "offpeak": {
                     "input_per_1m": _per_1m(offpeak["price_in"]),
                     "output_per_1m": _per_1m(offpeak["price_out"]),
                     "blended_per_1m": _per_1m(offpeak["blended"]),
+                    "input_cache_read_per_1m": (
+                        _per_1m(offpeak["input_cache_read"])
+                        if offpeak["input_cache_read"] is not None
+                        else None
+                    ),
+                    "input_cache_write_per_1m": (
+                        _per_1m(offpeak["input_cache_write"])
+                        if offpeak["input_cache_write"] is not None
+                        else None
+                    ),
                 },
                 "schedule": [
                     {
@@ -3583,6 +3979,16 @@ def build_schedules(
                         "input_per_1m": _per_1m(window["price_in"]),
                         "output_per_1m": _per_1m(window["price_out"]),
                         "blended_per_1m": _per_1m(window["blended"]),
+                        "input_cache_read_per_1m": (
+                            _per_1m(window["input_cache_read"])
+                            if window["input_cache_read"] is not None
+                            else None
+                        ),
+                        "input_cache_write_per_1m": (
+                            _per_1m(window["input_cache_write"])
+                            if window["input_cache_write"] is not None
+                            else None
+                        ),
                     }
                     for window in windows
                 ],
@@ -3767,14 +4173,59 @@ def build_candidates(
         blended_m = (
             args.input_share * price_in_m + (1.0 - args.input_share) * price_out_m
         )
+        top_provider = model.get("top_provider")
+        max_output = (
+            top_provider.get("max_completion_tokens")
+            if isinstance(top_provider, dict)
+            else None
+        )
+        if type(max_output) is not int or max_output <= 0:
+            max_output = None
+        architecture = model.get("architecture")
+        input_modalities = (
+            architecture.get("input_modalities")
+            if isinstance(architecture, dict)
+            else None
+        )
+        if not isinstance(input_modalities, list) or any(
+            not isinstance(modality, str) or not modality
+            for modality in input_modalities
+        ):
+            input_modalities = []
+        cache_read_per_1m = (
+            _per_1m(eff["price_cache_read"])
+            if eff["price_cache_read"] is not None
+            else None
+        )
+        cache_write_per_1m = (
+            _per_1m(eff["price_cache_write"])
+            if eff["price_cache_write"] is not None
+            else None
+        )
+        base_cache_read_per_1m = (
+            _per_1m(eff["base_cache_read"])
+            if eff["base_cache_read"] is not None
+            else None
+        )
+        base_cache_write_per_1m = (
+            _per_1m(eff["base_cache_write"])
+            if eff["base_cache_write"] is not None
+            else None
+        )
         candidates.append(
             {
                 "id": model_id,
                 "name": model.get("name") or model_id,
                 "context": context,
+                "max_output_tokens": max_output,
+                "input_modalities": input_modalities,
                 "price_in": price_in_m,
                 "price_out": price_out_m,
                 "blended": blended_m,
+                "cache_read_per_1m": cache_read_per_1m,
+                "cache_write_per_1m": cache_write_per_1m,
+                "base_cache_read_per_1m": base_cache_read_per_1m,
+                "base_cache_write_per_1m": base_cache_write_per_1m,
                 "base_price_in": eff["base_price_in"] * 1_000_000.0,
                 "base_price_out": eff["base_price_out"] * 1_000_000.0,
                 "tier_prompt_tokens": eff["tier_prompt_tokens"],
@@ -3949,11 +4400,31 @@ def _display_default_effort(cand):
     )
 
 
+def _published_unlabeled_record(cand):
+    """The display-only unlabeled AA reference, normalized for publication.
+
+    None when the candidate has no such reference. The record keeps the
+    depth record's shape minus ``effort``: it was measured without one, so
+    publishing an effort label here would be a lie.
+    """
+    record = cand.get("quality_unlabeled")
+    if not isinstance(record, dict):
+        return None
+    return {
+        "index": record.get("index"),
+        "cost_per_task_usd": record.get("cost_per_task_usd"),
+        "source": record.get("source"),
+        "as_of": record.get("as_of"),
+    }
+
+
 def _published_reasoning_block(cand):
     """The six published reasoning keys plus the measured depth records.
 
     ``is_reasoning`` is an internal flag: neither catalog v6 nor spec §8.4
-    publishes it, so it never appears here.
+    publishes it, so it never appears here. ``aa_unlabeled`` is the
+    display-only AA reference (index with no effort label); it is null
+    when AA measured every row at a known effort.
     """
     reasoning = cand.get("reasoning") or {}
     return {
@@ -3963,6 +4434,7 @@ def _published_reasoning_block(cand):
         "mandatory": reasoning.get("mandatory"),
         "supports_max_tokens": reasoning.get("supports_max_tokens"),
         "depths": cand.get("reasoning_depths") or [],
+        "aa_unlabeled": _published_unlabeled_record(cand),
     }
 
 
@@ -4172,27 +4644,57 @@ TABLE_COLUMNS = {
     "simple": ("RANK", "MODEL", "QUALITY", "IN $/M", "OUT $/M", "DISCOUNT", "AGE"),
 }
 
+# Legend text carries inline style markers so one rule set covers every
+# legend (main, depth, deals): {c:...} = CLI option/typed token (cyan),
+# {d:...} = literal value or unknown-data placeholder (dim), {y:...} =
+# symbol marker (yellow). Wanting another emphasis means adding a marker
+# kind here, never a one-off style call at a call site.
+LEGEND_MARKER_RE = re.compile(r"\{([bcdy]):([^{}]*)\}")
+
+
+def legend_plain(text: str) -> str:
+    """Legend text with its style markers stripped (for width maths)."""
+    return LEGEND_MARKER_RE.sub(r"\2", text)
+
+
+def render_legend(text: str, style) -> str:
+    """Expand a legend line's inline markers into the active Style."""
+    methods = {
+        "b": style.bold,
+        "c": style.cyan,
+        "d": style.dim,
+        "y": style.yellow,
+    }
+    out, pos = [], 0
+    for match in LEGEND_MARKER_RE.finditer(text):
+        out.append(text[pos : match.start()])
+        out.append(methods[match.group(1)](match.group(2)))
+        pos = match.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
 LEGENDS = {
     "expert": (
         (
             "QUALITY",
             [
                 "AA intelligence index at the model's best measured selectable depth",
-                '(default; --reasoning-effort overrides); "-" = unknown, scores 0',
+                '({d:default}; {c:--reasoning-effort} overrides); {d:"-"} = unknown, scores 0',
             ],
         ),
         (
             "DEPTH",
             [
-                "reasoning effort QUAL was measured at; * = OpenRouter's default (informational)",
-                "- = no known effort; --no-depths hides the depth detail",
+                'reasoning effort QUAL was measured at; {y:"*"} = OpenRouter\'s default (informational)',
+                "{d:-} = no known effort; {c:--depths} shows the depth detail",
             ],
         ),
         (
             "$IN/$OUT",
             [
                 "USD per 1M tokens at the cheapest eligible endpoint, blended",
-                "{in_pct} input / {out_pct} output (--input-share); differs from the",
+                "{d:{in_pct}} input / {d:{out_pct}} output ({c:--input-share}); differs from the",
                 "openrouter.ai default-endpoint price by design. A higher rate",
                 "may apply once the prompt outgrows a model's short-context tier.",
             ],
@@ -4201,38 +4703,38 @@ LEGENDS = {
         (
             "PREC",
             [
-                'quoted precision ("!" = default routing favors cheaper',
+                'quoted precision ({y:"!"} = default routing favors cheaper',
                 "sub-default endpoints)",
             ],
         ),
         (
             "TIER",
             [
-                "how prices vary: >Nk = pricier above that prompt size; -N% =",
+                "how prices vary: {d:>Nk} = pricier above that prompt size; {d:-N%} =",
                 "scheduled off-peak discount (price shown: the standard rate);",
-                "SCHED = schedule with a discount under 1% (--off-peak lists them)",
+                "{d:SCHED} = schedule with a discount under 1% ({c:--off-peak} lists them)",
             ],
         ),
-        ("CTX", ["context window; AGE = days since listed on OpenRouter"]),
+        ("CTX", ["context window; {b:AGE} = days since listed on OpenRouter"]),
         ("SCORE", ["weighted blend of the four criteria above"]),
     ),
     "simple": (
         ("RANK", ["position in this ranking"]),
-        ("MODEL", ["provider/model id as listed; --best prefixes openrouter/"]),
+        ("MODEL", ["provider/model id as listed; {c:--best} prefixes openrouter/"]),
         (
             "QUALITY",
             [
                 "AA intelligence index at the model's best measured selectable depth",
-                "'-' = unknown, scores 0",
+                "{d:'-'} = unknown, scores 0",
                 "suffix after · names the effort used for QUAL; this view has no",
-                "DEPTH column or * marker",
+                'DEPTH column or {y:"*"} marker',
             ],
         ),
         (
             "IN/OUT $/M",
             [
                 "USD per 1M tokens at the cheapest eligible endpoint, blended",
-                "{in_pct} input / {out_pct} output (--input-share)",
+                "{d:{in_pct}} input / {d:{out_pct}} output ({c:--input-share})",
             ],
         ),
         ("DISCOUNT", ["active discount, if any"]),
@@ -4317,7 +4819,7 @@ def print_table(
     style=None,
     bare=False,
     input_share=0.75,
-    depth_detail=None,
+    depths=False,
 ):
     style = style or Style(False)
     columns = TABLE_COLUMNS[detail]
@@ -4332,22 +4834,26 @@ def print_table(
     header = []
     for col in columns:
         text = col.ljust(widths[col])
-        header.append(text if col == "SCORE" else style.bold(text))
+        header.append(style.bold(text))
     print("  ".join(header))
     print(style.dim("  ".join("-" * widths[col] for col in columns)))
     for rank, row in enumerate(rows, 1):
         cells = []
         for col in columns:
             text = pad(col, row[col])
+            # The risk marker is a symbol marker: yellow in the cell just
+            # as the legend paints it, inside or outside the green #1 row.
+            risk_marker = col == "PREC" and row[col].endswith("!")
+            body = text[:-1] if risk_marker else text
             if col == "RANK":
-                text = style.bold(text)
+                body = style.bold(body)
                 if rank == 1:
-                    text = style.green(text)
+                    body = style.green(body)
             elif rank == 1:
-                text = style.green(text)
+                body = style.green(body)
             elif col in ("QUAL", "QUALITY") and row[col] == "-":
-                text = style.dim(text)
-            cells.append(text)
+                body = style.dim(body)
+            cells.append(body + (style.yellow("!") if risk_marker else ""))
         print("  ".join(cells))
     if bare:
         return
@@ -4356,22 +4862,29 @@ def print_table(
     warn = not quality_note or quality_note.get("warn")
     for line in quality_source_lines(quality_note):
         print(style.yellow(line) if warn else line)
-    if depth_detail is not None:
-        print()
-        depth_detail(top)
+    # The column legend sits right under the table it explains; the depth
+    # details follow it (issue #28).
     print()
     legend = LEGENDS[detail]
-    width = max(len(term) for term, _ in legend)
+    width = max(len(legend_plain(term)) for term, _ in legend)
     in_pct = f"{input_share:.0%}"
     out_pct = f"{1 - input_share:.0%}"
     for term, lines in legend:
+        # Percentages are substituted before the style markers are parsed,
+        # so {d:{in_pct}} becomes {d:75%}.
         lines = [
             line.replace("{in_pct}", in_pct).replace("{out_pct}", out_pct)
             for line in lines
         ]
-        print(style.bold(term.ljust(width)) + "  " + lines[0])
+        label = legend_plain(term).ljust(width)
+        print(style.bold(label) + "  " + render_legend(lines[0], style))
         for extra in lines[1:]:
-            print(" " * (width + 2) + extra)
+            print(" " * (width + 2) + render_legend(extra, style))
+    if depths and top:
+        # The separator only prints when a depth section will follow:
+        # print_depth_detail returns early on an empty top.
+        print()
+        print_depth_detail(top, style)
 
 
 DEALS_COLUMNS = (
@@ -4435,7 +4948,7 @@ def print_deals(rows, style=None, bare=False):
         # Every deals header is left-aligned (matching the main table and
         # the frozen mockup); only the data cells keep numeric right-align.
         text = col.ljust(widths[col])
-        header.append(text if col == "SCORE" else style.bold(text))
+        header.append(style.bold(text))
     print("  ".join(header))
     print(style.dim("  ".join("-" * widths[col] for col in DEALS_COLUMNS)))
     for cell in cells:
@@ -4451,18 +4964,54 @@ def print_deals(rows, style=None, bare=False):
     if bare:
         return
     print()
-    width = max(len(term) for term, _ in DEALS_LEGEND)
+    width = max(len(legend_plain(term)) for term, _ in DEALS_LEGEND)
     for term, text in DEALS_LEGEND:
-        print(style.bold(term.ljust(width)) + "  " + text)
+        label = legend_plain(term).ljust(width)
+        print(style.bold(label) + "  " + render_legend(text, style))
 
 
-def print_depth_detail(top):
+DEPTH_LEGEND = (
+    ("effort", ["reasoning effort this row measures (deepest first)"]),
+    (
+        "AA idx",
+        ['AA intelligence index at that effort; {d:"-"} = not measured'],
+    ),
+    (
+        "AA $/task",
+        [
+            "AA's measured benchmark cost at AA's reference price, not",
+            "the OR per-token price; it never enters the weighted score",
+        ],
+    ),
+    ("vs default", ["AA $/task as a ratio of the default effort's cost"]),
+    (
+        "select",
+        [
+            'the OpenCode variant suffix that pins the depth; {y:"-"} = not',
+            'selectable; {y:"*"} marks OpenRouter\'s default, and appending',
+            "{c:#effort} to the model id pins it in OpenCode",
+        ],
+    ),
+    ("OR $/M", ["constant across depths (the title line's per-listing price)"]),
+    (
+        "(no label)",
+        [
+            "an AA index measured without an effort label is a reference",
+            "only; it never fills QUAL",
+        ],
+    ),
+)
+
+
+def print_depth_detail(top, style=None):
     """Per-model AA depth detail: measured scores and selectable variants.
 
     One block per model in the given (rank) order, listing the union of
     OpenRouter-supported and AA-measured efforts, deepest first. Models with
-    no measured depths get a single ``no AA depth data`` line. Display only:
-    AA $/task never enters the weighted score.
+    no measured depths get a single ``no AA depth data`` line, unless AA
+    measured them without an effort label: that index is shown with a
+    reference-only caveat instead. Display only: AA $/task never enters the
+    weighted score.
     """
     if not top:
         return
@@ -4483,6 +5032,26 @@ def print_depth_detail(top):
             return (AA_EFFORT_ORDER.index(effort), effort)
         except ValueError:
             return (len(AA_EFFORT_ORDER), effort or "")
+
+    def unlabeled_note(record):
+        """One line for an AA index measured without an effort label.
+
+        Display only: the number cannot fill QUAL, so the note says what it
+        is and warns that a selectable effort may score differently.
+        """
+        if not isinstance(record, dict):
+            return None
+        index = finite(record.get("index"))
+        if index is None:
+            return None
+        cost = finite(record.get("cost_per_task_usd"))
+        text = f"AA index {index:.1f} without an effort label"
+        if cost is not None:
+            text += f" (AA ${cost:.2f} per task)"
+        return (
+            text + "; reference only, may not be the quality you get at a "
+            "selectable effort."
+        )
 
     blocks = []
     for rank, cand in enumerate(top, 1):
@@ -4563,36 +5132,69 @@ def print_depth_detail(top):
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], len(cell))
 
-    def emit(cells):
-        padded = [cell.ljust(width) for cell, width in zip(cells[:-1], widths[:-1])]
-        print("   " + "   ".join(padded + [cells[-1]]))
+    style = style or Style(False)
+    # Columns whose "-" means "no data" get dim; select's "-" is a value,
+    # not a placeholder, so that column is left plain (issue #28).
+    value_columns = {1, 2, 3}
 
-    print("depth detail  (AA index / AA $ per task; OR $/M is constant across depths)")
+    def pad_cells(cells):
+        return [
+            cell.ljust(width) if index < len(widths) - 1 else cell
+            for index, (cell, width) in enumerate(zip(cells, widths))
+        ]
+
+    def emit_header():
+        print("   " + "   ".join(style.bold(cell) for cell in pad_cells(headers)))
+
+    def emit_rule():
+        print("   " + style.dim("   ".join("-" * width for width in widths)))
+
+    def emit_row(row):
+        out = []
+        for index, (cell, padded) in enumerate(zip(row, pad_cells(row))):
+            if index == 0 and cell.endswith("*"):
+                # The default-effort marker is a symbol marker (yellow),
+                # like the main legend's.
+                body = padded[: len(cell) - 1]
+                out.append(body + style.yellow("*") + padded[len(cell) :])
+            elif index in value_columns and cell.strip() == "-":
+                out.append(style.dim(padded))
+            else:
+                out.append(padded)
+        print("   " + "   ".join(out))
+
+    print(style.bold("Depth details"))
     for position, block in enumerate(blocks):
         if position:
             print()
         cand = block["cand"]
+        pricing = f"OR ${cand['price_in']:.2f} in / ${cand['price_out']:.2f} out per 1M"
         print(
-            f"#{block['rank']} {cand['id']}   "
-            f"OR ${cand['price_in']:.2f} in / ${cand['price_out']:.2f} out per 1M   "
-            f"default: {block['default'] or '-'}"
+            f"#{block['rank']} {style.bold(cand['id'])}   "
+            f"{style.dim(pricing)}   "
+            f"{style.dim('default:')} {block['default'] or '-'}"
         )
+        note = unlabeled_note(cand.get("quality_unlabeled"))
+        if note:
+            print("   " + style.dim(note))
         if not block["has_records"]:
-            print("   no AA depth data")
+            if not note:
+                print("   " + style.dim("no AA depth data"))
             continue
         if block["missing_default"]:
             print(f"   AA has no {block['default']} record for this model.")
-        emit(headers)
+        emit_header()
+        emit_rule()
         for row in block["rows"]:
-            emit(row)
+            emit_row(row)
 
     print()
-    print(
-        "* = OpenRouter default; append #effort to the model id in OpenCode; "
-        "- in select = not selectable; AA $/task is AA's measured benchmark "
-        "cost at AA's reference price, not the OR per-token price; it never "
-        "enters the weighted score."
-    )
+    width = max(len(legend_plain(term)) for term, _ in DEPTH_LEGEND)
+    for term, lines in DEPTH_LEGEND:
+        label = legend_plain(term).ljust(width)
+        print(style.bold(label) + "  " + render_legend(lines[0], style))
+        for extra in lines[1:]:
+            print(" " * (width + 2) + render_legend(extra, style))
 
 
 def print_best(top, args):
@@ -4845,6 +5447,8 @@ def build_catalog(
                     "input_per_1m": round(cand["price_in"], 6),
                     "output_per_1m": round(cand["price_out"], 6),
                     "blended_per_1m": round(cand["blended"], 6),
+                    "input_cache_read_per_1m": cand.get("cache_read_per_1m"),
+                    "input_cache_write_per_1m": cand.get("cache_write_per_1m"),
                     "base": {
                         "input_per_1m": round(cand["base_price_in"], 6),
                         "output_per_1m": round(cand["base_price_out"], 6),
@@ -4853,6 +5457,8 @@ def build_catalog(
                             + (1 - args.input_share) * cand["base_price_out"],
                             6,
                         ),
+                        "input_cache_read_per_1m": cand.get("base_cache_read_per_1m"),
+                        "input_cache_write_per_1m": cand.get("base_cache_write_per_1m"),
                     },
                     "tiers": [
                         {
@@ -4862,6 +5468,16 @@ def build_catalog(
                             "blended_per_1m": _per_1m(
                                 args.input_share * tier["price_in"]
                                 + (1 - args.input_share) * tier["price_out"]
+                            ),
+                            "input_cache_read_per_1m": (
+                                _per_1m(tier["input_cache_read"])
+                                if tier["input_cache_read"] is not None
+                                else None
+                            ),
+                            "input_cache_write_per_1m": (
+                                _per_1m(tier["input_cache_write"])
+                                if tier["input_cache_write"] is not None
+                                else None
                             ),
                         }
                         for tier in cand["tiers"]
@@ -4876,6 +5492,16 @@ def build_catalog(
                                 "input_per_1m": _per_1m(window["price_in"]),
                                 "output_per_1m": _per_1m(window["price_out"]),
                                 "blended_per_1m": _per_1m(window["blended"]),
+                                "input_cache_read_per_1m": (
+                                    _per_1m(window["input_cache_read"])
+                                    if window["input_cache_read"] is not None
+                                    else None
+                                ),
+                                "input_cache_write_per_1m": (
+                                    _per_1m(window["input_cache_write"])
+                                    if window["input_cache_write"] is not None
+                                    else None
+                                ),
                             }
                             for window in cand["schedule"]
                         ]
@@ -4884,6 +5510,8 @@ def build_catalog(
                     ),
                 },
                 "context": cand["context"],
+                "max_output_tokens": cand.get("max_output_tokens"),
+                "input_modalities": cand.get("input_modalities") or [],
                 "listed_at": listed_date.isoformat() if listed_date else None,
                 "age_days": max(0, (now.date() - listed_date).days)
                 if listed_date
@@ -4919,6 +5547,7 @@ def build_catalog(
                     "mandatory": reasoning.get("mandatory"),
                     "supports_max_tokens": reasoning.get("supports_max_tokens"),
                     "depths": depths,
+                    "aa_unlabeled": _published_unlabeled_record(cand),
                 },
                 "scores": {**scores, "overall": overall},
                 # Additive provider-aware blocks (schema v3), verbatim from
@@ -5036,6 +5665,9 @@ SGR_BOLD = "\x1b[1m"
 SGR_DIM = "\x1b[2m"
 SGR_GREEN = "\x1b[32m"
 SGR_YELLOW = "\x1b[33m"
+# CLI options own an attribute of their own: bold is already the term
+# label/header treatment, so a bold flag reads as another label.
+SGR_CYAN = "\x1b[36m"
 
 
 class Style:
@@ -5059,6 +5691,9 @@ class Style:
     def yellow(self, text: str) -> str:
         return self._wrap(text, SGR_YELLOW)
 
+    def cyan(self, text: str) -> str:
+        return self._wrap(text, SGR_CYAN)
+
 
 def color_enabled(mode: str, stream) -> bool:
     """Resolve --color for one stream. Explicit "on" beats NO_COLOR."""
@@ -5069,6 +5704,110 @@ def color_enabled(mode: str, stream) -> bool:
     if os.environ.get("NO_COLOR"):
         return False
     return bool(getattr(stream, "isatty", lambda: False)())
+
+
+class PagerInterrupted(Exception):
+    """Ctrl-C reached the parent while the pager was running."""
+
+
+def resolve_pager(args) -> list[str] | None:
+    """The pager argv for the human output path, or None to print directly.
+
+    None when --no-pager is set or stdout is not a TTY. $PAGER is used
+    verbatim (shlex-split, no injected flags; an empty split counts as
+    unset); the fallback pages only what exceeds one screen, keeps the SGR
+    codes and skips the alt-screen init so the stderr notes survive
+    quitting. POSIX terminals only.
+    """
+    if args.no_pager:
+        return None
+    if not getattr(sys.stdout, "isatty", lambda: False)():
+        return None
+    raw = os.environ.get("PAGER")
+    argv = []
+    if raw is not None:
+        try:
+            argv = shlex.split(raw)
+        except ValueError:
+            # Malformed $PAGER (unbalanced quote, trailing backslash):
+            # pager startup problems never crash the run or lose output --
+            # degrade to the fallback, exactly like an unset $PAGER.
+            argv = []
+    if not argv:
+        argv = ["less", "--quit-if-one-screen", "--RAW-CONTROL-CHARS", "--no-init"]
+    return argv
+
+
+@contextmanager
+def paged_stdout(argv: list[str]):
+    """Run argv as a pager taking over sys.stdout; yield True when paged.
+
+    False (direct output) when the pager cannot be started -- startup
+    problems never lose output. Restores sys.stdout in a finally, closes
+    the pager's stdin guarded against EPIPE and reaps the child. A
+    KeyboardInterrupt from the block, the close or the reap terminates the
+    pager (plain less ignores SIGINT without -K) and surfaces as
+    PagerInterrupted; the pager's own exit status is never propagated.
+    """
+    if not argv:
+        yield False
+        return
+    # Colors through a verbatim $PAGER: less reads $LESS, so a bare
+    # `PAGER=less` would otherwise show raw SGR as escape junk. Git's
+    # convention: hand the child LESS=FRX (raw control chars,
+    # quit-if-one-screen, no alt-screen init) when the user has none;
+    # their own $LESS always wins.
+    child_env = {**os.environ, "LESS": "FRX"} if "LESS" not in os.environ else None
+    # Captured before any try so the finally below can always restore it;
+    # the swap itself is the try's first statement, so a Ctrl-C landing
+    # anywhere from the spawn onward still runs the cleanup.
+    original = sys.stdout
+    interrupted = False
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stdout,
+            text=True,
+            env=child_env,
+            # Write the pipe with the encoding (and error handler) the direct
+            # path would have used: Popen's text-mode default comes from the
+            # locale, which can disagree with sys.stdout.encoding (e.g.
+            # PYTHONIOENCODING=utf-8 over a latin-1 locale) and then a
+            # non-ASCII model name crashes only the paged path.
+            encoding=getattr(sys.stdout, "encoding", None) or "utf-8",
+            errors=getattr(sys.stdout, "errors", None),
+        )
+    except OSError:
+        yield False
+        return
+    try:
+        sys.stdout = proc.stdin
+        yield True
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        sys.stdout = original
+        try:
+            proc.stdin.close()
+        except KeyboardInterrupt:
+            interrupted = True
+        except OSError:
+            pass
+        try:
+            if interrupted and proc.poll() is None:
+                proc.terminate()
+            proc.wait()
+        except KeyboardInterrupt:
+            interrupted = True
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait()
+            except KeyboardInterrupt:
+                pass
+    if interrupted:
+        raise PagerInterrupted
 
 
 # ---------------------------------------------------------------------------
@@ -5138,19 +5877,25 @@ def parse_args(argv=None):
         help="print just the table(s), no summary or legend",
     )
     output.add_argument(
-        "--no-depths",
+        "--depths",
         action="store_true",
         help=(
-            "hide the per-model depth detail below the table (the DEPTH and "
-            "QUAL columns stay)"
+            "also print the per-model depth detail below the table (the DEPTH "
+            "and QUAL columns are always shown)"
         ),
     )
     output.add_argument(
         "--color",
         choices=("auto", "on", "off"),
         default="auto",
-        help="colorize the table output (default: auto; honors NO_COLOR, and on "
-        "forces color when piping through less -R)",
+        help="colorize the table output (default: auto; honors NO_COLOR; the "
+        "built-in pager keeps color on under auto, and on also forces color "
+        "for manual pipes like less -R)",
+    )
+    output.add_argument(
+        "--no-pager",
+        action="store_true",
+        help="do not page the table output even on a terminal",
     )
     ranking.add_argument(
         "--input-share",
@@ -5307,6 +6052,7 @@ def run(args, models, or_cached) -> int:
         )
     exact, fuzzy = build_aa_lookup(dedupe_aa_entries_by_key(aa_entries))
     depth_lookup = build_aa_depth_lookup(aa_entries)
+    unlabeled_lookup = build_aa_unlabeled_lookup(aa_entries)
 
     filtered = []
     reasoning_by_id = build_reasoning_metadata(models, frontend_models)
@@ -5346,6 +6092,7 @@ def run(args, models, or_cached) -> int:
         aa_source,
         catalog_quality,
         depth_lookup=depth_lookup,
+        unlabeled_lookup=unlabeled_lookup,
         catalog_depths=catalog_depths,
         requested_effort=args.reasoning_effort,
     )
@@ -5358,7 +6105,7 @@ def run(args, models, or_cached) -> int:
     # entirely -- the medians never reach those outputs. Keyless,
     # fetch_session_cost returns None before any network or cache access.
     if args.catalog or args.json:
-        session_cost = fetch_session_cost(args)
+        session_cost = fetch_session_cost(args, models)
         # The key-presence fact distinguishes "skipped" from "unavailable";
         # same expression fetch_session_cost uses for its own guard.
         session_cost_mode = (
@@ -5409,8 +6156,15 @@ def run(args, models, or_cached) -> int:
     elif args.json:
         print_json(top)
     else:
+        pager_argv = resolve_pager(args)
         style = Style(color_enabled(args.color, sys.stdout))
         err_style = Style(color_enabled(args.color, sys.stderr))
+        # The summary is stderr by contract (scripts pipe stdout), but a
+        # pager owns the screen: notes printed to stderr before it starts
+        # are painted over and never reach scrollback. So when paging, the
+        # whole human stream -- summary included -- goes through the pager
+        # (issue #28). Resolved here, printed below.
+        summary = []
         if not args.bare:
             source_note = []
             if or_cached:
@@ -5424,20 +6178,24 @@ def run(args, models, or_cached) -> int:
             if aa_cached and aa_source:
                 source_note.append("quality cached")
             if source_note:
-                print(
-                    f"note: {', '.join(source_note)} (use --no-cache to refresh)",
-                    file=sys.stderr,
+                summary.append(
+                    (
+                        f"note: {', '.join(source_note)} (use --no-cache to refresh)",
+                        False,
+                    )
                 )
-            print(
-                f"{len(candidates)} of {len(models)} listed models ranked",
-                file=sys.stderr,
+            summary.append(
+                (f"{len(candidates)} of {len(models)} listed models ranked", False)
             )
             if dropped:
                 bits = ", ".join(
                     f"{v} {k}"
                     for k, v in sorted(dropped.items(), key=lambda kv: -kv[1])
                 )
-                print(err_style.dim(f"(dropped: {bits})"), file=sys.stderr)
+                summary.append((f"(dropped: {bits})", True))
+        if not pager_argv and summary:
+            for text, is_dim in summary:
+                print(err_style.dim(text) if is_dim else text, file=sys.stderr)
             print(file=sys.stderr)
         # The footer lists per-source counts, each source's own as_of and
         # the AA index version when known; unmatched candidates and drift
@@ -5445,33 +6203,57 @@ def run(args, models, or_cached) -> int:
         # quality-blind fallback line.
         unmatched = len(candidates) - len(quality_by_id)
         quality_note = quality_footer_note(quality_by_id, aa_index_version, unmatched)
-        print_table(
-            top,
-            weights,
-            quality_note,
-            detail=args.detail,
-            style=style,
-            bare=args.bare,
-            input_share=args.input_share,
-            depth_detail=(None if args.bare or args.no_depths else print_depth_detail),
-        )
-        if args.off_peak:
-            catalog_w = catalog_weights(candidates, quality_by_id)
-            # Use the exact unrounded weighted score (not overall_scores,
-            # whose rounded components can disagree by 0.001) so a candidate
-            # in both tables always prints the same SCORE under balanced.
-            balanced_w = catalog_w["balanced"]
-            balanced = {
-                cand["id"]: weighted_score(cand, balanced_w) for cand in candidates
-            }
-            schedules = build_schedules(
-                models, args, quality_by_id, aa_by_id, balanced, catalog_quality
-            )
-            # build_schedules resolves quality for any listed model; the web
-            # page's deals table shows that resolved value even for models
-            # outside the ranked pool, so keep it here too. Only SCORE is
-            # blanked for non-candidates (balanced is None for them).
-            print_deals(off_peak_deals(schedules), style=style, bare=args.bare)
+        try:
+            with paged_stdout(pager_argv):
+                # Paged runs carry the summary above the table; the pager's
+                # stream is stdout, so re-style dim lines for it.
+                if pager_argv:
+                    for text, is_dim in summary:
+                        print(style.dim(text) if is_dim else text)
+                    if summary:
+                        print()
+                print_table(
+                    top,
+                    weights,
+                    quality_note,
+                    detail=args.detail,
+                    style=style,
+                    bare=args.bare,
+                    input_share=args.input_share,
+                    depths=bool(args.depths) and not args.bare,
+                )
+                if args.off_peak:
+                    catalog_w = catalog_weights(candidates, quality_by_id)
+                    # Use the exact unrounded weighted score (not
+                    # overall_scores, whose rounded components can disagree
+                    # by 0.001) so a candidate in both tables always prints
+                    # the same SCORE under balanced.
+                    balanced_w = catalog_w["balanced"]
+                    balanced = {
+                        cand["id"]: weighted_score(cand, balanced_w)
+                        for cand in candidates
+                    }
+                    schedules = build_schedules(
+                        models,
+                        args,
+                        quality_by_id,
+                        aa_by_id,
+                        balanced,
+                        catalog_quality,
+                    )
+                    # build_schedules resolves quality for any listed model;
+                    # the web page's deals table shows that resolved value
+                    # even for models outside the ranked pool, so keep it
+                    # here too. Only SCORE is blanked for non-candidates
+                    # (balanced is None for them).
+                    print_deals(off_peak_deals(schedules), style=style, bare=args.bare)
+        except BrokenPipeError:
+            # Pager quit early: stop writing quietly (spec §Failure modes) --
+            # deliberate on the direct path too: EPIPE from a closed consumer
+            # leaves the exit status unchanged (CPython's shutdown flush).
+            pass
+        except PagerInterrupted:
+            return 130
     return 0
 
 

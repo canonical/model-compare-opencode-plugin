@@ -97,7 +97,10 @@ export function reasoningEffortFor(
   const pick = picks[p]
   if (pick === undefined || pick.id === null) return null
   if (bodyModel !== undefined && bodyModel !== pick.id) return null
-  return gatewayEffort(models.get(pick.id)?.qualityEffort)
+  const entry = models.get(pick.id)
+  const effort = gatewayEffort(entry?.qualityEffort)
+  if (effort === "none" && entry?.reasoning?.mandatory === true) return null
+  return effort
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -101,6 +101,28 @@ describe("isSelectableDepth", () => {
     })
     expect(isSelectableDepth(model({ reasoning: r }), "none")).toBe(true)
   })
+
+  test("mandatory reasoning never exposes 'none', even when expanded supported_efforts lists it", () => {
+    const expanded = reasoning({
+      supported_efforts: ["max", "xhigh", "high", "medium", "low", "minimal", "none"],
+      mandatory: true,
+      depths: [depth("none", 20.0), depth("high", 46.8)],
+    })
+    expect(isSelectableDepth(model({ reasoning: expanded }), "none")).toBe(false)
+    expect(isSelectableDepth(model({ reasoning: expanded }), "high")).toBe(true)
+
+    const optional = reasoning({
+      supported_efforts: ["high", "none"],
+      mandatory: false,
+    })
+    expect(isSelectableDepth(model({ reasoning: optional }), "none")).toBe(true)
+
+    const unknownMandatory = reasoning({
+      supported_efforts: ["high", "none"],
+      mandatory: null,
+    })
+    expect(isSelectableDepth(model({ reasoning: unknownMandatory }), "none")).toBe(true)
+  })
 })
 
 describe("bestDepthAlternative", () => {
