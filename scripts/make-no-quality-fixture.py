@@ -15,7 +15,8 @@ internally consistent instead of a hand-edited copy with stale scores:
   - models order         <- (-overall.balanced, id), as build_catalog sorts
   - quality / aa indices <- null, quality_match null, quality_as_of,
                              quality_drift and quality_effort null,
-                             reasoning.depths emptied (no measured quality),
+                             reasoning.depths emptied and reasoning.aa_unlabeled
+                             null (no measured quality),
                              sources.aa none/0 (v5 shape, depth counters 0)
   - schedules[].quality  <- null, quality_as_of, quality_effort and
                             quality_source null, score <- the new balanced
@@ -45,11 +46,7 @@ def load_vendor():
     return module
 
 
-def main():
-    mc = load_vendor()
-    with open(SOURCE, encoding="utf-8") as fh:
-        doc = json.load(fh)
-
+def build_no_quality_doc(doc, mc):
     candidates = []
     for model in doc["models"]:
         scores = model["scores"]
@@ -88,6 +85,7 @@ def main():
         model["quality_effort"] = None
         if isinstance(model.get("reasoning"), dict):
             model["reasoning"]["depths"] = []
+            model["reasoning"]["aa_unlabeled"] = None
         model["aa"] = {
             "intelligence_index": None,
             "coding_index": None,
@@ -117,7 +115,15 @@ def main():
         entry["quality_source"] = None
         if entry["id"] in balanced:
             entry["score"] = balanced[entry["id"]]
+    return doc
 
+
+def main():
+    mc = load_vendor()
+    with open(SOURCE, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    build_no_quality_doc(doc, mc)
+    weights = doc["parameters"]["weights"]
     with open(TARGET, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2, ensure_ascii=False)
         fh.write("\n")

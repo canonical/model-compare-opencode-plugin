@@ -11,6 +11,7 @@
 
 import { createHash } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
+import { invokedDirectly } from "./lib/invoked-directly.mjs"
 
 const REPO = "canonical/model-compare"
 const SCRIPT_NAME = "model_compare.py"
@@ -40,17 +41,45 @@ async function resolveCommit(tag) {
   return ref.object.sha
 }
 
-function changelogSection(text, version) {
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function matchesVersionHeading(line, version) {
+  const escaped = escapeRegExp(version.replace(/^v/, ""))
+  return new RegExp(`^##\\s+(?:\\[v?${escaped}\\]|v?${escaped})(?:\\s|$)`).test(line)
+}
+
+export function changelogSection(text, version, previousVersion = null) {
   const lines = text.split("\n")
-  const start = lines.findIndex((l) => /^##\s/.test(l) && l.includes(version))
+  const target = version.replace(/^v/, "")
+  const start = lines.findIndex((l) => matchesVersionHeading(l, target))
   if (start === -1) return null
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) {
-      end = i
-      break
+
+  const prev =
+    typeof previousVersion === "string" && previousVersion !== ""
+      ? previousVersion.replace(/^v/, "")
+      : null
+
+  let end = -1
+  if (prev !== null && prev !== target) {
+    for (let i = start + 1; i < lines.length; i++) {
+      if (matchesVersionHeading(lines[i], prev)) {
+        end = i
+        break
+      }
     }
   }
+  if (end === -1) {
+    end = lines.length
+    for (let i = start + 1; i < lines.length; i++) {
+      if (/^##\s/.test(lines[i])) {
+        end = i
+        break
+      }
+    }
+  }
+
   const section = lines.slice(start, end)
   while (section.length && section[section.length - 1].trim() === "") section.pop()
   return section.join("\n")
@@ -59,8 +88,11 @@ function changelogSection(text, version) {
 async function sync(tag) {
   // A missing or unreadable pin is not fatal: report "(none)" and proceed.
   let previous = null
+  let previousTag = null
   try {
-    previous = JSON.parse(readFileSync(META_FILE, "utf8")).sha256
+    const meta = JSON.parse(readFileSync(META_FILE, "utf8"))
+    previous = meta.sha256 ?? null
+    previousTag = typeof meta.tag === "string" ? meta.tag : null
   } catch {
     // no current pin
   }
@@ -88,7 +120,7 @@ async function sync(tag) {
     return
   }
   const version = tag.replace(/^v/, "")
-  const section = changelogSection(await changelog.text(), version)
+  const section = changelogSection(await changelog.text(), version, previousTag)
   console.log(section ?? `no CHANGELOG entry for ${version} at ${tag}`)
 }
 
@@ -103,17 +135,21 @@ function check() {
   }
 }
 
-const arg = process.argv[2]
-if (arg === "--check") {
-  check()
-} else if (arg && !arg.startsWith("-")) {
-  try {
-    await sync(arg)
-  } catch (err) {
-    console.error(`sync-vendor: ${err.message}`)
-    process.exitCode = 1
+async function main() {
+  const arg = process.argv[2]
+  if (arg === "--check") {
+    check()
+  } else if (arg && !arg.startsWith("-")) {
+    try {
+      await sync(arg)
+    } catch (err) {
+      console.error(`sync-vendor: ${err.message}`)
+      process.exitCode = 1
+    }
+  } else {
+    console.error("usage: node scripts/sync-vendor.mjs <tag>|--check")
+    process.exitCode = 2
   }
-} else {
-  console.error("usage: node scripts/sync-vendor.mjs <tag>|--check")
-  process.exitCode = 2
 }
+
+if (invokedDirectly(import.meta.url, process.argv[1])) await main()

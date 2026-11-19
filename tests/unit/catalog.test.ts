@@ -1,4 +1,5 @@
 // tests/unit/catalog.test.ts
+import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { describe, expect, test } from "vitest"
 import { validateCatalog, validateStoredCatalog } from "../../src/core/catalog"
@@ -107,9 +108,11 @@ test("the no-quality fixture carries null quality provenance on every quality-le
     expect(model.quality_as_of, model.id).toBeNull()
     expect(model.quality_drift, model.id).toBeNull()
     expect(model.quality_effort, model.id).toBeNull()
-    // No measured quality means no measured depths (the effort metadata from
-    // OpenRouter survives; the AA/OpenRouter score records do not).
+    // No measured quality means no measured depths or unlabeled AA reference
+    // (the effort metadata from OpenRouter survives; AA/OpenRouter records do not).
     expect(model.reasoning.depths, model.id).toEqual([])
+    expect(Object.hasOwn(model.reasoning, "aa_unlabeled"), model.id).toBe(true)
+    expect(model.reasoning.aa_unlabeled, model.id).toBeNull()
   }
   for (const entry of raw.schedules) {
     expect(entry.quality, entry.id).toBeNull()
@@ -131,6 +134,26 @@ test("the no-quality fixture carries null quality provenance on every quality-le
     catalog_generated_at: null,
     intelligence_index_version: null,
   })
+})
+
+test("scripts/make-no-quality-fixture.py clears populated reasoning.aa_unlabeled on v0.7.3+ inputs", () => {
+  const py = [
+    "import importlib.util, json",
+    "spec = importlib.util.spec_from_file_location('mk', 'scripts/make-no-quality-fixture.py')",
+    "mk = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(mk)",
+    "mc = mk.load_vendor()",
+    "with open('fixtures/catalog-v0.7.0.json', encoding='utf-8') as fh:",
+    "    doc = json.load(fh)",
+    "doc['models'] = doc['models'][:2]",
+    "doc['models'][0]['reasoning']['aa_unlabeled'] = {",
+    "    'index': 44.5, 'cost_per_task_usd': 0.42, 'source': 'aa', 'as_of': '2026-11-02T00:00:00+00:00'",
+    "}",
+    "out = mk.build_no_quality_doc(doc, mc)",
+    "print(json.dumps([m['reasoning'].get('aa_unlabeled', 'MISSING') for m in out['models']]))",
+  ].join("\n")
+  const stdout = execFileSync("python3", ["-B", "-c", py], { encoding: "utf8" })
+  expect(JSON.parse(stdout)).toEqual([null, null])
 })
 
 test("rejects an empty document, naming schema_version", () => {

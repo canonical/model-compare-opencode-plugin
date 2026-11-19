@@ -8,10 +8,12 @@
 // minimal environment, with no catalog fetch.
 import { spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
-import { validateCatalog } from "../../src/core/catalog"
+import { validateCatalog, validateStoredCatalog } from "../../src/core/catalog"
 import { effectiveWeights, overallScore } from "../../src/core/rank"
 import type { Catalog, Priority } from "../../src/core/types"
 import { scriptEnv } from "../../src/sources/local"
+
+type CanaryResult = { ok: true; models: number } | { ok: false; reason: string }
 
 const VENDOR_SCRIPT = "vendor/model_compare.py"
 const UPSTREAM_META = "vendor/UPSTREAM.json"
@@ -64,17 +66,7 @@ test("--version's last whitespace-separated token is the pinned tag without the 
 // so its scores.overall is consistent with its renormalized weights).
 const NO_QUALITY_FIXTURE = "fixtures/catalog-no-quality.json"
 
-test.each([
-  ["the recorded catalog", CATALOG],
-  [
-    "the no-quality catalog",
-    (() => {
-      const v = validateCatalog(JSON.parse(readFileSync(NO_QUALITY_FIXTURE, "utf8")))
-      if (!v.ok) throw new Error(`no-quality fixture no longer validates: ${v.reason}`)
-      return v.catalog
-    })(),
-  ],
-])("every published overall score is the weight-space recomputation within 0.005 — %s", (_name, catalog) => {
+function overallMismatches(catalog: Catalog): string[] {
   const mismatches: string[] = []
   for (const p of PRIORITIES) {
     // No override: the published weights for this priority with missing keys
@@ -88,7 +80,21 @@ test.each([
       }
     }
   }
-  expect(mismatches, "published overall diverges from the recomputation").toEqual([])
+  return mismatches
+}
+
+test.each([
+  ["the recorded catalog", CATALOG],
+  [
+    "the no-quality catalog",
+    (() => {
+      const v = validateCatalog(JSON.parse(readFileSync(NO_QUALITY_FIXTURE, "utf8")))
+      if (!v.ok) throw new Error(`no-quality fixture no longer validates: ${v.reason}`)
+      return v.catalog
+    })(),
+  ],
+])("every published overall score is the weight-space recomputation within 0.005 — %s", (_name, catalog) => {
+  expect(overallMismatches(catalog), "published overall diverges from the recomputation").toEqual([])
 })
 
 test("each published ranking covers exactly the model id set — no missing, no extra ids", () => {
@@ -105,4 +111,303 @@ test("an unknown flag exits 2 with a non-empty stderr — §9: exit 2 is a usage
   const { code, stderr } = await runVendorScript(["--no-such-flag"])
   expect(code).toBe(2)
   expect(stderr.trim().length, `stderr was: ${stderr.trim()}`).toBeGreaterThan(0)
+})
+
+const OFFLINE_BUILD_CATALOG_PY = `
+import importlib.util, json, sys
+
+spec = importlib.util.spec_from_file_location("model_compare", "vendor/model_compare.py")
+mc = importlib.util.module_from_spec(spec)
+sys.modules["model_compare"] = mc
+spec.loader.exec_module(mc)
+
+# Fail closed if any network call is ever attempted during catalog assembly.
+def forbid_http(*_args, **_kwargs):
+    raise AssertionError("unexpected network access during offline build_catalog test")
+mc.http_get = forbid_http
+
+args = mc.parse_args(["--catalog", "--no-cache"])
+
+models = [
+    {
+        "id": "acme/reasoner-pro",
+        "canonical_slug": "acme/reasoner-pro-20261020",
+        "name": "Acme: Reasoner Pro",
+        "created": 1760000000,
+        "context_length": 1048576,
+        "supported_parameters": ["tools", "tool_choice", "reasoning"],
+        "architecture": {
+            "modality": "text+image->text",
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+        },
+        "top_provider": {"max_completion_tokens": 32768},
+        "pricing": {
+            "prompt": "0.0000015",
+            "completion": "0.000006",
+            "input_cache_read": "0.00000015",
+            "input_cache_write": "0.000001875",
+        },
+        "reasoning": {
+            "default_effort": "high",
+            "supported_efforts": ["max", "high", "low"],
+            "default_enabled": True,
+            "mandatory": True,
+            "supports_max_tokens": True,
+        },
+    },
+    {
+        "id": "z-ai/glm-unlabeled",
+        "canonical_slug": "z-ai/glm-unlabeled-20261025",
+        "name": "Z.AI: GLM Unlabeled",
+        "created": 1760500000,
+        "context_length": 1000000,
+        "supported_parameters": ["tools", "tool_choice", "reasoning"],
+        "architecture": {
+            "modality": "text->text",
+            "input_modalities": ["text"],
+            "output_modalities": ["text"],
+        },
+        "top_provider": {"max_completion_tokens": 16384},
+        "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.000002",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.0000006",
+        },
+        "reasoning": {
+            "default_effort": "high",
+            "supported_efforts": ["high", "low"],
+            "default_enabled": True,
+            "mandatory": False,
+            "supports_max_tokens": False,
+        },
+    },
+]
+
+endpoint_Payloads = {
+    "acme/reasoner-pro": [
+        {
+            "provider_name": "Novita",
+            "tag": "novita/fp8",
+            "quantization": "fp8",
+            "context_length": 1048576,
+            "max_completion_tokens": 65536,
+            "status": 0,
+            "pricing": {
+                "prompt": "0.0000012",
+                "completion": "0.0000048",
+                "input_cache_read": "0.00000012",
+                "input_cache_write": "0.0000015",
+                "overrides": [
+                    {
+                        "min_prompt_tokens": 128000,
+                        "prompt": "0.0000024",
+                        "completion": "0.0000096",
+                        "input_cache_read": "0.00000024",
+                        "input_cache_write": "0.000003",
+                    }
+                ],
+            },
+        },
+        {
+            "provider_name": "OpenInference",
+            "tag": "open-inference/fp4",
+            "quantization": "fp4",
+            "context_length": 1048576,
+            "max_completion_tokens": 32768,
+            "status": 0,
+            "pricing": {
+                "prompt": "0.0000008",
+                "completion": "0.0000032",
+            },
+        },
+    ],
+    "z-ai/glm-unlabeled": [
+        {
+            "provider_name": "Z.AI",
+            "tag": "z-ai/fp8",
+            "quantization": "fp8",
+            "context_length": 1000000,
+            "max_completion_tokens": 16384,
+            "status": 0,
+            "pricing": {
+                "prompt": "0.0000005",
+                "completion": "0.000002",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.0000006",
+                "overrides": [
+                    {
+                        "utc_start": 0,
+                        "utc_end": 1200,
+                        "prompt": "0.00000025",
+                        "completion": "0.000001",
+                        "input_cache_read": "0.000000025",
+                        "input_cache_write": "0.0000003",
+                    },
+                    {
+                        "utc_start": 1200,
+                        "utc_end": 0,
+                        "prompt": "0.0000005",
+                        "completion": "0.000002",
+                        "input_cache_read": "0.00000005",
+                        "input_cache_write": "0.0000006",
+                    },
+                ],
+            },
+        }
+    ],
+}
+
+mc.fetch_model_endpoints = lambda model_id, _args: mc.parse_endpoints(
+    {"data": {"endpoints": endpoint_Payloads[model_id]}}
+)
+
+aa_entries = [
+    {
+        "id": "aa-1",
+        "name": "Reasoner Pro (max)",
+        "slug": "reasoner-pro-max",
+        "creator": "acme",
+        "index": 58.4,
+        "cost_per_task": 3.2,
+        "as_of": "2026-11-01T00:00:00+00:00",
+    },
+    {
+        "id": "aa-2",
+        "name": "Reasoner Pro (high)",
+        "slug": "reasoner-pro-high",
+        "creator": "acme",
+        "index": 51.0,
+        "cost_per_task": 1.1,
+        "as_of": "2026-11-01T00:00:00+00:00",
+    },
+    {
+        "id": "aa-3",
+        "name": "GLM Unlabeled",
+        "slug": "glm-unlabeled",
+        "creator": "z-ai",
+        "index": 44.5,
+        "cost_per_task": 0.42,
+        "as_of": "2026-11-02T00:00:00+00:00",
+    },
+]
+
+exact, fuzzy = mc.build_aa_lookup(mc.dedupe_aa_entries_by_key(aa_entries))
+depth_lookup = mc.build_aa_depth_lookup(aa_entries)
+unlabeled_lookup = mc.build_aa_unlabeled_lookup(aa_entries)
+zdr_ids = {"acme/reasoner-pro", "z-ai/glm-unlabeled"}
+discounts = {}
+aa_by_id = {}
+filtered = []
+
+reasoning_by_id = mc.build_reasoning_metadata(models, [])
+candidates, dropped = mc.build_candidates(
+    models, args, discounts, zdr_ids, filtered, reasoning_by_id=reasoning_by_id
+)
+candidates, extra_dropped = mc.apply_endpoint_pricing(candidates, args, filtered)
+dropped.update(extra_dropped)
+quality_by_id, quality_source_by_id = mc.resolve_quality(
+    candidates,
+    aa_by_id,
+    exact,
+    fuzzy,
+    "AA API v2",
+    None,
+    depth_lookup=depth_lookup,
+    unlabeled_lookup=unlabeled_lookup,
+    catalog_depths=None,
+    requested_effort=args.reasoning_effort,
+)
+mc.compute_scores(candidates, args, quality_by_id)
+doc = mc.build_catalog(
+    args,
+    models,
+    candidates,
+    dropped,
+    filtered,
+    discounts,
+    quality_by_id,
+    "AA API v2",
+    aa_by_id,
+    quality_source_by_id,
+    None,
+    "skipped",
+    "4.0",
+    None,
+    None,
+    depth_lookup=depth_lookup,
+    catalog_depths=None,
+    reasoning_by_id=reasoning_by_id,
+    requested_effort=args.reasoning_effort,
+)
+print(json.dumps(doc))
+`
+
+test("offline build_catalog() with v0.7.3–v0.7.10 features passes validateCatalog, validateStoredCatalog, checkCanary, and score parity", async () => {
+  const { code, stdout, stderr } = await new Promise<{
+    code: number | null
+    stdout: string
+    stderr: string
+  }>((resolve, reject) => {
+    const child = spawn("python3", ["-B", "-c", OFFLINE_BUILD_CATALOG_PY], { env: scriptEnv() })
+    let out = ""
+    let err = ""
+    child.stdout?.on("data", (chunk: Buffer) => {
+      out += chunk
+    })
+    child.stderr?.on("data", (chunk: Buffer) => {
+      err += chunk
+    })
+    child.on("error", reject)
+    child.on("close", (exitCode) => resolve({ code: exitCode, stdout: out, stderr: err }))
+  })
+  expect(code, stderr).toBe(0)
+
+  const emitted = JSON.parse(stdout) as {
+    schema_version: number
+    models: Array<Record<string, any>>
+  }
+  expect(emitted.schema_version).toBe(6)
+
+  // Verify the v0.7.3–v0.7.10 fields were actually produced by the vendored script.
+  const scored = emitted.models.find((m) => m.id === "acme/reasoner-pro")
+  const unlabeled = emitted.models.find((m) => m.id === "z-ai/glm-unlabeled")
+  expect(scored).toBeDefined()
+  expect(unlabeled).toBeDefined()
+  expect(scored?.max_output_tokens).toBe(65536)
+  expect(scored?.input_modalities).toEqual(["text", "image"])
+  expect(scored?.pricing.input_cache_read_per_1m).toBeTypeOf("number")
+  expect(scored?.pricing.base.input_cache_read_per_1m).toBeTypeOf("number")
+  expect(scored?.pricing.tiers[0].input_cache_read_per_1m).toBeTypeOf("number")
+  expect(scored?.reasoning.mandatory).toBe(true)
+  expect(scored?.reasoning.aa_unlabeled).toBeNull()
+  expect(scored?.endpoints[0].max_completion_tokens).toBe(65536)
+
+  expect(unlabeled?.quality).toBeNull()
+  expect(unlabeled?.quality_effort).toBeNull()
+  expect(unlabeled?.pricing.schedule[0].input_cache_read_per_1m).toBeTypeOf("number")
+  expect(unlabeled?.reasoning.aa_unlabeled).toEqual({
+    index: 44.5,
+    cost_per_task_usd: 0.42,
+    source: "aa",
+    as_of: "2026-11-02T00:00:00+00:00",
+  })
+
+  const { checkCanary } = (await import(
+    new URL("../../scripts/canary-check.mjs", import.meta.url).href
+  )) as { checkCanary: (doc: unknown) => CanaryResult }
+  expect(checkCanary(emitted)).toEqual({ ok: true, models: 2 })
+
+  const checked = validateCatalog(emitted)
+  expect(checked.ok, checked.ok ? "" : checked.reason).toBe(true)
+  if (!checked.ok) return
+
+  // projectReasoning strips display-only aa_unlabeled; round-trip through JSON storage stays lossless.
+  expect("aa_unlabeled" in (checked.catalog.models[0]?.reasoning ?? {})).toBe(false)
+  expect("aa_unlabeled" in (checked.catalog.models[1]?.reasoning ?? {})).toBe(false)
+  const stored = JSON.parse(JSON.stringify(checked.catalog))
+  expect(validateStoredCatalog(stored)).toEqual({ ok: true, catalog: checked.catalog })
+
+  expect(overallMismatches(checked.catalog)).toEqual([])
 })
