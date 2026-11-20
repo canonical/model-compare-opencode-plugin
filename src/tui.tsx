@@ -21,7 +21,8 @@
 //     creates a session bound to that model;
 //   * a toast when a pick flips (at most one per changed priority per
 //     reload, and never for the first observation after load);
-//   * a warning dialog when an alias switch did not reach the TUI's prompt
+//   * a warning dialog when any plugin-initiated switch (an alias or the
+//     report dialog's concrete-model pick) did not reach the TUI's prompt
 //     selection (OpenCode bug #57771), pointing at the host's own model
 //     picker and offering a durable "Don't show again" opt-out.
 //
@@ -314,6 +315,10 @@ export function pickNotice(
 // carry report data across a trust boundary (the /model-compare command's
 // event and the TUI's direct RPC call): an entry missing any identity field
 // is dropped, every other field falls back to its neutral value.
+// Display-only fields (`id`, `score`, `alternative`) are sanitized here;
+// `value` stays raw for switching, `effort` stays raw so gatewayEffort()
+// validates the untampered string, and `quality`/`effort`/`price` are
+// sanitized at render time in showReportDialog's column pipeline.
 function toReportEntries(raw: unknown): ReportEntry[] {
   if (!Array.isArray(raw)) return []
   return raw.flatMap((item): ReportEntry[] => {
@@ -328,14 +333,17 @@ function toReportEntries(raw: unknown): ReportEntry[] {
       {
         priority: entry.priority as Priority,
         rank: typeof entry.rank === "number" ? entry.rank : null,
-        // The F-20 split (see ReportEntry): `id` sanitized for display,
-        // `value` the raw catalog id for switching.
-        id: entry.id,
+        // The F-20 split: `id`, `score`, and `alternative` are display-only
+        // and sanitized here; `value` stays raw for switching, and `effort`
+        // stays raw so gatewayEffort() sees the un-sanitized value (`quality`,
+        // `effort`, and `price` are sanitized at render time in the table).
+        id: sanitizeCatalogText(entry.id),
         value: entry.value,
-        score: typeof entry.score === "string" ? entry.score : "-",
+        score: typeof entry.score === "string" ? sanitizeCatalogText(entry.score) : "-",
         quality: typeof entry.quality === "string" ? entry.quality : "-",
         effort: typeof entry.effort === "string" ? entry.effort : "",
-        alternative: typeof entry.alternative === "string" ? entry.alternative : "",
+        alternative:
+          typeof entry.alternative === "string" ? sanitizeCatalogText(entry.alternative) : "",
         price: typeof entry.price === "string" ? entry.price : "-",
         current: entry.current === true,
         fromFallback: entry.fromFallback === true,
@@ -528,12 +536,12 @@ export default Plugin.define({
     // The masked-switch warning's hand-off, for the same ownerless-callback
     // reason: the warning can be triggered by the /use-best RPC event (and by
     // the keymap commands), so checkMaskedSwitch only PARKS the session and
-    // priority and the app slot's in-tree effect opens the styled dialog.
-    // The session id is part of the payload so a slow settle cannot pop the
-    // warning over a session the user has since moved to.
+    // the target's display label and the app slot's in-tree effect opens the
+    // styled dialog. The session id is part of the payload so a slow settle
+    // cannot pop the warning over a session the user has since moved to.
     const [pendingWarning, setPendingWarning] = createSignal<{
       sessionID: string
-      priority: Priority
+      label: string
     } | null>(null)
 
     // The registry view, reactive: OpenCode's data layer updates the list
@@ -646,7 +654,12 @@ export default Plugin.define({
         // The switch landed on the session; whether the TUI's PROMPT follows
         // is a separate question (bug #57771). Best-effort and off the
         // command's critical path — the switch already succeeded.
-        void checkMaskedSwitch(sessionID, priority, seq).catch(() => {})
+        void checkMaskedSwitch(
+          sessionID,
+          { providerID: ALIAS_PROVIDER, id: aliasId(priority) },
+          `Model Compare: ${priority}`,
+          seq,
+        ).catch(() => {})
       } catch (error) {
         notify(`use-best failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
@@ -655,7 +668,11 @@ export default Plugin.define({
     // Detect a switch the TUI's prompt selection did not follow (OpenCode bug
     // #57771): session.switchModel updates the session, but the prompt keeps
     // its own selected model, so the next submit silently sends to the OLD
-    // model. Judge only after the session data CONFIRMS the target — the host
+    // model. Every plugin-initiated switch runs this — the alias paths (alt+u,
+    // the picks dialog, the /use-best event) with the alias as the target, and
+    // the report dialog's concrete-model pick with that model. `label` is the
+    // display form for the warning (the alias name or the sanitized model id).
+    // Judge only after the session data CONFIRMS the target — the host
     // publishes session.model.selected asynchronously, and the /use-best RPC
     // event can arrive before that update. An unconfirmed switch, an absent
     // prompt selection, or a matching identity (provider + model id; a
@@ -663,12 +680,12 @@ export default Plugin.define({
     // warning never guesses.
     async function checkMaskedSwitch(
       sessionID: string,
-      priority: Priority,
+      target: { providerID: string; id: string },
+      label: string,
       seq: number,
     ): Promise<void> {
       if (disposed || seq !== switchCheckSeq) return
       if (isWarningSuppressed()) return
-      const target = { providerID: ALIAS_PROVIDER, id: aliasId(priority) }
       let confirmed = false
       for (let attempt = 0; attempt < 20; attempt += 1) {
         if (disposed || seq !== switchCheckSeq) return
@@ -698,7 +715,7 @@ export default Plugin.define({
       if (prompt.providerID === target.providerID && prompt.modelID === target.id) return
       // The suppression may have been turned on while the switch settled.
       if (isWarningSuppressed()) return
-      setPendingWarning({ sessionID, priority })
+      setPendingWarning({ sessionID, label })
     }
 
     // Switch the current session straight to a concrete model (the report
@@ -711,7 +728,11 @@ export default Plugin.define({
       advertised: string | undefined,
       bound: string | undefined,
     ): Promise<void> {
-      ++switchCheckSeq
+      // Deliberately bump before the await so a slower older switch resolving
+      // later cannot overwrite a newer switch's warning. Accepted limit: a
+      // concurrent server-side /use-best event arriving mid-await supersedes
+      // this check and vice versa (no monotonic server switch order exists).
+      const seq = ++switchCheckSeq
       setPendingWarning(null)
       try {
         await context.client.session.switchModel({
@@ -721,6 +742,15 @@ export default Plugin.define({
         // F-20: `id` here is the raw catalog id (the switch needs it) — the
         // toast shows the flattened form so it cannot be line-injected.
         notify(pickNotice(id, advertised, bound))
+        // A concrete pick is the same masked-switch hazard as an alias switch
+        // (bug #57771): the session moved, the prompt may not have. The label
+        // is the sanitized target model id.
+        void checkMaskedSwitch(
+          sessionID,
+          { providerID: ALIAS_PROVIDER, id },
+          sanitizeCatalogText(id),
+          seq,
+        ).catch(() => {})
       } catch (error) {
         notify(`switch failed: ${error instanceof Error ? error.message : String(error)}`, "error")
       }
@@ -1071,10 +1101,12 @@ export default Plugin.define({
     // The masked-switch warning (OpenCode bug #57771). An explicit styled
     // dialog rather than a toast: it is an upstream-bug workaround with an
     // action (open the host's own model picker, which DOES update the prompt
-    // selection) and a durable opt-out. Custom JSX because the host's
-    // alert/confirm only take plain strings, so the quoted phrases could not
-    // be italicized or the bug link made clickable.
-    function showWarningDialog(priority: Priority): void {
+    // selection) and a durable opt-out. `label` names the switch that did not
+    // take: the alias the user chose, or the concrete model a report row
+    // advertised. Custom JSX because the host's alert/confirm only take plain
+    // strings, so the quoted phrases could not be italicized or the bug link
+    // made clickable.
+    function showWarningDialog(label: string): void {
       // A newer dialog replaces whatever is armed (the same ownership rule as
       // showListDialog): close the old one BEFORE bumping the generation.
       armedClose?.()
@@ -1135,17 +1167,22 @@ export default Plugin.define({
             <box paddingLeft={4} paddingRight={4} flexDirection="column">
               <text fg={base}>
                 {"To switch to '"}
-                <i>{`Model Compare: ${priority}`}</i>
+                <i>{label}</i>
                 {"', select it from the '"}
                 <i>Select model</i>
                 {"' picker (ctrl+x m)."}
               </text>
-              <text fg={base}>{"See OpenCode bug #57771: "}</text>
-              <text fg={link}>
-                <a href={MASKED_SWITCH_BUG_URL}>
-                  <u>{MASKED_SWITCH_BUG_URL}</u>
-                </a>
-              </text>
+              {/* The bug reference sits one blank line below the message
+                  (paddingTop 1, the palette's heading recipe) so the prose
+                  and the upstream link do not read as one block. */}
+              <box paddingTop={1} flexDirection="column">
+                <text fg={base}>{"See OpenCode bug #57771: "}</text>
+                <text fg={link}>
+                  <a href={MASKED_SWITCH_BUG_URL}>
+                    <u>{MASKED_SWITCH_BUG_URL}</u>
+                  </a>
+                </text>
+              </box>
             </box>
             <box
               paddingLeft={4}
@@ -1156,13 +1193,10 @@ export default Plugin.define({
               rowGap={0}
             >
               <text fg={muted} onMouseUp={select}>
-                enter select model
+                enter: select model
               </text>
               <text fg={muted} onMouseUp={suppress}>
-                d don't show again
-              </text>
-              <text fg={muted} onMouseUp={close}>
-                esc dismiss
+                d: don't show again
               </text>
             </box>
           </box>
@@ -1215,12 +1249,14 @@ export default Plugin.define({
       // dialog's padding and made the picker too tall.)
       steeringNote: string | null
     }): void {
-      ++switchCheckSeq
-      setPendingWarning(null)
       if (data.entries.length === 0) {
         notify("no ranking data available yet", "error")
         return
       }
+      // Reset only on the dialog-arming path: an empty report owns no UI, so
+      // it must not cancel another switch path's pending masked-switch check.
+      ++switchCheckSeq
+      setPendingWarning(null)
       // Warm the SESSION's directory's registry before a pick reads it (see
       // sessionDirectoryOf): only THIS location's registry is kept fresh —
       // the create root's initial sync and 30s resync below — so a worktree's
@@ -1262,16 +1298,21 @@ export default Plugin.define({
       const dialogSize: "medium" | "large" = terminalSize().width > 96 ? "large" : "medium"
       // 2 list insets + 6 row insets leave the row content budget.
       const contentW = (dialogSize === "large" ? 88 : 60) - 8
+      // Sanitize cell strings at render time (F-20) rather than in
+      // toReportEntries so `entry.effort` stays raw for gatewayEffort() below.
+      const qualText = (entry: ReportEntry): string => sanitizeCatalogText(entry.quality)
+      const effortText = (entry: ReportEntry): string => sanitizeCatalogText(entry.effort) || "-"
+      const priceText = (entry: ReportEntry): string => sanitizeCatalogText(entry.price)
       // Quality is a one-decimal AA index (max "100.0"); the caps leave the
       // row budget intact (see `fixed` below) while fitting real values:
       // "10.00/100.00" (price).
-      const qualW = colW(data.entries.map((entry) => entry.quality), "qual".length, 5)
+      const qualW = colW(data.entries.map(qualText), "qual".length, 5)
       // The variant column keeps the old status line's 7-column clamp: the
       // effort labels are short ("max", "high", "medium"), and a hostile
       // catalog string is truncated in display columns (see cell) so it
       // cannot push the row past its budget.
       const variantW = 7
-      const priceW = colW(data.entries.map((entry) => entry.price), "$ in/out".length, 13)
+      const priceW = colW(data.entries.map(priceText), "$ in/out".length, 13)
       // A cell wider than its clamped column is truncated to fit — measured
       // in terminal COLUMNS (strWidth), not string length: a 7-code-point
       // CJK effort label renders 14 columns wide and would push the row
@@ -1336,11 +1377,11 @@ export default Plugin.define({
             label: padEndW(trim(labelOf.get(entry) ?? ""), nameW),
             columns:
               "  " +
-              padStartW(cell(entry.quality, qualW), qualW) +
+              padStartW(cell(qualText(entry), qualW), qualW) +
               "  " +
-              padEndW(cell(entry.effort || "-", variantW), variantW) +
+              padEndW(cell(effortText(entry), variantW), variantW) +
               "  " +
-              padEndW(cell(entry.price, priceW), priceW),
+              padEndW(cell(priceText(entry), priceW), priceW),
             // F-20 id split: the row DISPLAYS the sanitized id (in `label`)
             // but picks `value`, the raw catalog id switchToModel needs. The
             // variant is the gateway-valid effort the column advertises;
@@ -1488,7 +1529,12 @@ export default Plugin.define({
         const seq = ++switchCheckSeq
         setPendingWarning(null)
         if (isPriority(data.priority)) {
-          void checkMaskedSwitch(data.sessionID, data.priority, seq).catch(() => {})
+          void checkMaskedSwitch(
+            data.sessionID,
+            { providerID: ALIAS_PROVIDER, id: aliasId(data.priority) },
+            `Model Compare: ${data.priority}`,
+            seq,
+          ).catch(() => {})
         }
       }
     })
@@ -1723,11 +1769,11 @@ export default Plugin.define({
           showReportDialog(pending)
         })
         // The masked-switch warning's hand-off (see pendingWarning): the
-        // priority is parked by checkMaskedSwitch — which the /use-best RPC
-        // event reaches from an ownerless callback — and opened HERE, inside
-        // the tree, so its keyboard attaches. The suppression is re-read at
-        // open time; the switch may have settled after the preference was
-        // toggled in another TUI instance.
+        // session and target label are parked by checkMaskedSwitch — which the
+        // /use-best RPC event reaches from an ownerless callback — and opened
+        // HERE, inside the tree, so its keyboard attaches. The suppression is
+        // re-read at open time; the switch may have settled after the
+        // preference was toggled in another TUI instance.
         createEffect(() => {
           const pending = pendingWarning()
           if (pending === null) return
@@ -1735,7 +1781,7 @@ export default Plugin.define({
           if (disposed || listKeys() !== null) return
           if (pending.sessionID !== currentSessionID()) return
           if (isWarningSuppressed()) return
-          showWarningDialog(pending.priority)
+          showWarningDialog(pending.label)
         })
         // The list dialogs' modal keymap layer (see showListDialog):
         // registered HERE, inside the tree, while a list dialog is open —

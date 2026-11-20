@@ -939,20 +939,23 @@ describe("the masked-switch warning", () => {
     expect(view.text).toContain(`See OpenCode bug #57771: ${BUG_URL}`)
     expect(view.italics).toEqual(["Model Compare: balanced", "Select model"])
     expect(view.links).toEqual([{ href: BUG_URL, text: BUG_URL }])
-    expect(view.text).toContain("enter select model")
-    expect(view.text).toContain("d don't show again")
-    expect(view.text).toContain("esc dismiss")
+    expect(view.text).toContain("enter: select model")
+    expect(view.text).toContain("d: don't show again")
 
-    // Layout: single 4-col horizontal inset on the body column, stacked text
-    // lines (no nested padded row box squishing the 50-col URL), and a
-    // wrapping footer row.
+    // Layout: single 4-col horizontal inset on the body column, the message
+    // line, then a blank line before the bug block (paddingTop 1) holding the
+    // label and its URL (no nested padded row box squishing the 50-col URL),
+    // and a wrapping footer row.
     const [, bodyBox, footerBox] = view.tree.children
     expect(bodyBox?.props).toMatchObject({
       paddingLeft: 4,
       paddingRight: 4,
       flexDirection: "column",
     })
-    expect(bodyBox?.children.map((child) => child.tag)).toEqual(["text", "text", "text"])
+    expect(bodyBox?.children.map((child) => child.tag)).toEqual(["text", "box"])
+    const bugBox = bodyBox?.children[1]
+    expect(bugBox?.props).toMatchObject({ paddingTop: 1, flexDirection: "column" })
+    expect(bugBox?.children.map((child) => child.tag)).toEqual(["text", "text"])
     expect(footerBox?.props).toMatchObject({
       paddingLeft: 4,
       paddingRight: 4,
@@ -961,6 +964,10 @@ describe("the masked-switch warning", () => {
       columnGap: 2,
       rowGap: 0,
     })
+    expect(footerBox?.children.map((child) => child.tag)).toEqual(["text", "text"])
+    // The header's clickable "esc" is the only dismissal hint; repeating it
+    // in the footer is noise.
+    expect(treeTexts(footerBox!)).toEqual(["enter: select model", "d: don't show again"])
   })
 
   test("no warning when the prompt already selects the target identity", async () => {
@@ -1071,6 +1078,8 @@ describe("the masked-switch warning", () => {
 
   test("route changes mid-poll or superseding concrete switches suppress stale warnings", async () => {
     const harness = maskedSwitchHarness()
+    // Diverges from balanced, price, and the picked concrete model acme/alpha.
+    harness.promptModel.current = { providerID: "openrouter", modelID: "acme/beta" }
     // 1. Navigating to another session mid-poll drops the warning.
     harness.session.switchModel.mockImplementationOnce(async (input) => {
       setTimeout(() => {
@@ -1086,10 +1095,11 @@ describe("the masked-switch warning", () => {
     active.state.route = { type: "session", sessionID: "s2" }
     await sleep(50)
     await drain()
-    expect(active.dialogRenders).toHaveLength(0)
+    expect(active.dialogRenders).toHaveLength(0) // 0: route change to s2 dropped the balanced warning
 
     // 2. Switching back to s1 and superseding an in-flight alias check with a
-    // report-dialog concrete-model switch cancels the alias warning.
+    // report-dialog concrete-model switch cancels the alias warning, leaving
+    // only the warning for the picked concrete model.
     active.state.route = { type: "session", sessionID: "s1" }
     active.sessionModels.clear()
     harness.session.switchModel.mockImplementationOnce(async (input) => {
@@ -1109,13 +1119,51 @@ describe("the masked-switch warning", () => {
       },
     })
     await drain()
-    expect(active.dialogRenders).toHaveLength(1) // report dialog
+    expect(active.dialogRenders).toHaveLength(1) // 1: the report dialog itself
     const pick = await modalPick(active)
     pick!.run() // switchToModel("s1", "acme/alpha") supersedes the pending price check
     await sleep(55)
     await drain()
 
+    // 1: report dialog, 2: acme/alpha warning (prompt acme/beta diverges from
+    // acme/alpha); the superseded price check stayed silent after its 30ms commit.
+    expect(active.dialogRenders).toHaveLength(2)
+    const text = warningView(active).text
+    expect(text).toContain("acme/alpha")
+    expect(text).not.toContain("Model Compare: price")
+  })
+
+  test("an empty report does not cancel an in-flight masked-switch check", async () => {
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = { providerID: "openrouter", modelID: aliasId("balanced") }
+    harness.session.switchModel.mockImplementationOnce(async (input) => {
+      setTimeout(() => {
+        harness.sessionModels.set(input.sessionID, {
+          providerID: input.model.providerID,
+          id: input.model.id,
+        })
+      }, 25)
+    })
+    active = await activate(harness)
+
+    await active.command("model-compare.use-best").run("price")
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: [] },
+      },
+    })
+    await sleep(60)
+    await drain()
+
+    expect(active.toasts).toContainEqual({
+      message: "no ranking data available yet",
+      variant: "error",
+    })
+    // An empty report opens no dialog and must not cancel the in-flight check:
+    // the only dialog render is the masked-switch warning for price.
     expect(active.dialogRenders).toHaveLength(1)
+    expect(warningView(active).text).toContain("Model Compare: price")
   })
 
   test("the picks dialog path warns too", async () => {
@@ -1131,6 +1179,158 @@ describe("the masked-switch warning", () => {
     expect(warningView(active).text).toContain(
       "To switch to 'Model Compare: balanced', select it from the 'Select model' picker (ctrl+x m).",
     )
+  })
+
+  test("a report-dialog pick warns when the prompt selection did not follow", async () => {
+    // The report dialog switches to a CONCRETE model, not an alias — the same
+    // masked-switch bug applies (the session moves, the prompt does not), so
+    // the check must run on this path too and name the model the row showed.
+    // The prompt still selects the alias here: the state the bug leaves behind
+    // after a plugin-initiated concrete switch.
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = { providerID: "openrouter", modelID: aliasId("balanced") }
+    active = await activate(harness)
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+
+    pick!.run()
+    await drain()
+
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "high" },
+    })
+    expect(active.dialogRenders).toHaveLength(2) // the report dialog + the warning
+    expect(warningView(active).text).toContain(
+      "To switch to 'acme/alpha', select it from the 'Select model' picker (ctrl+x m).",
+    )
+  })
+
+  test("a report-dialog pick stays silent when the prompt already selects that model", async () => {
+    // maskedSwitchHarness's prompt selects acme/alpha already — the pick that
+    // lands on the same identity must not warn (nothing was masked).
+    active = await activate(maskedSwitchHarness())
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+
+    pick!.run()
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(1) // the report dialog only
+  })
+
+  test("a report-dialog pick stays silent on a variant-only difference", async () => {
+    // Variant differences are deliberately not warnings: the prompt selects
+    // acme/alpha#medium while the report pick binds acme/alpha#high (ENTRIES[0]).
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = {
+      providerID: "openrouter",
+      modelID: "acme/alpha",
+      variant: "medium",
+    }
+    active = await activate(harness)
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+
+    pick!.run()
+    await drain()
+
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/alpha", variant: "high" },
+    })
+    expect(active.dialogRenders).toHaveLength(1) // the report dialog only
+  })
+
+  test("a report pick cancels a check started AFTER the report dialog already opened", async () => {
+    // Starting /use-best price AFTER the report dialog is already open means
+    // showReportDialog's open-time bump already ran; only switchToModel's own
+    // ++switchCheckSeq cancels the price check.
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = { providerID: "openrouter", modelID: "acme/beta" }
+    active = await activate(harness)
+
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: { sessionID: "s1", age: "1h", entries: ENTRIES },
+      },
+    })
+    await drain()
+    expect(active.dialogRenders).toHaveLength(1) // 1: report dialog
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+
+    // Start a delayed /use-best price check while the report dialog is open
+    // (switchModel resolves without committing sessionModels yet, keeping the
+    // price check polling inside its 200 ms window).
+    harness.session.switchModel.mockImplementationOnce(async () => {})
+    await active.command("model-compare.use-best").run("price")
+
+    pick!.run()
+    await drain()
+
+    // Simulate the earlier price switch's session confirmation landing late:
+    // without switchToModel's own bump, the price check would now warn.
+    active.sessionModels.set("s1", { providerID: "openrouter", id: aliasId("price") })
+    await sleep(45)
+    await drain()
+
+    expect(active.dialogRenders).toHaveLength(2) // 1: report dialog, 2: acme/alpha warning only
+    const text = warningView(active).text
+    expect(text).toContain("acme/alpha")
+    expect(text).not.toContain("Model Compare: price")
+  })
+
+  test("a report-dialog pick's warning flattens the raw catalog id it names", async () => {
+    // The pick needs the RAW id (the switch), but the warning only displays
+    // it: control characters and line breaks must not reach the styled text
+    // (F-20), the same rule the pick toast follows.
+    const harness = maskedSwitchHarness()
+    harness.promptModel.current = { providerID: "openrouter", modelID: aliasId("balanced") }
+    active = await activate(harness)
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        data: {
+          sessionID: "s1",
+          age: "1h",
+          entries: [{ ...ENTRIES[0], id: "acme/evil", value: "acme/evil\n\u001b[31mX" }],
+        },
+      },
+    })
+    await drain()
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+
+    pick!.run()
+    await drain()
+
+    const text = warningView(active).text
+    expect(text).toContain("To switch to 'acme/evil [31mX', select it from the")
+    expect(text).not.toContain("\n")
+    expect(text).not.toContain("\u001b")
   })
 
   test("the /use-best event warns with the priority the server switched to", async () => {
@@ -1253,7 +1453,9 @@ describe("the masked-switch warning", () => {
     expect(active.ctx.keymap.dispatch).not.toHaveBeenCalled()
     expect(active.ctx.ui.dialog.clear).toHaveBeenCalledTimes(1)
 
-    // Subsequent masked switches warn again; both header "esc" and footer "esc dismiss" mouse-up close cleanly.
+    // Subsequent masked switches warn again; the header "esc" mouse-up closes
+    // cleanly, and the footer keeps only its two action labels (the header is
+    // the sole dismissal hint).
     await active.command("model-compare.use-best").run()
     await drain()
     expect(active.dialogRenders).toHaveLength(2)
@@ -1265,11 +1467,9 @@ describe("the masked-switch warning", () => {
     await drain()
     expect(active.dialogRenders).toHaveLength(3)
     const footerBox = warningView(active).tree.children[2]!
+    expect(footerBox.children).toHaveLength(2)
     expect(typeof footerBox.children[0]!.props.onMouseUp).toBe("function")
     expect(typeof footerBox.children[1]!.props.onMouseUp).toBe("function")
-    const escHint = footerBox.children[2]!
-    ;(escHint.props.onMouseUp as () => void)()
-    expect(await active.modalCommands()).toBeNull()
     expect(active.preferences.warnMaskedSwitch).toBe(true)
     expect(active.ctx.keymap.dispatch).not.toHaveBeenCalled()
   })
@@ -1689,6 +1889,9 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
   test("a failed switch on the report-dialog path toasts 'switch failed'", async () => {
     active = await activate()
     active.state.route = { type: "session", sessionID: "s1" }
+    // Seed sessionModels with the target while the prompt still holds the
+    // balanced alias: an unconditional check outside the try block would warn.
+    active.sessionModels.set("s1", { providerID: "openrouter", id: "acme/alpha" })
     active.session.switchModel.mockRejectedValueOnce(new Error("quota"))
     active.listenCallbacks[0]({
       details: {
@@ -1705,6 +1908,7 @@ describe("with a session open, the shortcuts switch it (unchanged)", () => {
     await drain()
 
     expect(active.toasts).toEqual([{ message: "switch failed: quota", variant: "error" }])
+    expect(active.dialogRenders).toHaveLength(1) // report dialog only — failed switch must not warn
     expect(active.session.create).not.toHaveBeenCalled()
     expect(active.navigate).not.toHaveBeenCalled()
   })
@@ -2419,6 +2623,56 @@ describe("the report table's columns", () => {
     // 3 rockets (6 columns) + ellipsis = the 7-column variant cap.
     expect(columns).toContain("🚀🚀🚀…")
     expect(strWidth(columns!)).toBeLessThanOrEqual(26)
+  })
+
+  test("report table rows sanitize display fields (F-20) while picking the raw value", async () => {
+    active = await activate()
+    active.state.route = { type: "session", sessionID: "s1" }
+    active.listenCallbacks[0]({
+      details: {
+        type: "rpc.model-compare.report",
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "s1",
+          age: "1h",
+          entries: [
+            {
+              ...ENTRIES[0],
+              id: "acme/evil",
+              value: "acme/evil\n\u001b[31mX",
+              quality: "8.0\n\u001b[31m",
+              effort: "high\n\u001b",
+              price: "$1/$2\n\u001b[31m",
+            },
+            {
+              ...ENTRIES[1],
+              id: "acme/other\n\u001b[31m",
+              value: "acme/other",
+            },
+          ],
+        },
+      },
+    })
+    await drain()
+
+    const texts = treeTexts(renderDialog(active).tree)
+    for (const text of texts) {
+      expect(text).not.toContain("\n")
+      expect(text).not.toContain("\u001b")
+    }
+    expect(texts.some((text) => text.includes("acme/other [31m"))).toBe(true)
+
+    const pick = await modalPick(active)
+    expect(pick).not.toBeNull()
+    pick!.run()
+    await drain()
+
+    // Raw value is preserved for the switch, while raw invalid effort ("high\n\u001b")
+    // is NOT pre-sanitized into a valid variant before gatewayEffort() checks it.
+    expect(active.session.switchModel).toHaveBeenCalledWith({
+      sessionID: "s1",
+      model: { providerID: "openrouter", id: "acme/evil\n\u001b[31mX" },
+    })
   })
 })
 
